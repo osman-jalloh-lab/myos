@@ -3,13 +3,16 @@ import Google from "next-auth/providers/google";
 import { prisma } from "./db";
 import { encrypt } from "./encrypt";
 
-// Phase 1 scopes: calendar read-only only.
-// Gmail scopes added in Phase 3 after approval queue exists.
-const PHASE1_SCOPES = [
+// Phase 3: Gmail is read-only here. No gmail.compose/gmail.send scope is
+// requested — Iris can only read, classify, and propose drafts as pending
+// ApprovalAction rows. Real Gmail draft/send scopes wait for the approval
+// queue (Phase 4), per CLAUDE.md rule "no write power until approval queue exists".
+const GOOGLE_SCOPES = [
   "openid",
   "email",
   "profile",
   "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/gmail.readonly",
 ].join(" ");
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -19,7 +22,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       clientSecret: process.env.AUTH_GOOGLE_SECRET!,
       authorization: {
         params: {
-          scope: PHASE1_SCOPES,
+          scope: GOOGLE_SCOPES,
           access_type: "offline",
           prompt: "consent",
         },
@@ -53,7 +56,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               refreshToken: encrypt(account.refresh_token),
             }),
             expiresAt,
-            scopes: account.scope ?? PHASE1_SCOPES,
+            scopes: account.scope ?? GOOGLE_SCOPES,
           },
           create: {
             userId: user.id,
@@ -65,7 +68,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
               ? encrypt(account.refresh_token)
               : null,
             expiresAt,
-            scopes: account.scope ?? PHASE1_SCOPES,
+            scopes: account.scope ?? GOOGLE_SCOPES,
             isDefault: true,
           },
         });

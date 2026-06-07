@@ -1,5 +1,15 @@
 # Decisions log
 
+## 2026-06-06 — Phase 3 (partial, by request): Gmail read-only + Iris triage
+Added gmail.readonly scope to both OAuth flows (primary sign-in in auth.ts and the
+account-link flow); existing linked accounts must re-consent once. Built src/lib/gmail.ts
+(cross-account metadata-only fetch via Promise.allSettled, heuristic classify, triage) and
+wired Iris's tools (gmail.read, classify, triage, draft-reply) in src/agents/iris.ts.
+/api/email endpoint added. draft-reply writes a pending ApprovalAction (draft_email) row —
+it never touches the Gmail API. Deliberately did NOT request gmail.compose/gmail.send:
+no write power until the Phase 4 approval queue exists, per CLAUDE.md rule 3. Build passes
+clean (11 routes). Owner: Osman Jalloh.
+
 ## 2026-06-06 — Phase 1 (Stage 2 + 3) complete: multi-account OAuth, calendar aggregation
 Built: server-side OAuth via NextAuth v5 with jwt/session callbacks persisting tokens to
 GoogleAccount table; AES-256-GCM token encryption (TOKEN_ENCRYPTION_KEY); token refresh

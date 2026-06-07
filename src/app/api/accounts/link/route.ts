@@ -47,6 +47,7 @@ export async function GET(request: Request) {
       "email",
       "profile",
       "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/gmail.readonly",
     ].join(" "),
     access_type: "offline",
     // Force account picker so user can select a different Google account.
