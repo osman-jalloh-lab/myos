@@ -93,8 +93,9 @@ export async function timeBlock(
 // Argus uses this output to build the daily brief — Kairos just fetches.
 
 export async function prepNotes(userId: string): Promise<CalendarEvent[]> {
-  const now = new Date();
-  const endOfDay = new Date(now);
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  const endOfDay = new Date(startOfDay);
   endOfDay.setHours(23, 59, 59, 999);
-  return fetchCalendarEvents(userId, now, endOfDay);
+  return fetchCalendarEvents(userId, startOfDay, endOfDay);
 }
