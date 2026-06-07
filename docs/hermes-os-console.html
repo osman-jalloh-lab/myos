@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hermes OS — Agent Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0a0c; --panel:#101015; --surface:#16161c; --surface-2:#1d1d25;
+    --line:rgba(255,255,255,.07); --line-2:rgba(255,255,255,.12);
+    --text:#ece9e2; --muted:#9a958b; --faint:#6c6960;
+    --hermes:#d8a24a; --iris:#79c2c9; --kairos:#a8c07a; --argus:#dd7a6c;
+    --plutus:#5fb6a3; --athena:#b693e0; --mnemo:#cf8fb0;
+    --serif:"Fraunces",Georgia,serif; --sans:"Hanken Grotesk",system-ui,sans-serif; --mono:"JetBrains Mono",monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{
+    font-family:var(--sans);min-height:100dvh;color:var(--text);
+    background:radial-gradient(1100px 700px at 12% -8%,rgba(216,162,74,.10),transparent 58%),
+               radial-gradient(900px 600px at 110% 115%,rgba(95,182,163,.06),transparent 55%),#060608;
+    display:flex;align-items:center;justify-content:center;padding:24px;
+  }
+  .app{
+    width:1140px;max-width:100%;height:780px;max-height:92dvh;display:grid;grid-template-columns:248px 1fr;
+    background:var(--bg);border:1px solid var(--line-2);border-radius:22px;overflow:hidden;
+    box-shadow:0 50px 110px -40px rgba(0,0,0,.85),inset 0 1px 0 rgba(255,255,255,.04);
+  }
+
+  /* ===== SIDEBAR ===== */
+  .side{background:linear-gradient(180deg,#0c0c10,#0a0a0d);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:20px 14px}
+  .brand{display:flex;align-items:center;gap:11px;padding:4px 6px 18px;border-bottom:1px solid var(--line)}
+  .mark{width:34px;height:34px;flex:0 0 auto}
+  .brand .t h1{font-family:var(--serif);font-weight:500;font-size:20px;line-height:1}
+  .brand .t span{font-family:var(--mono);font-size:9px;letter-spacing:1.5px;color:var(--faint)}
+  .roster-label{font-family:var(--mono);font-size:9.5px;letter-spacing:1.6px;color:var(--faint);margin:18px 8px 9px}
+  .agent{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:12px;cursor:pointer;transition:.16s;border:1px solid transparent}
+  .agent:hover{background:var(--surface)}
+  .agent.active{background:var(--surface);border-color:var(--line-2)}
+  . av{width:30px;height:30px;border-radius:9px;flex:0 0 auto;display:grid;place-items:center;font-family:var(--serif);font-size:14px;font-weight:600;position:relative}
+  .agent .nm{font-size:13px;font-weight:600;line-height:1.1}
+  .agent .rl{font-size:10.5px;color:var(--faint);margin-top:1px}
+  .dot{position:absolute;right:-2px;bottom:-2px;width:9px;height:9px;border-radius:50%;border:2px solid var(--bg)}
+  .dot.on{background:#5fb6a3;animation:blip 2.6s infinite}
+  .dot.idle{background:var(--faint)}
+  @keyframes blip{0%,100%{opacity:1}50%{opacity:.4}}
+  .side-foot{margin-top:auto;padding-top:14px;border-top:1px solid var(--line)}
+  .orch{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:12px;background:linear-gradient(135deg,rgba(216,162,74,.14),transparent);border:1px solid rgba(216,162,74,.22)}
+  .orch .nm{font-size:12.5px;font-weight:700;color:var(--hermes)}
+  .orch .rl{font-size:10px;color:var(--muted)}
+  .hostchip{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:9.5px;color:var(--plutus);margin-top:11px;padding:0 6px}
+  .hostchip .p{width:6px;height:6px;border-radius:50%;background:var(--plutus);box-shadow:0 0 0 0 rgba(95,182,163,.6);animation:pulse 2.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(95,182,163,.5)}70%{box-shadow:0 0 0 6px rgba(95,182,163,0)}100%{box-shadow:0 0 0 0 rgba(95,182,163,0)}}
+
+  /* ===== MAIN ===== */
+  .main{display:flex;flex-direction:column;min-width:0}
+  .topbar{padding:20px 26px 16px;border-bottom:1px solid var(--line);display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+  .hello h2{font-family:var(--serif);font-weight:500;font-size:24px;line-height:1.05}
+  .hello .date{font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.6px;margin-top:5px}
+  .argus-line{display:flex;align-items:center;gap:9px;margin-top:11px;background:rgba(221,122,108,.09);border:1px solid rgba(221,122,108,.22);border-radius:11px;padding:8px 12px;max-width:540px}
+  .argus-line .ic{width:20px;height:20px;border-radius:6px;background:var(--argus);color:#1a0d0a;display:grid;place-items:center;font-family:var(--serif);font-weight:600;font-size:11px;flex:0 0 auto}
+  .argus-line p{font-size:12.5px;color:var(--text);line-height:1.4}
+  .argus-line b{color:var(--argus)}
+  .seg{display:flex;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:3px;flex:0 0 auto}
+  .seg button{border:none;background:none;cursor:pointer;font-family:var(--sans);font-weight:600;font-size:12px;color:var(--muted);padding:8px 15px;border-radius:8px;transition:.16s}
+  .seg button.on{background:var(--hermes);color:#1a1407}
+
+  .scroll{flex:1;overflow-y:auto;padding:20px 26px 30px;scrollbar-width:thin;scrollbar-color:var(--line-2) transparent}
+  .scroll::-webkit-scrollbar{width:8px}.scroll::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:8px}
+
+  .view{display:none}.view.active{display:block;animation:fade .35s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+  /* card grid */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .col{display:flex;flex-direction:column;gap:14px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:15px}
+  .card.span{grid-column:1/-1}
+  .ch{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px}
+  .ch .title{font-family:var(--serif);font-size:15px;font-weight:500}
+  .owner{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:9px;letter-spacing:.5px;text-transform:uppercase;color:var(--faint)}
+  .owner .od{width:8px;height:8px;border-radius:3px}
+
+  .item{display:flex;gap:11px;align-items:flex-start}
+  .item+.item{margin-top:11px;padding-top:11px;border-top:1px solid var(--line)}
+  .rank{width:23px;height:23px;border-radius:7px;display:grid;place-items:center;font-family:var(--serif);font-size:12px;color:var(--hermes);background:rgba(216,162,74,.13);flex:0 0 auto;margin-top:1px}
+  .ib .h{font-size:13px;font-weight:600;line-height:1.3}
+  .ib .s{font-size:11.5px;color:var(--muted);margin-top:2px;line-height:1.4}
+  .why{font-size:10.5px;font-style:italic;margin-top:4px}
+  .tag{display:inline-flex;align-items:center;font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:6px;letter-spacing:.4px}
+  .tag.red{color:var(--argus);background:rgba(221,122,108,.13)}
+  .tag.amb{color:var(--hermes);background:rgba(216,162,74,.13)}
+  .tag.grn{color:var(--plutus);background:rgba(95,182,163,.13)}
+
+  .cal{display:flex;gap:11px;align-items:center}
+  .cal+.cal{margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+  .cal .tm{font-family:var(--mono);font-size:10.5px;color:var(--muted);width:44px;text-align:right;flex:0 0 auto}
+  .cal .bar{width:3px;align-self:stretch;border-radius:2px;flex:0 0 auto;min-height:30px}
+  .pill{font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.4px;padding:3px 7px;border-radius:6px;flex:0 0 auto;margin-top:1px}
+
+  /* finance bars */
+  .fin{display:flex;flex-direction:column;gap:11px}
+  .frow .fl{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:5px}
+  .frow .fl .v{font-family:var(--mono);color:var(--muted)}
+  .track{height:7px;border-radius:4px;background:var(--surface-2);overflow:hidden}
+  .track i{display:block;height:100%;border-radius:4px}
+
+  /* ===== AGENT FLOOR ===== */
+  .floor-intro{font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:16px;max-width:680px}
+  .floor-intro b{color:var(--text)}
+  .map{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:8px;margin-bottom:16px}
+  .map svg{width:100%;height:auto;display:block}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:9.5px;color:var(--faint);padding:6px 10px 2px}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .lk{width:18px;height:0;border-top:2px solid var(--hermes)}
+  .lk.dash{border-top:2px dashed var(--argus)}
+
+  .ledger-h{font-family:var(--serif);font-size:16px;font-weight:500;margin:6px 2px 4px}
+  .ledger-sub{font-size:11.5px;color:var(--faint);margin-bottom:13px}
+  .lcard{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:10px;border-left:3px solid var(--line)}
+  .lhead{display:flex;align-items:center;gap:11px;margin-bottom:10px}
+  .lav{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;font-family:var(--serif);font-weight:600;font-size:15px;flex:0 0 auto}
+  .lhead .nm{font-size:14px;font-weight:700}
+  .lhead .rl{font-size:11px;color:var(--muted)}
+  .lhead .stat{margin-left:auto;font-family:var(--mono);font-size:9px;color:var(--plutus)}
+  .skills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+  .skill{font-family:var(--mono);font-size:9.5px;color:var(--text);background:var(--surface-2);border:1px solid var(--line);border-radius:6px;padding:3px 8px}
+  .cc{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px}
+  .cc .can,.cc .cant{display:flex;gap:7px;line-height:1.4}
+  .cc .mk{font-family:var(--mono);flex:0 0 auto}
+  .can .mk{color:var(--plutus)}.cant .mk{color:var(--argus)}
+  .cc .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside class="side">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 32 32" fill="none">
+        <circle cx="16" cy="16" r="15" stroke="rgba(216,162,74,.4)"/>
+        <path d="M16 6v20M16 9c-3 0-5 2-5 4s2 3 5 3 5 1 5 3-2 4-5 4" stroke="#d8a24a" stroke-width="1.6" stroke-linecap="round"/>
+        <path d="M9 8c2 1.5 5 1.5 7 0M16 8c2 1.5 5 1.5 7 0" stroke="#d8a24a" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <div class="t"><h1>Hermes</h1><span>PERSONAL OS</span></div>
+    </div>
+
+    <div class="roster-label">THE AGENTS · ON DUTY</div>
+    <div id="roster">
+      <div class="agent active" data-agent="iris">
+        <div class="av" style="background:rgba(121,194,201,.16);color:var(--iris)">I<span class="dot on"></span></div>
+        <div><div class="nm">Iris</div><div class="rl">Email</div></div>
+      </div>
+      <div class="agent" data-agent="kairos">
+        <div class="av" style="background:rgba(168,192,122,.16);color:var(--kairos)">K<span class="dot on"></span></div>
+        <div><div class="nm">Kairos</div><div class="rl">Calendar &amp; time</div></div>
+      </div>
+      <div class="agent" data-agent="argus">
+        <div class="av" style="background:rgba(221,122,108,.16);color:var(--argus)">A<span class="dot on"></span></div>
+        <div><div class="nm">Argus</div><div class="rl">Sentinel &amp; daily brief</div></div>
+      </div>
+      <div class="agent" data-agent="plutus">
+        <div class="av" style="background:rgba(95,182,163,.16);color:var(--plutus)">P<span class="dot on"></span></div>
+        <div><div class="nm">Plutus</div><div class="rl">Finance &amp; spend</div></div>
+      </div>
+      <div class="agent" data-agent="athena">
+        <div class="av" style="background:rgba(182,147,224,.16);color:var(--athena)">A<span class="dot idle"></span></div>
+        <div><div class="nm">Athena</div><div class="rl">Career &amp; jobs</div></div>
+      </div>
+      <div class="agent" data-agent="mnemo">
+        <div class="av" style="background:rgba(207,143,176,.16);color:var(--mnemo)">M<span class="dot idle"></span></div>
+        <div><div class="nm">Mnemosyne</div><div class="rl">Memory</div></div>
+      </div>
+    </div>
+
+    <div class="side-foot">
+      <div class="orch">
+        <div class="av" style="background:rgba(216,162,74,.18);color:var(--hermes)">H</div>
+        <div><div class="nm">Hermes</div><div class="rl">Orchestrator · routes &amp; gates</div></div>
+      </div>
+      <div class="hostchip"><span class="p"></span>SELF-HOSTED · LEAN · $0.00 / $10 CAP</div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+    <div class="topbar">
+      <div class="hello">
+        <h2>Good morning, Osman.</h2>
+        <div class="date">FRIDAY · JUNE 5, 2026 · 7:30 AM · AUSTIN</div>
+        <div class="argus-line">
+          <div class="ic">A</div>
+          <p><b>Argus on watch.</b> Clear skies. 3 things matter today, 2 deadlines this week, and nothing suspicious across your 3 inboxes.</p>
+        </div>
+      </div>
+      <div class="seg">
+        <button class="on" data-seg="today">Today</button>
+        <button data-seg="floor">Agent Floor</button>
+      </div>
+    </div>
+
+    <div class="scroll">
+
+      <!-- ===== TODAY ===== -->
+      <section class="view active" data-view="today">
+        <div class="grid">
+
+          <!-- top 3 (Argus) -->
+          <div class="card span">
+            <div class="ch"><div class="title">Top 3 today</div><div class="owner"><span class="od" style="background:var(--argus)"></span>compiled by Argus</div></div>
+            <div class="item"><div class="rank">1</div><div class="ib"><div class="h">C26 EAD auto-extension letters due</div><div class="s">2 employees hit the June deadline window. Reverification notices need to go out.</div><div class="why" style="color:var(--argus)"><span class="tag red">DUE IN 4 DAYS</span></div></div></div>
+            <div class="item"><div class="rank">2</div><div class="ib"><div class="h">UT System OCIO — confirm Week 2 hours</div><div class="s">Sarah LaRose sent your schedule. A one-line reply clears it.</div><div class="why" style="color:var(--iris)">flagged by Iris · your supervisor</div></div></div>
+            <div class="item"><div class="rank">3</div><div class="ib"><div class="h">Apex recruiter callback</div><div class="s">Tatiana Claros flagged a GRC-adjacent role. Draft waiting in your queue.</div><div class="why" style="color:var(--athena)">flagged by Athena · target role</div></div></div>
+          </div>
+
+          <div class="col">
+            <!-- calendar (Kairos) -->
+            <div class="card">
+              <div class="ch"><div class="title">Today's calendar</div><div class="owner"><span class="od" style="background:var(--kairos)"></span>Kairos · 3 accounts</div></div>
+              <div class="cal"><div class="tm">9:00</div><div class="bar" style="background:var(--hermes)"></div><div class="ib"><div class="h">I-9 reverification review</div><div class="s">ACC HR · with Ling Cheng</div></div><div class="pill" style="background:rgba(216,162,74,.13);color:var(--hermes)">WORK</div></div>
+              <div class="cal"><div class="tm">11:30</div><div class="bar" style="background:var(--iris)"></div><div class="ib"><div class="h">OCIO standup</div><div class="s">UT System · with Caleb Perkins</div></div><div class="pill" style="background:rgba(121,194,201,.13);color:var(--iris)">UT</div></div>
+              <div class="cal"><div class="tm">6:00</div><div class="bar" style="background:var(--plutus)"></div><div class="ib"><div class="h">MSA meetup</div><div class="s">Personal · Muslim Student Assoc.</div></div><div class="pill" style="background:rgba(95,182,163,.13);color:var(--plutus)">PERS</div></div>
+            </div>
+
+            <!-- finance (Plutus) -->
+            <div class="card">
+              <div class="ch"><div class="title">Money watch</div><div class="owner"><span class="od" style="background:var(--plutus)"></span>Plutus</div></div>
+              <div class="fin">
+                <div class="frow"><div class="fl"><span>June debt cleared</span><span class="v">$2,140 / $5,092</span></div><div class="track"><i style="width:42%;background:var(--plutus)"></i></div></div>
+                <div class="frow"><div class="fl"><span>UFCU Visa (17.49%)</span><span class="v">priority</span></div><div class="track"><i style="width:64%;background:var(--argus)"></i></div></div>
+                <div class="frow"><div class="fl"><span>LLM spend this month</span><span class="v" style="color:var(--plutus)">$0.00 / $10</span></div><div class="track"><i style="width:2%;background:var(--plutus)"></i></div></div>
+                <div class="why" style="color:var(--plutus)">Heads up: hookah trend is your biggest variable cost. Redirect to the Visa to finish June early.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col">
+            <!-- email (Iris) -->
+            <div class="card">
+              <div class="ch"><div class="title">Inbox — needs action</div><div class="owner"><span class="od" style="background:var(--iris)"></span>Iris · drafts only</div></div>
+              <div class="item"><div class="ib"><div class="h">Ling Cheng — Workday I-9 report</div><div class="s">Overdue May cohort list, wants your read.</div><div class="why" style="color:var(--iris)">why: I-9 compliance</div></div></div>
+              <div class="item"><div class="ib"><div class="h">Sarah LaRose — Week 2 hours</div><div class="s">Confirm 19.5 hrs.</div><div class="why" style="color:var(--iris)">why: your supervisor</div></div></div>
+              <div class="item"><div class="ib"><div class="h">EAD reverification — employee case</div><div class="s">I-797C on file. Receipt alone does not prove continued authorization.</div><div class="why"><span class="tag red">7-DAY DEADLINE</span></div></div></div>
+            </div>
+
+            <!-- jobs (Athena) -->
+            <div class="card">
+              <div class="ch"><div class="title">Career signals</div><div class="owner"><span class="od" style="background:var(--athena)"></span>Athena · weekly</div></div>
+              <div class="item"><div class="rank" style="color:var(--athena);background:rgba(182,147,224,.14)">A</div><div class="ib"><div class="h">GRC Analyst Intern · Austin</div><div class="why" style="color:var(--athena)">fit: NIST 800-53, Security+ · missing: 1 framework</div></div></div>
+              <div class="item"><div class="rank" style="color:var(--athena);background:rgba(182,147,224,.14)">B</div><div class="ib"><div class="h">HRIS Analyst · Round Rock</div><div class="why" style="color:var(--athena)">fit: Workday, SQL · missing: Power BI</div></div></div>
+              <div class="why" style="margin-top:11px;color:var(--muted)">Build idea this week: a Power BI view of your I-9 audit data. 3 roles asked for it.</div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ===== AGENT FLOOR ===== -->
+      <section class="view" data-view="floor">
+        <p class="floor-intro">This is how the office runs. <b>Hermes</b> is the orchestrator: it routes every task, picks the model, and gates every write through your approval queue. Each specialist owns <b>one domain and its own private tools</b>. No agent reaches into another's tools, so nothing overlaps. <b>Argus</b> reads everyone's output to build your morning brief but holds no action tools of its own.</p>
+
+        <div class="map">
+          <svg viewBox="0 0 1000 470" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+            <defs>
+              <marker id="arr" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6z" fill="#d8a24a" opacity=".7"/></marker>
+            </defs>
+
+            <!-- links: specialists -> Hermes (solid gold) -->
+            <g stroke="#d8a24a" stroke-width="1.4" opacity=".55" fill="none">
+              <path d="M150 330 C 150 250, 500 240, 500 175"/>
+              <path d="M320 330 C 320 260, 500 240, 500 175"/>
+              <path d="M500 330 L 500 175"/>
+              <path d="M680 330 C 680 260, 500 240, 500 175"/>
+              <path d="M850 330 C 850 250, 500 240, 500 175"/>
+            </g>
+            <!-- Mnemosyne <-> Hermes -->
+            <path d="M500 405 C 760 405, 905 300, 870 200 C 850 150, 600 150, 500 150" stroke="#cf8fb0" stroke-width="1.2" fill="none" opacity=".4" stroke-dasharray="2 4"/>
+            <!-- feeds Argus (dashed) from Iris, Kairos, Plutus, Athena -->
+            <g stroke="#dd7a6c" stroke-width="1.2" opacity=".45" fill="none" stroke-dasharray="3 4">
+              <path d="M150 360 C 300 400, 380 380, 488 360"/>
+              <path d="M320 360 C 380 385, 430 375, 488 358"/>
+              <path d="M680 360 C 600 385, 560 375, 512 358"/>
+              <path d="M850 360 C 700 400, 620 380, 512 360"/>
+            </g>
+            <!-- Hermes -> You (thick, approval gate) -->
+            <path d="M500 95 L 500 50" stroke="#d8a24a" stroke-width="2.4" fill="none" marker-end="url(#arr)"/>
+
+            <!-- YOU -->
+            <g>
+              <rect x="410" y="14" width="180" height="34" rx="10" fill="#16161c" stroke="#d8a24a" stroke-opacity=".5"/>
+              <text x="500" y="35" fill="#ece9e2" font-size="12" text-anchor="middle" font-weight="500">OSMAN · approval gate</text>
+            </g>
+
+            <!-- HERMES -->
+            <g>
+              <rect x="408" y="96" width="184" height="78" rx="14" fill="#1a160e" stroke="#d8a24a" stroke-opacity=".55"/>
+              <text x="500" y="124" fill="#d8a24a" font-size="17" text-anchor="middle" font-family="Fraunces, serif" font-weight="600">Hermes</text>
+              <text x="500" y="142" fill="#9a958b" font-size="9.5" text-anchor="middle">ORCHESTRATOR</text>
+              <text x="500" y="159" fill="#6c6960" font-size="8.5" text-anchor="middle">routes · model router · approval gate</text>
+            </g>
+
+            <!-- specialist desks -->
+            <!-- Iris -->
+            <g><rect x="74" y="330" width="152" height="86" rx="13" fill="#16161c" stroke="#79c2c9" stroke-opacity=".4"/>
+              <text x="150" y="356" fill="#79c2c9" font-size="15" text-anchor="middle" font-family="Fraunces, serif" font-weight="600">Iris</text>
+              <text x="150" y="372" fill="#9a958b" font-size="8.5" text-anchor="middle">EMAIL</text>
+              <text x="150" y="390" fill="#6c6960" font-size="8" text-anchor="middle">gmail.read · classify</text>
+              <text x="150" y="402" fill="#6c6960" font-size="8" text-anchor="middle">draft-reply</text></g>
+            <!-- Kairos -->
+            <g><rect x="244" y="330" width="152" height="86" rx="13" fill="#16161c" stroke="#a8c07a" stroke-opacity=".4"/>
+              <text x="320" y="356" fill="#a8c07a" font-size="15" text-anchor="middle" font-family="Fraunces, serif" font-weight="600">Kairos</text>
+              <text x="320" y="372" fill="#9a958b" font-size="8.5" text-anchor="middle">CALENDAR &amp; TIME</text>
+              <text x="320" y="390" fill="#6c6960" font-size="8" text-anchor="middle">calendar.read · conflicts</text>
+              <text x="320" y="402" fill="#6c6960" font-size="8" text-anchor="middle">time-block</text></g>
+            <!-- Argus -->
+            <g><rect x="424" y="330" width="152" height="86" rx="13" fill="#1a100e" stroke="#dd7a6c" stroke-opacity=".5"/>
+              <text x="500" y="356" fill="#dd7a6c" font-size="15" text-anchor="middle" font-family="Fraunces, serif" font-weight="600">Argus</text>
+              <text x="500" y="372" fill="#9a958b" font-size="8.5" text-anchor="middle">SENTINEL · BRIEF</text>
+              <text x="500" y="390" fill="#6c6960" font-size="8" text-anchor="middle">synthesize · risk-flag</text>
+              <text x="500" y="402" fill="#6c6960" font-size="8" text-anchor="middle">read-only watcher</text></g>
+            <!-- Plutus -->
+            <g><rect x="604" y="330" width="152" height="86" rx="13" fill="#16161c" stroke="#5fb6a3" stroke-opacity=".4"/>
+              <text x="680" y="356" fill="#5fb6a3" font-size="15" text-anchor="middle" font-family="Fraunces, serif" font-weight="600">Plutus</text>
+              <text x="680" y="372" fill="#9a958b" font-size="8.5" text-anchor="middle">FINANCE &amp; SPEND</text>
+              <text x="680" y="390" fill="#6c6960" font-size="8" text-anchor="middle">finance.read · budget-cap</text>
+              <text x="680" y="402" fill="#6c6960" font-size="8" text-anchor="middle">cost-monitor</text></g>
+            <!-- Athena -->
+            <g><rect x="774" y="330" width="152" height="86" rx="13" fill="#16161c" stroke="#b693e0" stroke-opacity=".4"/>
+              <text x="850" y="356" fill="#b693e0" font-size="15" text-anchor="middle" font-family="Fraunces, serif" font-weight="600">Athena</text>
+              <text x="850" y="372" fill="#9a958b" font-size="8.5" text-anchor="middle">CAREER &amp; JOBS</text>
+              <text x="850" y="390" fill="#6c6960" font-size="8" text-anchor="middle">job-search · fit-score</text>
+              <text x="850" y="402" fill="#6c6960" font-size="8" text-anchor="middle">draft-application</text></g>
+            <!-- Mnemosyne -->
+            <g><rect x="424" y="424" width="152" height="34" rx="11" fill="#16161c" stroke="#cf8fb0" stroke-opacity=".4"/>
+              <text x="468" y="445" fill="#cf8fb0" font-size="12" text-anchor="middle" font-family="Fraunces, serif" font-weight="600">Mnemosyne</text>
+              <text x="545" y="445" fill="#6c6960" font-size="8" text-anchor="middle">memory</text></g>
+          </svg>
+          <div class="legend">
+            <span><i class="lk"></i> routes through Hermes</span>
+            <span><i class="lk dash"></i> feeds the daily brief (Argus reads)</span>
+            <span>↑ every write needs your approval</span>
+          </div>
+        </div>
+
+        <div class="ledger-h">No-overlap ledger</div>
+        <div class="ledger-sub">Each skill lives in exactly one agent. This is the build spec for Hermes — give each agent only these tools.</div>
+
+        <div class="lcard" style="border-left-color:var(--iris)">
+          <div class="lhead"><div class="lav" style="background:rgba(121,194,201,.16);color:var(--iris)">I</div><div><div class="nm">Iris</div><div class="rl">Email</div></div><div class="stat">● on duty</div></div>
+          <div class="skills"><span class="skill">gmail.read</span><span class="skill">classify</span><span class="skill">triage</span><span class="skill">draft-reply</span></div>
+          <div class="cc"><div class="can"><span class="mk">✓</span><span>Read, classify, and draft replies across 3 accounts</span></div><div class="cant"><span class="mk">✕</span><span class="muted">Send, delete, label, or touch calendar / money</span></div></div>
+        </div>
+
+        <div class="lcard" style="border-left-color:var(--kairos)">
+          <div class="lhead"><div class="lav" style="background:rgba(168,192,122,.16);color:var(--kairos)">K</div><div><div class="nm">Kairos</div><div class="rl">Calendar &amp; time</div></div><div class="stat">● on duty</div></div>
+          <div class="skills"><span class="skill">calendar.read</span><span class="skill">conflict-scan</span><span class="skill">time-block</span><span class="skill">prep-notes</span></div>
+          <div class="cc"><div class="can"><span class="mk">✓</span><span>Aggregate events, find conflicts, suggest time blocks</span></div><div class="cant"><span class="mk">✕</span><span class="muted">Create / move events without approval; send email</span></div></div>
+        </div>
+
+        <div class="lcard" style="border-left-color:var(--argus)">
+          <div class="lhead"><div class="lav" style="background:rgba(221,122,108,.16);color:var(--argus)">A</div><div><div class="nm">Argus</div><div class="rl">Sentinel &amp; daily brief</div></div><div class="stat">● on watch</div></div>
+          <div class="skills"><span class="skill">synthesize</span><span class="skill">risk-flag</span><span class="skill">anomaly-watch</span><span class="skill">morning-brief</span></div>
+          <div class="cc"><div class="can"><span class="mk">✓</span><span>Read every agent's output, greet you, flag risks &amp; suspicious mail</span></div><div class="cant"><span class="mk">✕</span><span class="muted">Hold any action tool — pure read-only watcher</span></div></div>
+        </div>
+
+        <div class="lcard" style="border-left-color:var(--plutus)">
+          <div class="lhead"><div class="lav" style="background:rgba(95,182,163,.16);color:var(--plutus)">P</div><div><div class="nm">Plutus</div><div class="rl">Finance &amp; spend</div></div><div class="stat">● on duty</div></div>
+          <div class="skills"><span class="skill">finance.read</span><span class="skill">budget-cap</span><span class="skill">llm-cost-monitor</span><span class="skill">debt-tracker</span></div>
+          <div class="cc"><div class="can"><span class="mk">✓</span><span>Track UFCU spend, LLM cost cap, June debt-paydown progress</span></div><div class="cant"><span class="mk">✕</span><span class="muted">Move money or make any transaction</span></div></div>
+        </div>
+
+        <div class="lcard" style="border-left-color:var(--athena)">
+          <div class="lhead"><div class="lav" style="background:rgba(182,147,224,.16);color:var(--athena)">A</div><div><div class="nm">Athena</div><div class="rl">Career &amp; jobs</div></div><div class="stat">○ idle</div></div>
+          <div class="skills"><span class="skill">job-search</span><span class="skill">fit-score</span><span class="skill">skill-gap</span><span class="skill">draft-application</span><span class="skill">github-scout</span></div>
+          <div class="cc"><div class="can"><span class="mk">✓</span><span>Find &amp; rank roles, draft resumes/letters (no em dashes, your rules)</span></div><div class="cant"><span class="mk">✕</span><span class="muted">Apply or message recruiters without approval</span></div></div>
+        </div>
+
+        <div class="lcard" style="border-left-color:var(--mnemo)">
+          <div class="lhead"><div class="lav" style="background:rgba(207,143,176,.16);color:var(--mnemo)">M</div><div><div class="nm">Mnemosyne</div><div class="rl">Memory</div></div><div class="stat">○ idle</div></div>
+          <div class="skills"><span class="skill">memory.read</span><span class="skill">memory-suggest</span><span class="skill">context-cards</span><span class="skill">stale-cleanup</span></div>
+          <div class="cc"><div class="can"><span class="mk">✓</span><span>Suggest what to remember, surface context cards</span></div><div class="cant"><span class="mk">✕</span><span class="muted">Save or delete memory without your approval</span></div></div>
+        </div>
+
+        <div class="lcard" style="border-left-color:var(--hermes)">
+          <div class="lhead"><div class="lav" style="background:rgba(216,162,74,.18);color:var(--hermes)">H</div><div><div class="nm">Hermes</div><div class="rl">Orchestrator</div></div><div class="stat">● conducting</div></div>
+          <div class="skills"><span class="skill">model-router</span><span class="skill">approval-queue</span><span class="skill">a2a-handoff</span><span class="skill">decisions-log</span></div>
+          <div class="cc"><div class="can"><span class="mk">✓</span><span>Route tasks, pick model, hand off between agents, gate writes</span></div><div class="cant"><span class="mk">✕</span><span class="muted">Read raw email/finance data itself — it delegates</span></div></div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<script>
+  // segmented view switch
+  const segs=document.querySelectorAll('.seg button'), views=document.querySelectorAll('.view'), scroll=document.querySelector('.scroll');
+  segs.forEach(b=>b.addEventListener('click',()=>{
+    segs.forEach(x=>x.classList.remove('on'));b.classList.add('on');
+    views.forEach(v=>v.classList.toggle('active',v.dataset.view===b.dataset.seg));
+    scroll.scrollTo({top:0,behavior:'smooth'});
+  }));
+  // clicking an agent jumps to the floor
+  document.querySelectorAll('.agent').forEach(a=>a.addEventListener('click',()=>{
+    document.querySelectorAll('.agent').forEach(x=>x.classList.remove('active'));a.classList.add('active');
+    segs.forEach(x=>x.classList.remove('on'));document.querySelector('[data-seg="floor"]').classList.add('on');
+    views.forEach(v=>v.classList.toggle('active',v.dataset.view==='floor'));
+    scroll.scrollTo({top:0,behavior:'smooth'});
+  }));
+</script>
+</body>
+</html>

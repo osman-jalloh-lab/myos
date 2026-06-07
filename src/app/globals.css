@@ -1,0 +1,30 @@
+:root {
+  --bg: #0a0a0c;
+  --panel: #101015;
+  --surface: #16161c;
+  --surface-2: #1d1d25;
+  --line: rgba(255,255,255,.07);
+  --line-2: rgba(255,255,255,.12);
+  --text: #ece9e2;
+  --muted: #9a958b;
+  --faint: #6c6960;
+  --hermes: #d8a24a;
+  --iris: #79c2c9;
+  --kairos: #a8c07a;
+  --argus: #dd7a6c;
+  --plutus: #5fb6a3;
+  --athena: #b693e0;
+  --mnemo: #cf8fb0;
+  --serif: var(--font-serif, Georgia, serif);
+  --sans: var(--font-sans, system-ui, sans-serif);
+  --mono: var(--font-mono, monospace);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: #060608;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}

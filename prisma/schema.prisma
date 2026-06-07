@@ -1,0 +1,116 @@
+// Hermes OS — starter schema. Tables mirror docs/HERMES_OS_MASTER_SPEC.md section 8.
+// Uses Turso (libSQL) via the driver adapter at runtime; see src/lib/db.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id            String          @id @default(cuid())
+  primaryEmail  String          @unique
+  name          String?
+  picture       String?
+  createdAt     DateTime        @default(now())
+  accounts      GoogleAccount[]
+  briefs        DailyBrief[]
+  tasks         Task[]
+  approvals     ApprovalAction[]
+  usage         ModelUsage[]
+  memories      Memory[]
+}
+
+model GoogleAccount {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  googleSub    String
+  email        String
+  label        String   @default("Other") // Work | UT | Personal | Other
+  accessToken  String
+  refreshToken String?
+  expiresAt    DateTime
+  scopes       String   @default("")       // space-separated
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  @@unique([userId, googleSub])
+}
+
+model AgentRun {
+  id            String   @id @default(cuid())
+  agentName     String   // hermes|iris|kairos|argus|plutus|athena|mnemosyne
+  inputSummary  String?
+  outputSummary String?
+  modelProvider String?
+  status        String   @default("completed")
+  createdAt     DateTime @default(now())
+}
+
+model DailyBrief {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  briefDate DateTime
+  content   String   // JSON
+  createdAt DateTime @default(now())
+  @@unique([userId, briefDate])
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source      String?
+  sourceRef   String?
+  title       String
+  description String?
+  dueAt       DateTime?
+  status      String   @default("open")
+  priority    String   @default("medium")
+  createdAt   DateTime @default(now())
+}
+
+model ApprovalAction {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actionType String   // draft_email|send_email|create_event|create_task|label_email
+  payload    String   // JSON
+  status     String   @default("pending") // pending|approved|rejected|executed
+  createdAt  DateTime @default(now())
+  resolvedAt DateTime?
+}
+
+model ModelUsage {
+  id          String   @id @default(cuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider    String
+  taskType    String?
+  dataClass   String?  // PUBLIC|PERSONAL|PRIVATE|SECRET
+  inputTokens Int?
+  outputTokens Int?
+  estCostUsd  Float?
+  createdAt   DateTime @default(now())
+}
+
+model Memory {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fact       String
+  source     String?
+  approvedAt DateTime?
+  createdAt  DateTime @default(now())
+}
+
+model DecisionLog {
+  id        String   @id @default(cuid())
+  title     String
+  decision  String
+  reason    String?
+  createdAt DateTime @default(now())
+}

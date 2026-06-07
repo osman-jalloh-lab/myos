@@ -1,0 +1,6 @@
+---
+description: Hermes OS operating rules
+alwaysApply: true
+---
+Read and follow CLAUDE.md, context/about-osman.md, and docs/HERMES_OS_MASTER_SPEC.md.
+Build in stages, stop after each. Give each agent ONLY its own tools. Default to Groq.
