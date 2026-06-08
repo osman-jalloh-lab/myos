@@ -188,7 +188,12 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
   {
     match: /inbox|email|unread|gmail/,
     taskType: "chat-email",
-    load: async (userId) => `Inbox triage: ${JSON.stringify(await triageInbox(userId))}`,
+    load: async (userId) => {
+      const t = await triageInbox(userId);
+      const top = t.needsAttention.slice(0, 5).map((m) => ({ from: m.from, subject: m.subject }));
+      const cats = Object.fromEntries(Object.entries(t.byCategory).map(([k, v]) => [k, v.length]));
+      return `Inbox: ${t.unread} unread of ${t.total} total. Categories: ${JSON.stringify(cats)}. Needs attention: ${JSON.stringify(top)}`;
+    },
   },
   {
     match: /spend|budget|finance|debt|cost|money|expense/,
@@ -258,7 +263,12 @@ export const AGENT_PROFILES: Record<string, AgentProfile> = {
 inbox and draft replies (drafts only — nothing sends without his approval). Speak
 plainly and briefly about what's in the inbox. You never claim to have sent or
 replied to anything yourself.`,
-    load: async (userId) => `Inbox triage: ${JSON.stringify(await triageInbox(userId))}`,
+    load: async (userId) => {
+      const t = await triageInbox(userId);
+      const top = t.needsAttention.slice(0, 5).map((m) => ({ from: m.from, subject: m.subject }));
+      const cats = Object.fromEntries(Object.entries(t.byCategory).map(([k, v]) => [k, v.length]));
+      return `Inbox: ${t.unread} unread of ${t.total} total. Categories: ${JSON.stringify(cats)}. Needs attention: ${JSON.stringify(top)}`;
+    },
   },
   kairos: {
     displayName: "Kairos",
@@ -418,7 +428,9 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
 
   const q = trimmed.toLowerCase();
   const matched = buildContext(q);
-  const context = matched ? await matched.load(userId, trimmed) : "";
+  const rawContext = matched ? await matched.load(userId, trimmed) : "";
+  // Cap context at 3000 chars to stay within Groq free-tier TPM limits.
+  const context = rawContext.slice(0, 3000);
 
   const result = await callModel({
     userId,
