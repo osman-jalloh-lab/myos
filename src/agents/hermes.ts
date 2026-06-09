@@ -22,6 +22,7 @@ import { plutusReport } from "@/agents/plutus";
 import { appTrackerSummary } from "@/agents/athena";
 import { getContextCards, readMemory } from "@/agents/mnemosyne";
 import { releaseWatch, repoScoutTool, SCOUT_TOPICS } from "@/agents/sophos";
+import { incomeBrief, passiveIncomeScan } from "@/agents/tyche";
 import { OSMAN_CONTEXT } from "@/agents/souls/osman";
 
 export const hermes = {
@@ -280,6 +281,22 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
         : "Sophos hasn't run a skill brief yet — nothing to report from it.";
     },
   },
+  {
+    // Covers: "make money", "earn money", "side hustle", "freelance", "gig",
+    // "income", "tyche", "bug bounty", "passive income", "campus job",
+    // "money making", "payday" (outside Plutus spending context).
+    match: /make money|earn|side hustle|freelance gig|gig work|income opportunity|tyche|bug bounty|passive income|campus job|money making|lavaall lead/,
+    taskType: "chat-income",
+    load: async () => {
+      const latest = await prisma.agentRun.findFirst({
+        where: { agentName: "tyche" },
+        orderBy: { createdAt: "desc" },
+      });
+      if (latest) return `Tyche's most recent income brief (${latest.createdAt.toISOString().slice(0, 10)}): ${latest.outputSummary}`;
+      const passive = passiveIncomeScan();
+      return `Standing income opportunities (Tyche hasn't run a live scan yet): ${passive.slice(0, 3).map((p) => `${p.title} — ${p.earning} — ${p.authorization}`).join(" | ")}`;
+    },
+  },
 ];
 
 function buildContext(q: string): ContextMatcher | null {
@@ -402,6 +419,13 @@ function formatDirect(taskType: string, context: string): string | null {
         return cleaned.slice(0, 600) || null;
       }
 
+      case "chat-income": {
+        const cleaned = context
+          .replace(/^Tyche's most recent income brief \([^)]+\):\s*/, "")
+          .replace(/^Standing income opportunities[^:]+:\s*/, "");
+        return cleaned.slice(0, 700) || null;
+      }
+
       default:
         return null;
     }
@@ -419,6 +443,7 @@ const AGENT_DIRECT_TASK: Record<string, string> = {
   mnemosyne: "chat-memory",
   argus: "chat-brief",
   sophos: "chat-skills",
+  tyche: "chat-income",
 };
 
 // ── model override detection ──────────────────────────────────────────────────
@@ -702,6 +727,42 @@ ${OSMAN_CONTEXT}`,
         repoScoutTool(query || SCOUT_TOPICS[0]).catch(() => []),
       ]);
       return `Recent Anthropic release notes: ${notes ? notes.slice(0, 1200) : "unavailable this run"}\nGitHub repos found for "${query}": ${JSON.stringify(repos.slice(0, 5))}`;
+    },
+  },
+  tyche: {
+    displayName: "Tyche",
+    systemPrompt: `You are Tyche, the income opportunity scout inside Hermes OS.
+
+Root: Tyche (Greek goddess of fortune and opportunity) — the one who finds the opening and puts Osman in front of it.
+Mission: Surface real, legal, earnable income opportunities for Osman as an F-1 international student. Freelance gigs, passive income plays, on-campus and CPT-eligible work. You know his constraints cold and you never surface something he cannot legally take.
+
+What you own:
+- Freelance gig scouting: Upwork, Fiverr, HackerOne, IT consulting gigs matching his skills.
+- Passive income pipeline: digital products, bug bounties, paid research studies.
+- On-campus and CPT job alerts: postings that fit around his 19.5 hrs/week at OCIO.
+- LAVAALL opportunity feed: Austin SMB IT contracts, hardware resale, new client verticals.
+
+Authorization rules you always state:
+- On-campus work: F-1 OK up to 20 hrs/week while in session. He already uses 19.5 — flag load.
+- Off-campus freelance: requires CPT. Always say "verify CPT with DSO."
+- Passive income (digital products, bug bounties, research studies): F-1 OK, no authorization needed.
+
+What you do NOT do:
+- You never surface multi-level marketing, crypto schemes, or anything requiring upfront capital.
+- You do not draft the proposal (Athena does). You find the opportunity.
+- You do not overlap with Athena's career-track job searching.
+
+This is a chat interface. Numbers first. Authorization status always stated. Load estimate always included. No em dashes.
+
+${OSMAN_CONTEXT}`,
+    load: async (userId) => {
+      const latest = await prisma.agentRun.findFirst({
+        where: { agentName: "tyche" },
+        orderBy: { createdAt: "desc" },
+      });
+      if (latest) return `Tyche's most recent income brief (${latest.createdAt.toISOString().slice(0, 10)}): ${latest.outputSummary}`;
+      const passive = passiveIncomeScan();
+      return `Standing income opportunities: ${JSON.stringify(passive.slice(0, 4))}`;
     },
   },
 };

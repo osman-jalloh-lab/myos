@@ -210,6 +210,31 @@
       "intents": ["what should i focus on", "top priority", "what matters most"],
       "task": "hermes.top_decision",
       "tools": []
+    },
+
+    {
+      "agent": "tyche",
+      "intents": ["make money", "earn money", "side hustle", "freelance gig", "income opportunity"],
+      "task": "tyche.weekly_gig_scan",
+      "tools": ["indeed", "ziprecruiter"]
+    },
+    {
+      "agent": "tyche",
+      "intents": ["passive income", "bug bounty", "sell a template", "github sponsors", "paid study"],
+      "task": "tyche.passive_income_scan",
+      "tools": []
+    },
+    {
+      "agent": "tyche",
+      "intents": ["campus job", "on campus work", "student worker", "cpt job"],
+      "task": "tyche.weekly_gig_scan",
+      "tools": ["indeed"]
+    },
+    {
+      "agent": "tyche",
+      "intents": ["lavaall leads", "lavaall clients", "it contracts austin"],
+      "task": "tyche.lavaall_leads",
+      "tools": []
     }
   ],
 

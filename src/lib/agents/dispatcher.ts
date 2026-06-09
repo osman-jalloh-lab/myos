@@ -12,6 +12,7 @@ import { plutusReport } from "@/agents/plutus";
 import { appTrackerSummary } from "@/agents/athena";
 import { readMemory } from "@/agents/mnemosyne";
 import { releaseWatch } from "@/agents/sophos";
+import { incomeBrief, passiveIncomeScan, gigScout, campusJobScan } from "@/agents/tyche";
 import { logHandoff, recentDecisions } from "@/agents/hermes";
 import { listApprovals } from "@/lib/approvals";
 
@@ -301,6 +302,34 @@ async function runAgentTask(task: AgentTask): Promise<unknown> {
       case "mnemosyne.reconcile_context": {
         const summary = "Context reconciliation reminder: review OSMAN.md in src/agents/souls/ — update roles, balances, deadlines if anything changed this week.";
         await logHandoff({ agentName: "mnemosyne", inputSummary: "reconcile_context", outputSummary: summary });
+        results[userId] = { reminder: summary };
+        break;
+      }
+
+      // ── TYCHE ────────────────────────────────────────────────────────────────
+
+      case "tyche.weekly_gig_scan": {
+        const [gigs, campus] = await Promise.all([
+          gigScout().catch(() => []),
+          campusJobScan().catch(() => []),
+        ]);
+        const summary = `Gig scan: ${gigs.length} freelance listings, ${campus.length} on-campus listings found.`;
+        await logHandoff({ agentName: "tyche", inputSummary: "weekly_gig_scan", outputSummary: summary });
+        results[userId] = { gigs: gigs.length, campusJobs: campus.length, samples: [...gigs, ...campus].slice(0, 3).map((g) => g.title) };
+        break;
+      }
+
+      case "tyche.passive_income_scan": {
+        const passive = passiveIncomeScan();
+        const summary = `Passive income scan: ${passive.length} standing opportunities. Top: ${passive[0]?.title ?? "none"}.`;
+        await logHandoff({ agentName: "tyche", inputSummary: "passive_income_scan", outputSummary: summary });
+        results[userId] = { count: passive.length, top: passive.slice(0, 3).map((p) => p.title) };
+        break;
+      }
+
+      case "tyche.lavaall_leads": {
+        const summary = "Monthly LAVAALL review: check Austin SMB IT contract boards (Clutch, Bark, Thumbtack) for hardware/support leads. Verify any new client vertical fits LAVAALL's current capacity.";
+        await logHandoff({ agentName: "tyche", inputSummary: "lavaall_leads", outputSummary: summary });
         results[userId] = { reminder: summary };
         break;
       }

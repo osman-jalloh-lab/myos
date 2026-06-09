@@ -242,5 +242,34 @@
     "cadence": "on_trigger",
     "description": "Capture a decision the moment it is made, with its reasoning.",
     "soul": "mnemosyne/SOUL.md"
+  },
+
+  {
+    "id": "tyche.weekly_gig_scan",
+    "agent": "tyche",
+    "cadence": "weekly",
+    "description": "Scan for freelance gigs and on-campus postings matching Osman's skills. Return ranked list with pay, authorization status, and load estimate.",
+    "soul": "tyche/SOUL.md"
+  },
+  {
+    "id": "tyche.passive_income_scan",
+    "agent": "tyche",
+    "cadence": "weekly",
+    "description": "Surface the top passive income opportunities available this week: digital products, bug bounties, paid research studies, GitHub sponsorship.",
+    "soul": "tyche/SOUL.md"
+  },
+  {
+    "id": "tyche.lavaall_leads",
+    "agent": "tyche",
+    "cadence": "monthly",
+    "description": "Review LAVAALL opportunity pipeline: new Austin SMB IT contracts, hardware resale margins, new client verticals worth pursuing.",
+    "soul": "tyche/SOUL.md"
+  },
+  {
+    "id": "tyche.income_brief",
+    "agent": "tyche",
+    "cadence": "on_trigger",
+    "description": "Surface income opportunities on demand when Osman asks.",
+    "soul": "tyche/SOUL.md"
   }
 ]
