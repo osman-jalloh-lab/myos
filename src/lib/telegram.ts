@@ -55,6 +55,27 @@ export async function setTelegramWebhook(url: string, secretToken: string): Prom
   return res.json();
 }
 
+export async function getWebhookInfo(): Promise<{ url: string; has_custom_certificate: boolean; pending_update_count: number }> {
+  const base = requireApiBase();
+  const res = await fetch(`${base}/getWebhookInfo`);
+  const data = await res.json() as { ok: boolean; result: { url: string; has_custom_certificate: boolean; pending_update_count: number } };
+  return data.result;
+}
+
+// Checks if the webhook is registered to the expected URL and registers it if not.
+// Safe to call on every cron tick — only calls setWebhook when registration is missing or wrong.
+export async function ensureWebhookRegistered(expectedUrl: string): Promise<void> {
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
+  if (!secret) return; // can't register without a secret
+  try {
+    const info = await getWebhookInfo();
+    if (info.url === expectedUrl) return; // already correct
+    await setTelegramWebhook(expectedUrl, secret);
+  } catch {
+    // non-fatal — cron still runs even if registration fails
+  }
+}
+
 // ── Inbound update shapes (only the fields we read) ──────────────────────────
 
 export interface TelegramUpdate {

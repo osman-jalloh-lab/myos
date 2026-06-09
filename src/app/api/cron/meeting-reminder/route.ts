@@ -5,7 +5,9 @@
 
 import { prisma } from "@/lib/db";
 import { fetchCalendarEvents } from "@/lib/calendar";
-import { sendTelegramMessage } from "@/lib/telegram";
+import { sendTelegramMessage, ensureWebhookRegistered } from "@/lib/telegram";
+
+const WEBHOOK_URL = "https://www.parawi.com/api/telegram/webhook";
 
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
 const LOOKAHEAD_MS = 10 * 60 * 1000; // notify if meeting starts within 10 min
@@ -19,6 +21,9 @@ export async function GET(req: Request) {
   if (!OWNER_CHAT_ID) {
     return Response.json({ ok: false, reason: "TELEGRAM_OWNER_CHAT_ID not set" });
   }
+
+  // Auto-register Telegram webhook if not already set (no-op if already correct)
+  await ensureWebhookRegistered(WEBHOOK_URL);
 
   const users = await prisma.user.findMany({ select: { id: true } });
   const now = new Date();
