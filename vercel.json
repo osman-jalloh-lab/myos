@@ -2,10 +2,14 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "crons": [
-    { "path": "/api/cron/daily-brief", "schedule": "30 12 * * *" },
-    { "path": "/api/cron/job-scout", "schedule": "0 13 * * 1" },
-    { "path": "/api/cron/github-scout", "schedule": "0 13 * * 1" },
-    { "path": "/api/cron/skills-scout", "schedule": "30 13 * * 1" }
+    { "path": "/api/cron/daily-brief",  "schedule": "30 12 * * *"  },
+    { "path": "/api/cron/job-scout",    "schedule": "0 13 * * 1"   },
+    { "path": "/api/cron/github-scout", "schedule": "0 13 * * 1"   },
+    { "path": "/api/cron/skills-scout", "schedule": "30 13 * * 1"  },
+    { "path": "/api/cron/daily_am",     "schedule": "0 13 * * *"   },
+    { "path": "/api/cron/daily_pm",     "schedule": "0 2 * * *"    },
+    { "path": "/api/cron/weekly",       "schedule": "0 13 * * 1"   },
+    { "path": "/api/cron/monthly",      "schedule": "0 13 1 * *"   }
   ],
   "functions": {
     "app/api/**/*": { "maxDuration": 60 }

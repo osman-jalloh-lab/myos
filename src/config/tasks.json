@@ -1,0 +1,239 @@
+[
+  {
+    "id": "hermes.morning_brief",
+    "agent": "hermes",
+    "cadence": "daily_am",
+    "description": "Assemble and deliver the morning brief: schedule, deadlines, comms, money flags, system health.",
+    "soul": "hermes/SOUL.md"
+  },
+  {
+    "id": "hermes.eod_status",
+    "agent": "hermes",
+    "cadence": "daily_pm",
+    "description": "Collect end-of-day reports from each agent into a one-line system status.",
+    "soul": "hermes/SOUL.md"
+  },
+  {
+    "id": "hermes.agent_health_check",
+    "agent": "hermes",
+    "cadence": "weekly",
+    "description": "Confirm each agent ran its recurring tasks this week. Flag any that stalled.",
+    "soul": "hermes/SOUL.md"
+  },
+  {
+    "id": "hermes.top_decision",
+    "agent": "hermes",
+    "cadence": "weekly",
+    "description": "Surface the single most important decision Osman needs to make this week.",
+    "soul": "hermes/SOUL.md"
+  },
+  {
+    "id": "hermes.route_request",
+    "agent": "hermes",
+    "cadence": "on_trigger",
+    "description": "Route an incoming request to the correct agent and confirm handoff.",
+    "soul": "hermes/SOUL.md"
+  },
+
+  {
+    "id": "iris.triage_email",
+    "agent": "iris",
+    "cadence": "daily_am",
+    "description": "Triage overnight email into needs-reply, FYI, recruiter, compliance, noise. Hand Hermes a one-line comms summary.",
+    "soul": "iris/SOUL.md"
+  },
+  {
+    "id": "iris.draft_replies",
+    "agent": "iris",
+    "cadence": "daily_am",
+    "description": "Draft replies for the needs-reply bucket. Save as drafts FROM osman.jalloh@g.austincc.edu. Never auto-send.",
+    "soul": "iris/SOUL.md"
+  },
+  {
+    "id": "iris.clear_telegram",
+    "agent": "iris",
+    "cadence": "daily_pm",
+    "description": "Clear the Telegram relay queue. Confirm nothing is waiting on Osman.",
+    "soul": "iris/SOUL.md"
+  },
+  {
+    "id": "iris.flag_stale_threads",
+    "agent": "iris",
+    "cadence": "weekly",
+    "description": "Flag any thread 5+ days without a reply that still matters.",
+    "soul": "iris/SOUL.md"
+  },
+  {
+    "id": "iris.recruiter_followups",
+    "agent": "iris",
+    "cadence": "on_trigger",
+    "description": "Draft recruiter follow-ups and job-related comms. Loop in Athena for wording. Save as drafts.",
+    "soul": "iris/SOUL.md"
+  },
+
+  {
+    "id": "kairos.today_schedule",
+    "agent": "kairos",
+    "cadence": "daily_am",
+    "description": "Pull today's schedule and any deadline inside 7 days. Hand to Hermes for the brief.",
+    "soul": "kairos/SOUL.md"
+  },
+  {
+    "id": "kairos.join_links",
+    "agent": "kairos",
+    "cadence": "daily_am",
+    "description": "Add join links to any meeting that lacks one. Flag double-bookings.",
+    "soul": "kairos/SOUL.md"
+  },
+  {
+    "id": "kairos.week_ahead",
+    "agent": "kairos",
+    "cadence": "weekly",
+    "description": "Deliver a week-ahead view: every commitment and deadline, Monday to Sunday.",
+    "soul": "kairos/SOUL.md"
+  },
+  {
+    "id": "kairos.month_ahead",
+    "agent": "kairos",
+    "cadence": "monthly",
+    "description": "Deliver a month-ahead view. Flag the housing decision and any I-9 reverification dates well in advance.",
+    "soul": "kairos/SOUL.md"
+  },
+  {
+    "id": "kairos.schedule_event",
+    "agent": "kairos",
+    "cadence": "on_trigger",
+    "description": "Schedule events requested by Osman or surfaced by Iris from email.",
+    "soul": "kairos/SOUL.md"
+  },
+
+  {
+    "id": "argus.deploy_health",
+    "agent": "argus",
+    "cadence": "daily_am",
+    "description": "Check all production deployments are up (Vercel, parawi.com, Netlify projects). Flag any down or failed build to Hermes.",
+    "soul": "argus/SOUL.md"
+  },
+  {
+    "id": "argus.advisories_scan",
+    "agent": "argus",
+    "cadence": "daily_am",
+    "description": "Scan for new advisories affecting his stack (Next.js, NextAuth, Prisma, Turso, Vercel, Cloudflare). Surface only what is actionable.",
+    "soul": "argus/SOUL.md"
+  },
+  {
+    "id": "argus.dependency_audit",
+    "agent": "argus",
+    "cadence": "weekly",
+    "description": "Run a dependency audit across active repos. Report high/critical findings with the fix.",
+    "soul": "argus/SOUL.md"
+  },
+  {
+    "id": "argus.secret_check",
+    "agent": "argus",
+    "cadence": "weekly",
+    "description": "Confirm no secrets or env values are exposed in any public repo or deploy log.",
+    "soul": "argus/SOUL.md"
+  },
+  {
+    "id": "argus.investigate",
+    "agent": "argus",
+    "cadence": "on_trigger",
+    "description": "Investigate any outage, failed deploy, or suspicious access pattern.",
+    "soul": "argus/SOUL.md"
+  },
+
+  {
+    "id": "plutus.money_checkin",
+    "agent": "plutus",
+    "cadence": "monthly",
+    "description": "Run the full money check-in: total owed, money in/out, spending by category, progress vs the ~$5,092 plan, one lever. Hand headline to Hermes.",
+    "soul": "plutus/SOUL.md"
+  },
+  {
+    "id": "plutus.balance_burn",
+    "agent": "plutus",
+    "cadence": "weekly",
+    "description": "Quick balance and burn-rate check. Flag if spending is trending over plan.",
+    "soul": "plutus/SOUL.md"
+  },
+  {
+    "id": "plutus.categorize_txn",
+    "agent": "plutus",
+    "cadence": "on_trigger",
+    "description": "Categorize any flagged transaction passed by Iris or Hermes.",
+    "soul": "plutus/SOUL.md"
+  },
+  {
+    "id": "plutus.payday_allocation",
+    "agent": "plutus",
+    "cadence": "on_trigger",
+    "description": "On payday, propose an allocation: card paydown first, then essentials, then buffer.",
+    "soul": "plutus/SOUL.md"
+  },
+
+  {
+    "id": "athena.review_tracker",
+    "agent": "athena",
+    "cadence": "weekly",
+    "description": "Review the application tracker. Flag anything needing a follow-up and hand wording to Iris.",
+    "soul": "athena/SOUL.md"
+  },
+  {
+    "id": "athena.tailor_resume",
+    "agent": "athena",
+    "cadence": "on_trigger",
+    "description": "Tailor a resume to a target job. Run ATS, do not deliver below 95.",
+    "soul": "athena/SOUL.md"
+  },
+  {
+    "id": "athena.draft_cover_letter",
+    "agent": "athena",
+    "cadence": "on_trigger",
+    "description": "Draft a cover letter using hook-proof-honest-close, under 250 words.",
+    "soul": "athena/SOUL.md"
+  },
+  {
+    "id": "athena.analyze_rejection",
+    "agent": "athena",
+    "cadence": "on_trigger",
+    "description": "Analyze a rejection for a fixable pattern (keywords, framing, level mismatch).",
+    "soul": "athena/SOUL.md"
+  },
+
+  {
+    "id": "mnemosyne.log_day",
+    "agent": "mnemosyne",
+    "cadence": "daily_pm",
+    "description": "Log the day: decisions made, what changed, what is still open.",
+    "soul": "mnemosyne/SOUL.md"
+  },
+  {
+    "id": "mnemosyne.weekly_summary",
+    "agent": "mnemosyne",
+    "cadence": "weekly",
+    "description": "Produce a one-page summary of the week. Hand the headline to Hermes.",
+    "soul": "mnemosyne/SOUL.md"
+  },
+  {
+    "id": "mnemosyne.reconcile_context",
+    "agent": "mnemosyne",
+    "cadence": "weekly",
+    "description": "Reconcile _shared/OSMAN.md against reality. Update anything stale: roles, priorities, balances, deadlines.",
+    "soul": "mnemosyne/SOUL.md"
+  },
+  {
+    "id": "mnemosyne.retrieve",
+    "agent": "mnemosyne",
+    "cadence": "on_trigger",
+    "description": "Answer a retrieval request from another agent or from Osman.",
+    "soul": "mnemosyne/SOUL.md"
+  },
+  {
+    "id": "mnemosyne.capture_decision",
+    "agent": "mnemosyne",
+    "cadence": "on_trigger",
+    "description": "Capture a decision the moment it is made, with its reasoning.",
+    "soul": "mnemosyne/SOUL.md"
+  }
+]
