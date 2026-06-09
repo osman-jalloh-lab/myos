@@ -116,6 +116,9 @@ export default async function Home() {
 
           {session ? (
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <a href="/command-center" style={{ ...approvalLink, background: "linear-gradient(180deg, #6F4FE0, #5B2EC8)", borderColor: "rgba(139,92,246,.5)" }}>
+                Command Center
+              </a>
               <a href="/approvals" style={approvalLink}>
                 Approval queue
                 {counts.pending > 0 && <span style={pendingBadge}>{counts.pending}</span>}
