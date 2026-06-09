@@ -29,10 +29,21 @@ export async function POST(req: Request) {
     );
   }
 
-  // ── auth ───────────────────────────────────────────────────────────────────
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // ── auth: session (browser) OR API key (MCP gateway) ─────────────────────
+  const incomingKey = req.headers.get("X-Parawi-Key");
+  const configuredKey = process.env.PARAWI_MCP_API_KEY;
+  const isMcpGateway = configuredKey && incomingKey && incomingKey === configuredKey;
+
+  let userId: string;
+  if (isMcpGateway) {
+    // MCP gateway path — authenticated by shared secret, runs as system user
+    userId = "mcp-gateway";
+  } else {
+    const session = await auth();
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    userId = session.user.id;
   }
 
   // ── parse body ─────────────────────────────────────────────────────────────
@@ -48,9 +59,9 @@ export async function POST(req: Request) {
   }
 
   const execReq: ExecutionRequest = {
-    userId: session.user.id,
+    userId,
     message: body.message.trim(),
-    source: (body.source as ExecutionRequest["source"]) ?? "chat",
+    source: (body.source as ExecutionRequest["source"]) ?? "api",
     sessionId: body.sessionId,
     context: body.context,
   };

@@ -1,0 +1,26 @@
+{
+  "name": "email.triage",
+  "description": "Fetch and triage your inbox. Scans recent emails for action-needed messages — job follow-ups, recruiter replies, interview requests, deadlines. Requires a linked Google account.",
+  "category": "communication",
+  "agent": "iris",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "Natural language request, e.g. 'check my email for job follow-ups' or 'what's in my inbox today'"
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.email.search",
+    "risk": "read",
+    "requiresApproval": false,
+    "pipeline": ["internal.email.search", "internal.email.classifyImportant"]
+  },
+  "examples": [
+    "check my email for job follow-ups",
+    "what's in my inbox today?",
+    "any recruiter emails this week?",
+    "triage my inbox",
+    "any unread messages I need to act on?"
+  ]
+}

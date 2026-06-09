@@ -1,0 +1,24 @@
+{
+  "name": "tasks.create",
+  "description": "Create a task in Parawi/MyOS using the existing task system. Parses a title and optional due date from your message. Use for reminders, follow-ups, and to-dos.",
+  "category": "productivity",
+  "agent": "hermes",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "Natural language task description, e.g. 'create a task to follow up with the recruiter at Leidos tomorrow'"
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.tasks.create",
+    "risk": "internal_write",
+    "requiresApproval": false
+  },
+  "examples": [
+    "create a task to follow up with the Leidos recruiter tomorrow",
+    "remind me to submit my timesheet by Friday",
+    "add a task: review the job offer from Amazon",
+    "todo: apply to the GRC analyst role at Booz Allen"
+  ]
+}

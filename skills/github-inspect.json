@@ -1,0 +1,27 @@
+{
+  "name": "github.inspectRepo",
+  "description": "Inspect a GitHub repository — fetch metadata, language, stars, forks, topics, license, and README preview. Pass a full GitHub URL or a message containing one.",
+  "category": "development",
+  "agent": "argus",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "Natural language message containing a GitHub URL, e.g. 'inspect https://github.com/owner/repo'"
+    },
+    "repoUrl": {
+      "type": "string",
+      "description": "Direct GitHub repo URL (optional — extracted from message if omitted)"
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.github.inspectRepo",
+    "risk": "read",
+    "requiresApproval": false
+  },
+  "examples": [
+    "inspect https://github.com/vercel/next.js",
+    "what is this repo https://github.com/anthropics/anthropic-sdk-python",
+    "tell me about https://github.com/owner/repo"
+  ]
+}

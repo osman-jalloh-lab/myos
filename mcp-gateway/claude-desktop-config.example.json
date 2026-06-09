@@ -1,0 +1,17 @@
+{
+  "_comment": "Add this mcpServers block to your Claude Desktop config at: %APPDATA%\\Claude\\claude_desktop_config.json (Windows) or ~/Library/Application Support/Claude/claude_desktop_config.json (Mac). Replace the path and key with your own values.",
+
+  "mcpServers": {
+    "parawi": {
+      "command": "npx",
+      "args": [
+        "tsx",
+        "C:\\Users\\osman\\OneDrive\\Desktop\\my os\\hermes-os\\mcp-gateway\\server.ts"
+      ],
+      "env": {
+        "PARAWI_URL": "https://www.parawi.com",
+        "PARAWI_MCP_API_KEY": "REPLACE_WITH_YOUR_KEY"
+      }
+    }
+  }
+}

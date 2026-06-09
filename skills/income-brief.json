@@ -1,0 +1,25 @@
+{
+  "name": "income.brief",
+  "description": "Scan F-1-authorized income opportunities — remote freelance gigs, passive income plays, and on-campus jobs. Always states F-1 CPT/OPT authorization rules. Powered by Tyche.",
+  "category": "finance",
+  "agent": "tyche",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "Request for income opportunities, e.g. 'show me income opportunities as an F-1 student'"
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.chat.respond",
+    "risk": "read",
+    "requiresApproval": false,
+    "note": "Routes through Hermes chat to Tyche agent via CONTEXT_MATCHERS"
+  },
+  "examples": [
+    "show me income opportunities",
+    "what gigs can I do as an F-1 student?",
+    "give me my income brief",
+    "what passive income plays are F-1 safe?"
+  ]
+}

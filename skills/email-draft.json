@@ -1,0 +1,23 @@
+{
+  "name": "email.draft",
+  "description": "Queue an email draft for your approval. NEVER sends automatically. The draft is held in the Parawi approval queue until you explicitly approve it. Requires a linked Google account.",
+  "category": "communication",
+  "agent": "iris",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "Natural language draft request, e.g. 'draft a reply to the Leidos recruiter saying I am still interested'"
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.email.createDraft",
+    "risk": "external_write",
+    "requiresApproval": true
+  },
+  "examples": [
+    "draft a reply to the recruiter saying I'm still interested",
+    "write an email to the hiring manager at Booz Allen thanking them for the interview",
+    "compose a follow-up to the Amazon recruiter I spoke with last week"
+  ]
+}

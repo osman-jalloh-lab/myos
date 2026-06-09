@@ -1,0 +1,24 @@
+{
+  "name": "resume.generate",
+  "description": "Generate an ATS-optimized resume draft tailored to a specific role. Uses Osman's profile — Security+, CySA+, IT support and cybersecurity background. Returns a plain text draft you can refine.",
+  "category": "career",
+  "agent": "athena",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "Role or job description to tailor the resume for, e.g. 'build me a resume for a GRC analyst role at a federal contractor'"
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.resume.generate",
+    "risk": "internal_write",
+    "requiresApproval": false
+  },
+  "examples": [
+    "build me a resume for a GRC analyst role",
+    "generate a resume for the cybersecurity analyst position at Leidos",
+    "tailor my resume for a SOC analyst job",
+    "create a resume targeting federal IT security roles"
+  ]
+}
