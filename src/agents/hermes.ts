@@ -595,7 +595,52 @@ ${OSMAN_CONTEXT}`,
     load: async (userId) => {
       const signals = await synthesize(userId);
       const flags = riskFlag(signals.inbox);
-      return `Daily signals synthesis: ${JSON.stringify(signals).slice(0, 1500)}\nRisk-flagged emails: ${JSON.stringify(flags.slice(0, 5))}`;
+      const lines: string[] = [];
+
+      // Calendar
+      const todayStr = new Date().toDateString();
+      const todayEvents = signals.events.filter((e) => new Date(e.start).toDateString() === todayStr);
+      const upcomingEvents = signals.events.filter((e) => new Date(e.start).toDateString() !== todayStr);
+
+      if (todayEvents.length) {
+        lines.push(`Today: ${todayEvents.length} event${todayEvents.length !== 1 ? "s" : ""}`);
+        for (const e of todayEvents.slice(0, 3)) {
+          const t = e.allDay
+            ? "all day"
+            : new Date(e.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+          lines.push(`  ${t} — ${e.summary}`);
+        }
+      } else {
+        lines.push("No events today.");
+      }
+      if (signals.conflicts.conflictCount > 0) {
+        lines.push(`⚠️ ${signals.conflicts.conflictCount} scheduling conflict${signals.conflicts.conflictCount !== 1 ? "s" : ""} detected.`);
+      }
+      if (upcomingEvents.length) {
+        lines.push(`Upcoming: ${upcomingEvents.length} more event${upcomingEvents.length !== 1 ? "s" : ""} this week.`);
+      }
+
+      // Inbox
+      const { total, unread, needsAttention } = signals.inbox;
+      lines.push(`Inbox: ${unread} unread of ${total} total.`);
+      if (needsAttention.length) {
+        lines.push(`Needs a reply (${needsAttention.length}):`);
+        for (const m of needsAttention.slice(0, 3)) {
+          const from = m.from.includes("<") ? m.from.split("<")[0].trim().replace(/^"|"$/g, "") : m.from;
+          lines.push(`  ${m.subject} — from ${from}`);
+        }
+      }
+
+      // Security flags
+      if (flags.length) {
+        const flaggedList = flags.slice(0, 2).map((m) => {
+          const domain = m.from.includes("@") ? m.from.split("@")[1]?.split(">")[0] ?? m.from : m.from;
+          return `"${m.subject.slice(0, 40)}" (${domain})`;
+        });
+        lines.push(`Security flags (${flags.length}): ${flaggedList.join("; ")}`);
+      }
+
+      return lines.join("\n");
     },
   },
   plutus: {
