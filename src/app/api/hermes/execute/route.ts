@@ -69,7 +69,7 @@ export async function POST(req: Request) {
   // ── run ────────────────────────────────────────────────────────────────────
   try {
     await initRegistry();
-    const execPlan = plan(execReq);
+    const execPlan = await plan(execReq);
     const result = await execute(execPlan, execReq);
     return NextResponse.json(result);
   } catch (err) {

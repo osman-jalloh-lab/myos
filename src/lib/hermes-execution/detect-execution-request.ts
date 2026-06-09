@@ -1,57 +1,42 @@
 // Hermes Execution Layer — isExecutionRequest
-// Determines whether a chat message should be routed through the execution layer
-// instead of (or in addition to) the standard Hermes routeMessage() path.
-// Called before routeMessage(); if returns false, normal chat flow continues.
+// Fast pre-filter: catches action-style messages and routes them to the LLM planner.
+// The LLM planner does the precise classification — this just decides whether to
+// even try. Keep it broad so the LLM gets a chance on anything action-oriented.
 
-const EXECUTION_PATTERNS = [
-  // GitHub
-  /https?:\/\/(?:www\.)?github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+/,
-  /\b(inspect|review|scan|check|look at)\s+(this\s+)?repo\b/i,
-  /\bgithub\s+repo\b/i,
-  /\bwhat('?s| is) (in\s+)?this\s+repo\b/i,
-
-  // Email triage
-  /\bcheck\s+(my\s+)?email\b/i,
-  /\btriage\s+(my\s+)?(inbox|email)\b/i,
-  /\bwhat'?s\s+in\s+my\s+inbox\b/i,
-  /\bany\s+(new\s+)?(email|messages)\b/i,
-  /\bcheck\s+(my\s+)?inbox\b/i,
-  /\bjob\s+follow.?up\s+email\b/i,
-  /\brecruiter\s+email\b/i,
-
-  // Email draft
-  /\bdraft\s+a\s+reply\b/i,
-  /\bwrite\s+a\s+reply\b/i,
-  /\bcompose\s+(an?\s+)?email\b/i,
-  /\bdraft\s+(an?\s+)?email\b/i,
-  /\brespond\s+to\s+this\s+email\b/i,
-
-  // Task creation
-  /\bcreate\s+a\s+task\b/i,
-  /\badd\s+(a\s+)?task\b/i,
-  /\bremind\s+me\s+to\b/i,
-  /\bset\s+a\s+reminder\b/i,
-  /^todo\b/i,
-
-  // Resume
-  /\b(build|generate|create|write)\s+(me\s+)?a\s+resume\b/i,
-  /\btailor\s+my\s+resume\b/i,
-  /\b(cv|curriculum\s+vitae)\b/i,
+// Patterns that strongly suggest a conversational question (skip execution layer)
+const CONVERSATIONAL_PATTERNS = [
+  /^(what|why|how|who|when|where|is|are|can|could|would|should|do|does|did)\s+(?!you\s+(?:create|make|find|check|build|draft|generate|write|inspect|remind|add|scan|search|show|run|get|fetch|triage))/i,
+  /^(explain|tell me about|describe|define|help me understand)\b/i,
+  /^(hi|hey|hello|good morning|good afternoon|good evening|thanks|thank you|ok|okay|cool|great|nice|awesome|sounds good)\b/i,
 ];
 
-/**
- * Returns true if this message should be handled by the execution layer.
- * The execution layer is only active when HERMES_EXECUTION_ENABLED=true.
- */
+// Patterns that strongly suggest an action request (always try execution layer)
+const ACTION_PATTERNS = [
+  // Explicit action verbs at the start
+  /^(check|find|search|create|make|add|build|generate|write|draft|inspect|remind|scan|show|run|get|fetch|triage|compose|review|tailor|give me|pull up|look up|look at)\b/i,
+  // Tool-specific triggers
+  /github\.com\//i,
+  /\b(inbox|email|resume|cv|task|reminder|todo|to-do|job|jobs|income|brief|schedule|calendar)\b/i,
+  // Natural delegation phrases
+  /\b(i want you to|can you|please|go ahead and)\s+(check|find|create|make|draft|generate|build|write|inspect|scan|search|show|get|fetch|pull|look)\b/i,
+  // "use X" patterns
+  /\buse\s+(claude|groq|gpt|local|ollama)\b/i,
+];
+
 export function isExecutionRequest(message: string): boolean {
   if (!message?.trim()) return false;
-  return EXECUTION_PATTERNS.some((p) => p.test(message));
+  const trimmed = message.trim();
+
+  // Skip very short messages (likely greetings or confirmations)
+  if (trimmed.length < 6) return false;
+
+  // If it matches a conversational opener, skip
+  if (CONVERSATIONAL_PATTERNS.some((p) => p.test(trimmed))) return false;
+
+  // If it matches an action pattern, route through execution layer
+  return ACTION_PATTERNS.some((p) => p.test(trimmed));
 }
 
-/**
- * Convenience guard that checks both the feature flag and pattern match.
- * Use this in route handlers so the flag is the single on/off switch.
- */
 export function shouldUseExecutionLayer(message: string): boolean {
   if (process.env.HERMES_EXECUTION_ENABLED !== "true") return false;
   return isExecutionRequest(message);
