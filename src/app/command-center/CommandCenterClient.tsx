@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import type { ApprovalActionView, ApprovalStatus } from "@/lib/approvals";
 import type { TaskView } from "@/lib/tasks";
 
@@ -110,6 +111,13 @@ export default function CommandCenterClient({ userName, pendingApprovals, tasks,
   const [approvals, setApprovals] = useState(pendingApprovals);
   const [acting, setActing]       = useState<string | null>(null);
   const [activeFilter, setFilter] = useState("All");
+  const [copied, setCopied]       = useState<string | null>(null);
+
+  function copyCmd(cmd: string) {
+    navigator.clipboard.writeText(cmd).catch(() => {});
+    setCopied(cmd);
+    setTimeout(() => setCopied(null), 2000);
+  }
 
   const pendingCount = approvals.length;
   const openTaskCount = tasks.length;
@@ -163,14 +171,14 @@ export default function CommandCenterClient({ userName, pendingApprovals, tasks,
           <div className="cc-rail-section">
             <div className="cc-rail-h">Departments</div>
             {[
-              { label: "Office",  color: "var(--cc-purple)", icon: "home",  count: "—", active: true },
-              { label: "Inbox",   color: "var(--cc-blue)",   icon: "mail",  count: "—" },
-              { label: "Tasks",   color: "var(--cc-green)",  icon: "check", count: openTaskCount, urgent: openTaskCount > 10 },
-              { label: "Career",  color: "var(--cc-orange)", icon: "brief", count: "—" },
-              { label: "Finance", color: "var(--cc-green)",  icon: "fin",   count: "—" },
-              { label: "Memory",  color: "var(--cc-teal)",   icon: "mem",   count: "—" },
+              { label: "Office",  color: "var(--cc-purple)", icon: "home",  count: "—",           active: true,  href: "/command-center" },
+              { label: "Inbox",   color: "var(--cc-blue)",   icon: "mail",  count: "—",                          href: "/?agent=iris" },
+              { label: "Tasks",   color: "var(--cc-green)",  icon: "check", count: openTaskCount, urgent: openTaskCount > 10, href: "/?agent=hermes" },
+              { label: "Career",  color: "var(--cc-orange)", icon: "brief", count: "—",                          href: "/?agent=athena" },
+              { label: "Finance", color: "var(--cc-green)",  icon: "fin",   count: "—",                          href: "/?agent=plutus" },
+              { label: "Memory",  color: "var(--cc-teal)",   icon: "mem",   count: "—",                          href: "/?agent=mnemosyne" },
             ].map((d) => (
-              <div key={d.label} className={`cc-dept${d.active ? " active" : ""}${d.urgent ? " has-urgent" : ""}`} style={{ "--c": d.color } as React.CSSProperties}>
+              <div key={d.label} className={`cc-dept${d.active ? " active" : ""}${d.urgent ? " has-urgent" : ""}`} style={{ "--c": d.color } as React.CSSProperties} onClick={() => router.push(d.href)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && router.push(d.href)}>
                 <span className="cc-dept-ic"><DeptIcon type={d.icon} /></span>
                 <span>{d.label}</span>
                 <span className="cc-dept-count">{d.count}</span>
@@ -182,7 +190,7 @@ export default function CommandCenterClient({ userName, pendingApprovals, tasks,
             <div className="cc-rail-h">Agent floor · {AGENTS.length} active</div>
             <div className="cc-agents-rail">
               {AGENTS.map((a) => (
-                <div key={a.id} className="cc-agent-row" style={{ "--c": a.color } as React.CSSProperties}>
+                <div key={a.id} className="cc-agent-row cc-agent-row-btn" style={{ "--c": a.color } as React.CSSProperties} onClick={() => router.push(`/?agent=${a.id}`)} role="button" tabIndex={0} title={`Chat with ${a.name}`} onKeyDown={(e) => e.key === "Enter" && router.push(`/?agent=${a.id}`)}>
                   <span className="cc-agent-av" style={{ background: `linear-gradient(160deg, ${a.color}, color-mix(in srgb, ${a.color} 60%, black))` }}>{a.av}</span>
                   <span className="cc-agent-nm">
                     {a.name}
@@ -230,8 +238,7 @@ export default function CommandCenterClient({ userName, pendingApprovals, tasks,
             </div>
 
             <div className="cc-office-card">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img className="cc-pixelated" src="/office-scene.png" alt="Hermes OS agent office" />
+              <Image className="cc-pixelated" src="/office-scene.png" alt="Hermes OS agent office" fill sizes="(max-width: 768px) 100vw, 480px" priority />
               <div className="cc-scrim" />
               <div className="cc-corner">
                 <span className="cc-blink" />
@@ -248,13 +255,13 @@ export default function CommandCenterClient({ userName, pendingApprovals, tasks,
 
           {/* DEPT STRIP */}
           <section className="cc-dept-strip">
-            <DeptTile color="var(--cc-purple)" label="Approvals" n={pendingCount}   sub="awaiting sign-off" />
-            <DeptTile color="var(--cc-green)"  label="Tasks"     n={openTaskCount}  sub={`${todayTasks.length} due today`} />
-            <DeptTile color="var(--cc-green)"  label="Income"    n={0} sub={`$${finIncome.toFixed(2)} this month`} />
-            <DeptTile color="var(--cc-orange)" label="Expenses"  n={0} sub={`$${finExpenses.toFixed(2)} this month`} />
+            <DeptTile color="var(--cc-purple)" label="Approvals" n={pendingCount}   sub="awaiting sign-off"            href="/approvals" />
+            <DeptTile color="var(--cc-green)"  label="Tasks"     n={openTaskCount}  sub={`${todayTasks.length} due today`} href="/?agent=hermes" />
+            <DeptTile color="var(--cc-green)"  label="Income"    n={0}              sub={`$${finIncome.toFixed(2)} this month`} href="/?agent=plutus" />
+            <DeptTile color="var(--cc-orange)" label="Expenses"  n={0}              sub={`$${finExpenses.toFixed(2)} this month`} href="/?agent=plutus" />
             <DeptTile color="var(--cc-blue)"   label="Agents"    n={AGENTS.length}  sub="all on shift" />
-            <DeptTile color="var(--cc-cyan)"   label="Skills"    n={0} sub="Sophos checks Monday" muted />
-            <DeptTile color=""                 label="Career"    n={0} sub="ask Athena" muted />
+            <DeptTile color="var(--cc-cyan)"   label="Skills"    n={0}              sub="Sophos checks Monday"          href="/?agent=sophos" muted />
+            <DeptTile color="var(--cc-orange)" label="Career"    n={0}              sub="ask Athena"                    href="/?agent=athena" muted />
           </section>
 
           {/* MAIN GRID: feed + approvals */}
@@ -410,15 +417,19 @@ export default function CommandCenterClient({ userName, pendingApprovals, tasks,
               </div>
             </article>
 
-            <article className="cc-card">
+            <article className="cc-card" style={{ position: "relative" }}>
               <header className="cc-card-h"><h3>Quick actions</h3></header>
+              {copied && (
+                <div className="cc-toast">Copied: <b>{copied}</b></div>
+              )}
               <div style={{ padding: "18px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
                 {[
-                  { label: "Open full chat",        action: () => router.push("/"),           color: "var(--cc-purple)" },
-                  { label: "Review approval queue", action: () => router.push("/approvals"),  color: "var(--cc-orange)" },
-                  { label: "Telegram: log expense", action: () => {},                          color: "var(--cc-green)",  note: "type: log expense $X description" },
-                  { label: "Telegram: add task",    action: () => {},                          color: "var(--cc-blue)",   note: "type: task: title" },
-                  { label: "Telegram: remember",    action: () => {},                          color: "var(--cc-teal)",   note: "type: remember <fact>" },
+                  { label: "Open full chat",        action: () => router.push("/"),                   color: "var(--cc-purple)" },
+                  { label: "Review approval queue", action: () => router.push("/approvals"),           color: "var(--cc-orange)" },
+                  { label: "Telegram: log expense", action: () => copyCmd("log expense $10 coffee"),   color: "var(--cc-green)",  note: "tap to copy — send in Telegram" },
+                  { label: "Telegram: add task",    action: () => copyCmd("task: my task title"),      color: "var(--cc-blue)",   note: "tap to copy — send in Telegram" },
+                  { label: "Telegram: remember",    action: () => copyCmd("remember my fact here"),    color: "var(--cc-teal)",   note: "tap to copy — send in Telegram" },
+                  { label: "Telegram: add job",     action: () => copyCmd("add job at Acme as SWE"),   color: "var(--cc-orange)", note: "tap to copy — send in Telegram" },
                 ].map((q) => (
                   <button key={q.label} className="cc-quick-action" style={{ "--c": q.color } as React.CSSProperties} onClick={q.action}>
                     <span className="cc-qa-dot" />
@@ -457,9 +468,17 @@ export default function CommandCenterClient({ userName, pendingApprovals, tasks,
 
 // ─── sub-components ───────────────────────────────────────────────────────────
 
-function DeptTile({ color, label, n, sub, muted }: { color: string; label: string; n: number; sub: string; muted?: boolean }) {
+function DeptTile({ color, label, n, sub, muted, href }: { color: string; label: string; n: number; sub: string; muted?: boolean; href?: string }) {
+  const router = useRouter();
   return (
-    <div className={`cc-dtile${!muted && color ? " cc-dtile-color" : " cc-dtile-muted"}`} style={{ "--c": color } as React.CSSProperties}>
+    <div
+      className={`cc-dtile${!muted && color ? " cc-dtile-color" : " cc-dtile-muted"}${href ? " cc-dtile-btn" : ""}`}
+      style={{ "--c": color } as React.CSSProperties}
+      onClick={href ? () => router.push(href) : undefined}
+      role={href ? "button" : undefined}
+      tabIndex={href ? 0 : undefined}
+      onKeyDown={href ? (e) => e.key === "Enter" && router.push(href!) : undefined}
+    >
       <div>
         <div className="cc-dtile-lab">{label}</div>
         <div className="cc-dtile-n">{n}</div>
@@ -682,6 +701,13 @@ const CSS = `
 .cc-quick-action:hover { border-color: color-mix(in oklab, var(--c, var(--cc-purple)) 50%, var(--cc-border)); background: var(--cc-bg-surface-3); }
 .cc-qa-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c, var(--cc-purple)); box-shadow: 0 0 6px var(--c, var(--cc-purple)); flex-shrink: 0; margin-top: 3px; }
 .cc-quick-action small { display: block; font: 400 11px/1.3 var(--cc-mono); color: var(--cc-fg-faint); margin-top: 3px; }
+.cc-agent-row-btn:hover { background: var(--cc-bg-surface); cursor: pointer; }
+.cc-agent-row-btn:hover .cc-agent-nm { color: var(--cc-fg-primary); }
+.cc-dtile-btn { cursor: pointer; }
+.cc-dtile-btn:hover { filter: brightness(1.1); }
+.cc-dept:hover { background: var(--cc-bg-surface-2); color: var(--cc-fg-primary); }
+.cc-toast { position: absolute; top: 56px; left: 50%; transform: translateX(-50%); background: var(--cc-bg-surface-3); border: 1px solid var(--cc-border-str); border-radius: 8px; padding: 8px 16px; font: 500 12px/1 var(--cc-mono); color: var(--cc-green-2); white-space: nowrap; z-index: 10; box-shadow: 0 4px 16px rgba(0,0,0,.4); pointer-events: none; }
+.cc-toast b { color: var(--cc-fg-primary); }
 .cc-mobile-nav { display: none; }
 
 /* ─ RESPONSIVE ─ */
