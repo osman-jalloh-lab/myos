@@ -1,0 +1,221 @@
+{
+  "_comment": "Hermes reads this to route a request. Match incoming text against `intents` (keyword/substring first, embedding similarity as fallback), pick the route, run its `task` via the dispatcher, using `tools`. Model overrides in `model_routing` win if present in the text.",
+
+  "model_routing": {
+    "default": "auto",
+    "auto_rule": "local for triage/categorize/summary/retrieve; cloud for resume, cover letter, security analysis, anything sent to a human",
+    "overrides": [
+      { "phrases": ["use local", "run it locally", "use ollama"], "backend": "ollama" },
+      { "phrases": ["use the cloud", "use the big model", "go cloud"], "backend": "cloud_best" },
+      { "phrases": ["use claude"], "backend": "anthropic" },
+      { "phrases": ["use chatgpt", "use gpt"], "backend": "openai" }
+    ]
+  },
+
+  "routes": [
+    {
+      "agent": "iris",
+      "intents": ["check my email", "triage", "inbox", "what's in my inbox", "any new email"],
+      "task": "iris.triage_email",
+      "tools": ["gmail"]
+    },
+    {
+      "agent": "iris",
+      "intents": ["reply to", "respond to", "email", "write an email", "draft a message"],
+      "task": "iris.draft_replies",
+      "tools": ["gmail", "skill:humanizer"]
+    },
+    {
+      "agent": "iris",
+      "intents": ["follow up with", "recruiter", "chase", "nudge"],
+      "task": "iris.recruiter_followups",
+      "tools": ["gmail"]
+    },
+    {
+      "agent": "iris",
+      "intents": ["reverification notice", "i-9 notice", "i9 notice"],
+      "task": "iris.recruiter_followups",
+      "tools": ["gmail", "skill:i9-hr-specialist"]
+    },
+    {
+      "agent": "iris",
+      "intents": ["telegram", "ping me", "text me"],
+      "task": "iris.clear_telegram",
+      "tools": ["telegram"]
+    },
+
+    {
+      "agent": "kairos",
+      "intents": ["my schedule", "what's today", "what's my day", "agenda"],
+      "task": "kairos.today_schedule",
+      "tools": ["google_calendar"]
+    },
+    {
+      "agent": "kairos",
+      "intents": ["schedule", "book", "add to calendar", "set a meeting", "put on my calendar"],
+      "task": "kairos.schedule_event",
+      "tools": ["google_calendar"]
+    },
+    {
+      "agent": "kairos",
+      "intents": ["week ahead", "this week", "what's coming up"],
+      "task": "kairos.week_ahead",
+      "tools": ["google_calendar"]
+    },
+    {
+      "agent": "kairos",
+      "intents": ["this month", "month ahead"],
+      "task": "kairos.month_ahead",
+      "tools": ["google_calendar"]
+    },
+    {
+      "agent": "kairos",
+      "intents": ["deadlines", "what's due", "due soon"],
+      "task": "kairos.today_schedule",
+      "tools": ["google_calendar"]
+    },
+
+    {
+      "agent": "argus",
+      "intents": ["are my sites up", "check deployments", "uptime", "is parawi up", "is it live"],
+      "task": "argus.deploy_health",
+      "tools": ["vercel", "netlify"]
+    },
+    {
+      "agent": "argus",
+      "intents": ["security check", "scan", "audit dependencies", "any vulns", "vulnerabilities"],
+      "task": "argus.dependency_audit",
+      "tools": ["github", "npm_audit"]
+    },
+    {
+      "agent": "argus",
+      "intents": ["advisories", "security news", "any cves"],
+      "task": "argus.advisories_scan",
+      "tools": ["web"]
+    },
+    {
+      "agent": "argus",
+      "intents": ["exposed secrets", "leaked keys", "secret scan"],
+      "task": "argus.secret_check",
+      "tools": ["github"]
+    },
+    {
+      "agent": "argus",
+      "intents": ["investigate", "the outage", "failed deploy", "is this link safe", "is this email safe"],
+      "task": "argus.investigate",
+      "tools": ["vercel", "malwarebytes"]
+    },
+
+    {
+      "agent": "plutus",
+      "intents": ["money check-in", "run my finances", "where's my money"],
+      "task": "plutus.money_checkin",
+      "tools": ["statement_parse", "quickbooks"]
+    },
+    {
+      "agent": "plutus",
+      "intents": ["how much do i owe", "my balance", "my debt", "am i on track"],
+      "task": "plutus.balance_burn",
+      "tools": ["statement_parse"]
+    },
+    {
+      "agent": "plutus",
+      "intents": ["what did i spend on", "categorize"],
+      "task": "plutus.categorize_txn",
+      "tools": ["statement_parse"]
+    },
+    {
+      "agent": "plutus",
+      "intents": ["i got paid", "payday", "allocate my paycheck"],
+      "task": "plutus.payday_allocation",
+      "tools": ["statement_parse"]
+    },
+
+    {
+      "agent": "athena",
+      "intents": ["tailor my resume", "resume for", "fix my resume"],
+      "task": "athena.tailor_resume",
+      "tools": ["skill:job-application-ops"]
+    },
+    {
+      "agent": "athena",
+      "intents": ["cover letter"],
+      "task": "athena.draft_cover_letter",
+      "tools": ["skill:job-application-ops", "skill:humanizer"]
+    },
+    {
+      "agent": "athena",
+      "intents": ["find jobs", "search jobs", "job openings", "roles in"],
+      "task": "athena.find_jobs",
+      "tools": ["indeed", "ziprecruiter"]
+    },
+    {
+      "agent": "athena",
+      "intents": ["review my applications", "application tracker"],
+      "task": "athena.review_tracker",
+      "tools": []
+    },
+    {
+      "agent": "athena",
+      "intents": ["why did i get rejected", "analyze this rejection"],
+      "task": "athena.analyze_rejection",
+      "tools": []
+    },
+
+    {
+      "agent": "mnemosyne",
+      "intents": ["what did we decide", "recall", "remember when", "what was the decision"],
+      "task": "mnemosyne.retrieve",
+      "tools": ["turso"]
+    },
+    {
+      "agent": "mnemosyne",
+      "intents": ["remember that", "log this", "note that", "capture"],
+      "task": "mnemosyne.capture_decision",
+      "tools": ["turso"]
+    },
+    {
+      "agent": "mnemosyne",
+      "intents": ["status of", "where is the", "project state"],
+      "task": "mnemosyne.retrieve",
+      "tools": ["turso"]
+    },
+    {
+      "agent": "mnemosyne",
+      "intents": ["summarize this week", "weekly recap"],
+      "task": "mnemosyne.weekly_summary",
+      "tools": []
+    },
+    {
+      "agent": "mnemosyne",
+      "intents": ["update my context", "my balance changed", "my role changed", "my deadline changed"],
+      "task": "mnemosyne.reconcile_context",
+      "tools": []
+    },
+
+    {
+      "agent": "hermes",
+      "intents": ["brief me", "morning brief", "what's my day looking like"],
+      "task": "hermes.morning_brief",
+      "tools": []
+    },
+    {
+      "agent": "hermes",
+      "intents": ["status", "what's running", "system status"],
+      "task": "hermes.eod_status",
+      "tools": []
+    },
+    {
+      "agent": "hermes",
+      "intents": ["what should i focus on", "top priority", "what matters most"],
+      "task": "hermes.top_decision",
+      "tools": []
+    }
+  ],
+
+  "build_gap": {
+    "note": "No agent builds software. Route build/dev requests to Claude Code, or add a Hephaestus agent.",
+    "intents": ["build", "scaffold", "fix this bug", "write the component", "try this"],
+    "current_target": "claude_code"
+  }
+}

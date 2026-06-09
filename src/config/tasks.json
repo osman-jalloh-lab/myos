@@ -180,6 +180,13 @@
     "soul": "athena/SOUL.md"
   },
   {
+    "id": "athena.find_jobs",
+    "agent": "athena",
+    "cadence": "on_trigger",
+    "description": "Search job boards for matching openings (cybersecurity, GRC, IT support, HR admin) and return a ranked list.",
+    "soul": "athena/SOUL.md"
+  },
+  {
     "id": "athena.tailor_resume",
     "agent": "athena",
     "cadence": "on_trigger",

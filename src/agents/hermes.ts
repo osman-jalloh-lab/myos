@@ -14,6 +14,7 @@ import {
   type ApprovalStatus,
 } from "@/lib/approvals";
 import { callModel } from "@/lib/modelRouter";
+import type { Provider } from "@/lib/modelRouter";
 import { calendarRead, conflictScan } from "@/agents/kairos";
 import { triageInbox } from "@/agents/iris";
 import { morningBrief, synthesize, riskFlag } from "@/agents/argus";
@@ -190,7 +191,10 @@ interface ContextMatcher {
 
 const CONTEXT_MATCHERS: ContextMatcher[] = [
   {
-    match: /calendar|schedule|meeting|event|agenda|free time|busy/,
+    // Covers: "my schedule", "what's today", "what's my day", "agenda", "week ahead",
+    // "this week", "what's coming up", "this month", "month ahead", "deadlines",
+    // "what's due", "due soon", plus the original calendar/schedule/meeting/event terms.
+    match: /calendar|schedule|meeting|event|agenda|free time|busy|what'?s (my day|today)|my day|week ahead|this week|what'?s coming|this month|month ahead|deadlines?|what'?s due|due soon/,
     taskType: "chat-calendar",
     load: async (userId) => {
       const now = new Date();
@@ -200,7 +204,10 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
     },
   },
   {
-    match: /inbox|email|unread|gmail/,
+    // Covers: "triage", "what's in my inbox", "any new email", "reply to",
+    // "respond to", "follow up with", "recruiter", "draft a message",
+    // plus original inbox/email/unread/gmail.
+    match: /inbox|email|unread|gmail|triage|what'?s in my|reply to|respond to|follow.?up|recruiter|draft a message|check my email/,
     taskType: "chat-email",
     load: async (userId) => {
       const t = await triageInbox(userId);
@@ -210,22 +217,35 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
     },
   },
   {
-    match: /spend|budget|finance|debt|cost|money|expense/,
+    // Covers: "how much do I owe", "my balance", "my debt", "am I on track",
+    // "what did I spend on", "i got paid", "payday", "allocate my paycheck",
+    // plus original spend/budget/finance/debt/cost/money/expense.
+    match: /spend|budget|finance|debt|cost|money|expense|how much (do i|did)|my balance|am i on track|i got paid|payday|allocate|paycheck|what did i spend/,
     taskType: "chat-finance",
     load: async (userId) => `Finance snapshot: ${JSON.stringify(await plutusReport(userId))}`,
   },
   {
-    match: /job|career|application|resume|interview|hiring/,
+    // Covers: "find jobs", "search jobs", "job openings", "roles in", "cover letter",
+    // "tailor my resume", "why did I get rejected", "analyze this rejection",
+    // "application tracker", plus original job/career/application/resume/interview/hiring.
+    match: /job|career|application|resume|interview|hiring|find jobs|search jobs|job openings|roles in|cover letter|tailor|why did i get rejected|analyze.*rejection|application tracker/,
     taskType: "chat-jobs",
     load: async (userId) => `Job application tracker: ${JSON.stringify(await appTrackerSummary(userId))}`,
   },
   {
-    match: /remember|memory|recall|fact about me/,
+    // Covers: "what did we decide", "remember when", "what was the decision",
+    // "log this", "note that", "capture", "status of [project]", "where is the",
+    // "project state", "summarize this week", "weekly recap", "update my context",
+    // plus original remember/memory/recall.
+    match: /remember|memory|recall|fact about me|what did we decide|what was the decision|log this|note that|capture|status of|where is the|project state|summarize this week|weekly recap|update my context|my (balance|role|deadline) changed/,
     taskType: "chat-memory",
     load: async (userId, query) => `Relevant remembered facts: ${JSON.stringify(await getContextCards(userId, query))}`,
   },
   {
-    match: /brief|today|what's up|whats up|overview|summary/,
+    // Covers: "brief me", "morning brief", "what's my day looking like",
+    // "what should I focus on", "top priority", "what matters most",
+    // plus original brief/today/what's up/overview/summary.
+    match: /brief|today|what'?s up|whats up|overview|summary|brief me|morning brief|what'?s my day looking|what should i focus|top priority|what matters most/,
     taskType: "chat-brief",
     load: async (userId) => {
       const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -239,7 +259,8 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
     },
   },
   {
-    match: /approval|pending|queue|waiting on me/,
+    // Covers: "status", "what's running", "system status", plus original approval/pending/queue.
+    match: /approval|pending|queue|waiting on me|system status|what'?s running/,
     taskType: "chat-approvals",
     load: async (userId) => {
       const [counts, pending] = await Promise.all([approvalCounts(userId), listApprovals(userId, "pending")]);
@@ -247,7 +268,7 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
     },
   },
   {
-    match: /skill|sophos|new tools?|capabilit|what's new|whats new/,
+    match: /skill|sophos|new tools?|capabilit|what'?s new|whats new/,
     taskType: "chat-skills",
     load: async () => {
       const latest = await prisma.agentRun.findFirst({
@@ -399,6 +420,40 @@ const AGENT_DIRECT_TASK: Record<string, string> = {
   argus: "chat-brief",
   sophos: "chat-skills",
 };
+
+// ── model override detection ──────────────────────────────────────────────────
+// Reads routing.json model_routing.overrides. If the user's message contains
+// a phrase like "use claude" or "use local", strip it from the query and return
+// the explicit provider so callModel() bypasses its auto-pick logic.
+
+function resolveCloudBest(): Provider {
+  if (process.env.ANTHROPIC_API_KEY) return "anthropic";
+  if (process.env.OPENAI_API_KEY) return "openai";
+  return "groq";
+}
+
+function detectModelOverride(text: string): { cleaned: string; providerOverride?: Provider } {
+  const lc = text.toLowerCase();
+  let providerOverride: Provider | undefined;
+  let pattern: RegExp | null = null;
+
+  if (/\b(use local|run it locally|use ollama)\b/.test(lc)) {
+    providerOverride = "ollama";
+    pattern = /\b(use local|run it locally|use ollama)\b/gi;
+  } else if (/\b(use the cloud|use the big model|go cloud)\b/.test(lc)) {
+    providerOverride = resolveCloudBest();
+    pattern = /\b(use the cloud|use the big model|go cloud)\b/gi;
+  } else if (/\buse claude\b/.test(lc)) {
+    providerOverride = "anthropic";
+    pattern = /\buse claude\b/gi;
+  } else if (/\b(use chatgpt|use gpt)\b/.test(lc)) {
+    providerOverride = "openai";
+    pattern = /\b(use chatgpt|use gpt)\b/gi;
+  }
+
+  const cleaned = pattern ? text.replace(pattern, "").replace(/\s{2,}/g, " ").trim() : text;
+  return { cleaned, providerOverride };
+}
 
 // ── routeToAgent — per-agent private chat ────────────────────────────────────
 // Talking to a specific agent directly (clicked from the agent roster, or
@@ -660,7 +715,7 @@ export async function routeToAgent(userId: string, agentName: string, text: stri
     return { reply: `I don't have an agent called "${agentName}" — the roster is Hermes, ${HERMES_AGENT_ROSTER.map((k) => AGENT_PROFILES[k].displayName).join(", ")}.` };
   }
 
-  const trimmed = text.trim();
+  const { cleaned: trimmed, providerOverride } = detectModelOverride(text.trim());
   const context = await profile.load(userId, trimmed);
 
   // Direct-response gate: pure data queries answered without calling LLM.
@@ -687,6 +742,7 @@ export async function routeToAgent(userId: string, agentName: string, text: stri
     dataClass: "PERSONAL",
     systemPrompt: profile.systemPrompt,
     userPrompt: `Context for this reply:\n${context}\n\nOsman just asked you directly: "${trimmed}"\n\nReply in 2-4 sentences, conversationally, grounded only in the context above and your own domain.`,
+    providerOverride,
   });
 
   await logHandoff({
@@ -700,7 +756,7 @@ export async function routeToAgent(userId: string, agentName: string, text: stri
 }
 
 export async function routeMessage(userId: string, text: string): Promise<RouteResult> {
-  const trimmed = text.trim();
+  const { cleaned: trimmed, providerOverride } = detectModelOverride(text.trim());
   const approvalVerb = trimmed.match(/^(approve|reject)\s+([a-zA-Z0-9-]+)/i);
 
   if (approvalVerb) {
@@ -833,6 +889,7 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
     taskType: matched?.taskType ?? "chat-general",
     dataClass: "PERSONAL",
     systemPrompt: HERMES_CHAT_SYSTEM_PROMPT,
+    providerOverride,
     userPrompt: context
       ? `Context for this reply:\n${context}\n\nOsman just asked: "${trimmed}"\n\nReply in 2-4 sentences, conversationally, grounded only in the context above.`
       : `Osman just asked: "${trimmed}"\n\nI have no specific data context loaded for this message. Reply briefly — if the question sounds like it needs data (calendar, email, finance, jobs, memory, approvals, brief), say you didn't catch a topic you can look up and name the topics you can check. Otherwise just answer conversationally.`,

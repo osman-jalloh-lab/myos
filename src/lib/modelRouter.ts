@@ -113,6 +113,8 @@ export interface ModelCallParams {
   dataClass: DataClass;
   systemPrompt: string;
   userPrompt: string;
+  /** Explicit provider override — set when the user says "use claude", "use local", etc. */
+  providerOverride?: Provider;
 }
 
 export interface ModelCallResult {
@@ -151,7 +153,7 @@ async function logUsage(params: ModelCallParams, provider: Provider, response: P
  * logged to model_usage, so the cost panel stays honest about what ran where.
  */
 export async function callModel(params: ModelCallParams): Promise<ModelCallResult> {
-  const provider = pickProvider(params.taskType, params.dataClass);
+  const provider = params.providerOverride ?? pickProvider(params.taskType, params.dataClass);
 
   try {
     const response = await runProvider(provider, params.systemPrompt, params.userPrompt);
