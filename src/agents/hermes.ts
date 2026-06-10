@@ -303,6 +303,82 @@ function buildContext(q: string): ContextMatcher | null {
   return CONTEXT_MATCHERS.find((m) => m.match.test(q)) ?? null;
 }
 
+// ── multi-agent parallel orchestration ───────────────────────────────────────
+// For queries that span multiple domains (prep for interview, plan my week,
+// what should I focus on), Hermes calls all relevant agents in parallel and
+// synthesizes a combined reply — instead of picking just one CONTEXT_MATCHER.
+//
+// Only fires for queries that clearly cross domain boundaries. Single-domain
+// queries still go through the fast CONTEXT_MATCHERS + formatDirect() path.
+
+interface MultiAgentRoute {
+  match: RegExp;
+  agents: ReadonlyArray<keyof typeof AGENT_PROFILES>;
+  synthesisHint: string;
+}
+
+const MULTI_AGENT_ROUTES: MultiAgentRoute[] = [
+  {
+    // "prep for my interview", "get ready for the Ferrovial meeting", etc.
+    match: /\b(prep|prepare|get ready for|ready for).*(interview|meeting|presentation|call)\b/i,
+    agents: ["kairos", "athena", "mnemosyne"],
+    synthesisHint: "Combine schedule context, career/resume context, and any stored facts to help Osman prepare.",
+  },
+  {
+    // "plan my week", "plan my day", "plan tomorrow", "what should I focus on", "what should I work on"
+    match: /\b(plan|planning)\s+(my\s+)?(week|day|tomorrow)\b|\bwhat should i (focus|do|work on)\b/i,
+    agents: ["kairos", "iris", "argus"],
+    synthesisHint: "Give a clear action plan — synthesize calendar, inbox priorities, and the daily brief signal.",
+  },
+  {
+    // "big picture", "full overview", "how am I doing overall", "catch me up"
+    match: /\b(big picture|full overview|how am i doing|catch me up|status check|where am i at)\b/i,
+    agents: ["argus", "kairos", "iris", "plutus"],
+    synthesisHint: "Full-system overview: brief signal, schedule, inbox, and finance in one clean summary.",
+  },
+  {
+    // "am I on track", "what's left to do", "week recap", "end of week"
+    match: /\bam i on track\b|\bwhat'?s left\b|\b(week|weekly) recap\b|\bend of (the )?(week|day)\b/i,
+    agents: ["kairos", "athena", "plutus"],
+    synthesisHint: "Combine schedule, job search progress, and finance to assess whether Osman is on track.",
+  },
+];
+
+// Reuses the same load functions already defined in CONTEXT_MATCHERS and
+// AGENT_PROFILES — no new data-fetching code, just a new dispatch table.
+async function loadAgentContext(agentKey: string, userId: string, query: string): Promise<string> {
+  const matcher = CONTEXT_MATCHERS.find((m) => {
+    const taskSuffix = m.taskType.replace("chat-", "");
+    return agentKey === taskSuffix ||
+      (agentKey === "argus" && m.taskType === "chat-brief") ||
+      (agentKey === "iris" && m.taskType === "chat-email") ||
+      (agentKey === "kairos" && m.taskType === "chat-calendar") ||
+      (agentKey === "plutus" && m.taskType === "chat-finance") ||
+      (agentKey === "athena" && m.taskType === "chat-jobs") ||
+      (agentKey === "mnemosyne" && m.taskType === "chat-memory");
+  });
+  if (matcher) return matcher.load(userId, query).catch(() => "");
+  const profile = AGENT_PROFILES[agentKey];
+  if (profile) return profile.load(userId, query).catch(() => "");
+  return "";
+}
+
+function buildMultiAgentContext(agents: ReadonlyArray<string>, contexts: string[]): string {
+  const sections = agents
+    .map((agent, i) => {
+      const ctx = contexts[i];
+      if (!ctx) return null;
+      const label = AGENT_PROFILES[agent]?.displayName ?? agent;
+      return `[${label}]\n${ctx.slice(0, 800)}`;
+    })
+    .filter(Boolean);
+  return sections.join("\n\n");
+}
+
+function findMultiAgentRoute(q: string): MultiAgentRoute | null {
+  return MULTI_AGENT_ROUTES.find((r) => r.match.test(q)) ?? null;
+}
+
 // ── direct-response layer ─────────────────────────────────────────────────────
 // Hermes agents answer informational queries directly from their data — no LLM.
 // callModel() only fires when the query genuinely needs generation or synthesis
@@ -992,6 +1068,38 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
   }
 
   const q = trimmed.toLowerCase();
+
+  // ── multi-agent parallel path ─────────────────────────────────────────────
+  // Cross-domain queries (prep for interview, plan my week, big picture) fan
+  // out to multiple agents in parallel, then synthesize. Always goes through
+  // the LLM because synthesis is inherently generative — no formatDirect() shortcut.
+  const multiRoute = findMultiAgentRoute(q);
+  if (multiRoute) {
+    const contexts = await Promise.all(
+      multiRoute.agents.map((a) => loadAgentContext(a, userId, trimmed))
+    );
+    const combinedContext = buildMultiAgentContext(multiRoute.agents, contexts);
+
+    const multiResult = await callModel({
+      userId,
+      taskType: "chat-multi-agent",
+      dataClass: "PERSONAL",
+      systemPrompt: HERMES_CHAT_SYSTEM_PROMPT,
+      providerOverride,
+      userPrompt: `Context assembled from multiple agents:\n\n${combinedContext.slice(0, 4000)}\n\nOsman asked: "${trimmed}"\n\nSynthesis goal: ${multiRoute.synthesisHint}\n\nReply in 3-5 sentences, combining insights from all agents above into one cohesive answer.`,
+    });
+
+    await logHandoff({
+      agentName: "hermes",
+      inputSummary: `[multi: ${multiRoute.agents.join("+")}] ${trimmed.slice(0, 150)}`,
+      outputSummary: multiResult.text.slice(0, 500),
+      modelProvider: multiResult.provider,
+    });
+
+    return { reply: multiResult.text };
+  }
+
+  // ── single-agent path (existing) ──────────────────────────────────────────
   const matched = buildContext(q);
   const rawContext = matched ? await matched.load(userId, trimmed) : "";
   // Cap context at 3000 chars to stay within Groq free-tier TPM limits.

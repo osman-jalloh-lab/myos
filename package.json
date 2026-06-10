@@ -10,7 +10,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
-    "eval": "npx tsx --test eval/daily-brief.eval.ts"
+    "eval": "npx tsx --test eval/daily-brief.eval.ts eval/multi-agent.eval.ts"
   },
   "dependencies": {
     "next": "^16.0.0",
