@@ -9,7 +9,8 @@
     "lint": "next lint",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "eval": "npx tsx --test eval/daily-brief.eval.ts"
   },
   "dependencies": {
     "next": "^16.0.0",
