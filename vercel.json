@@ -10,8 +10,8 @@
     { "path": "/api/cron/daily_pm",          "schedule": "0 2 * * *"    },
     { "path": "/api/cron/weekly",            "schedule": "0 13 * * 1"   },
     { "path": "/api/cron/monthly",           "schedule": "0 13 1 * *"   },
-    { "path": "/api/cron/meeting-reminder",  "schedule": "*/5 * * * *"  },
-    { "path": "/api/cron/email-watcher",     "schedule": "*/15 * * * *" }
+    { "path": "/api/cron/meeting-reminder",  "schedule": "0 * * * *"    },
+    { "path": "/api/cron/email-watcher",     "schedule": "30 * * * *"   }
   ],
   "functions": {
     "app/api/**/*": { "maxDuration": 60 }
