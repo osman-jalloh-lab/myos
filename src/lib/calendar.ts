@@ -24,7 +24,40 @@ interface GCalEvent {
   end?: { dateTime?: string; date?: string };
 }
 
-/** Fetches and merges calendar events across all linked accounts for a user. */
+interface GCalCalendar {
+  id: string;
+  summary?: string;
+  accessRole?: string;
+}
+
+// Calendars to skip — noise that adds no value to the daily brief.
+const SKIP_CALENDAR_PATTERNS = [
+  /holiday/i,
+  /birthday/i,
+  /contacts/i,
+  /^en\./i,
+];
+
+function shouldSkipCalendar(cal: GCalCalendar): boolean {
+  return SKIP_CALENDAR_PATTERNS.some((p) => p.test(cal.summary ?? "") || p.test(cal.id));
+}
+
+/** Lists all calendars on a Google account (shared + owned). */
+async function listCalendars(token: string): Promise<GCalCalendar[]> {
+  const res = await fetch(
+    "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=50",
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+  if (!res.ok) return [{ id: "primary" }]; // fallback to primary if list fails
+  const data = (await res.json()) as { items?: GCalCalendar[] };
+  return (data.items ?? []).filter((c) => !shouldSkipCalendar(c));
+}
+
+/** Fetches and merges calendar events across all linked accounts for a user.
+ *  For each account, queries ALL calendars (owned + shared to that account),
+ *  so sharing other Google calendars to your primary account is enough — no
+ *  separate OAuth needed for each additional Google account.
+ */
 export async function fetchCalendarEvents(
   userId: string,
   timeMin: Date,
@@ -35,9 +68,14 @@ export async function fetchCalendarEvents(
     select: { id: true, email: true, label: true },
   });
 
-  const results = await Promise.allSettled(
+  const seenEventIds = new Set<string>(); // deduplicate events shared across accounts
+  const allEvents: CalendarEvent[] = [];
+
+  const accountResults = await Promise.allSettled(
     accounts.map(async (account) => {
       const token = await getValidToken(account.id);
+      const calendars = await listCalendars(token);
+
       const params = new URLSearchParams({
         timeMin: timeMin.toISOString(),
         timeMax: timeMax.toISOString(),
@@ -46,39 +84,44 @@ export async function fetchCalendarEvents(
         maxResults: "100",
       });
 
-      const res = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
-        { headers: { Authorization: `Bearer ${token}` } }
+      const calResults = await Promise.allSettled(
+        calendars.map(async (cal) => {
+          const res = await fetch(
+            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events?${params}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          if (!res.ok) return [];
+          const data = (await res.json()) as { items?: GCalEvent[] };
+          return (data.items ?? []).map<CalendarEvent>((item) => {
+            const startRaw = item.start?.dateTime ?? item.start?.date ?? "";
+            const endRaw = item.end?.dateTime ?? item.end?.date ?? "";
+            return {
+              id: item.id,
+              summary: item.summary ?? "(no title)",
+              start: startRaw,
+              end: endRaw,
+              allDay: !item.start?.dateTime,
+              description: item.description,
+              location: item.location,
+              htmlLink: item.htmlLink,
+              accountEmail: account.email,
+              accountLabel: cal.summary ?? account.label,
+            };
+          });
+        })
       );
 
-      if (!res.ok) {
-        throw new Error(`Calendar API ${res.status} for ${account.email}`);
-      }
-
-      const data = (await res.json()) as { items?: GCalEvent[] };
-      return (data.items ?? []).map<CalendarEvent>((item) => {
-        const startRaw = item.start?.dateTime ?? item.start?.date ?? "";
-        const endRaw = item.end?.dateTime ?? item.end?.date ?? "";
-        return {
-          id: item.id,
-          summary: item.summary ?? "(no title)",
-          start: startRaw,
-          end: endRaw,
-          allDay: !item.start?.dateTime,
-          description: item.description,
-          location: item.location,
-          htmlLink: item.htmlLink,
-          accountEmail: account.email,
-          accountLabel: account.label,
-        };
-      });
+      return calResults.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
     })
   );
 
-  const allEvents: CalendarEvent[] = [];
-  for (const r of results) {
-    if (r.status === "fulfilled") allEvents.push(...r.value);
-    // Fulfilled accounts contribute; rejected ones (bad token, network) are silently skipped.
+  for (const r of accountResults) {
+    if (r.status !== "fulfilled") continue;
+    for (const event of r.value) {
+      if (seenEventIds.has(event.id)) continue;
+      seenEventIds.add(event.id);
+      allEvents.push(event);
+    }
   }
 
   return allEvents.sort(
