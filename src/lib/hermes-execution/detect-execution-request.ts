@@ -16,7 +16,8 @@ const ACTION_PATTERNS = [
   /^(check|find|search|create|make|add|build|generate|write|draft|inspect|remind|scan|show|run|get|fetch|triage|compose|review|tailor|give me|pull up|look up|look at)\b/i,
   // Tool-specific triggers
   /github\.com\//i,
-  /\b(inbox|email|resume|cv|task|reminder|todo|to-do|job|jobs|income|brief|schedule|calendar)\b/i,
+  // brief/schedule/calendar/today are handled better by the normal chat path (CONTEXT_MATCHERS)
+  /\b(inbox|email|resume|cv|task|reminder|todo|to-do|job|jobs|income)\b/i,
   // Natural delegation phrases
   /\b(i want you to|can you|please|go ahead and)\s+(check|find|create|make|draft|generate|build|write|inspect|scan|search|show|get|fetch|pull|look)\b/i,
   // "use X" patterns

@@ -778,7 +778,18 @@ ${OSMAN_CONTEXT}`,
         releaseWatch().catch(() => null),
         repoScoutTool(query || SCOUT_TOPICS[0]).catch(() => []),
       ]);
-      return `Recent Anthropic release notes: ${notes ? notes.slice(0, 1200) : "unavailable this run"}\nGitHub repos found for "${query}": ${JSON.stringify(repos.slice(0, 5))}`;
+      const lines: string[] = [];
+      if (notes) lines.push(`Release notes: ${notes.slice(0, 800)}`);
+      else lines.push("Release notes: unavailable this run.");
+      if (repos.length) {
+        lines.push(`Repos relevant to "${query || SCOUT_TOPICS[0]}":`);
+        for (const r of repos.slice(0, 4)) {
+          lines.push(`  ${(r as { full_name?: string; name?: string }).full_name ?? (r as { name?: string }).name ?? "unknown"} — ${(r as { description?: string }).description?.slice(0, 80) ?? "no description"}`);
+        }
+      } else {
+        lines.push("No relevant repos found this run.");
+      }
+      return lines.join("\n");
     },
   },
   tyche: {
@@ -814,7 +825,11 @@ ${OSMAN_CONTEXT}`,
       });
       if (latest) return `Tyche's most recent income brief (${latest.createdAt.toISOString().slice(0, 10)}): ${latest.outputSummary}`;
       const passive = passiveIncomeScan();
-      return `Standing income opportunities: ${JSON.stringify(passive.slice(0, 4))}`;
+      const lines = ["Standing income opportunities (no live scan yet):"];
+      for (const p of passive.slice(0, 4)) {
+        lines.push(`  ${p.title} — ${p.earning} — ${p.authorization}`);
+      }
+      return lines.join("\n");
     },
   },
 };
