@@ -29,8 +29,8 @@ export interface DailySignals {
 
 export async function synthesize(userId: string): Promise<DailySignals> {
   const [events, conflicts, inbox] = await Promise.all([
-    prepNotes(userId),
-    conflictScan(userId, 1),
+    prepNotes(userId, 2), // today + tomorrow
+    conflictScan(userId, 2),
     triageInbox(userId),
   ]);
   return { events, conflicts, inbox };
@@ -144,7 +144,7 @@ function buildPrompt(signals: DailySignals, risks: EmailMessage[], anomalies: An
     : "- none";
 
   return [
-    "Today's calendar:",
+    "Today and tomorrow's calendar:",
     eventLines,
     "",
     "Inbox snapshot:",
@@ -160,10 +160,10 @@ function buildPrompt(signals: DailySignals, risks: EmailMessage[], anomalies: An
 
 const BRIEF_SYSTEM_PROMPT =
   "You are Argus, a calm and factual morning-briefing assistant. Write a short " +
-  "(under 150 words) plain-prose summary of the day ahead from the structured " +
+  "(under 160 words) plain-prose summary covering today and tomorrow from the structured " +
   "signals given. No greetings, no filler, no markdown headers or bullet lists — " +
-  "just direct prose. Call out conflicts, anything flagged as risky, and anomalies " +
-  "if present; otherwise say the day looks clear.";
+  "just direct prose. Highlight any interviews, meetings, or deadlines coming up. " +
+  "Call out conflicts, anything flagged as risky, and anomalies if present; otherwise say the day looks clear.";
 
 export async function morningBrief(userId: string): Promise<MorningBrief> {
   const signals = await synthesize(userId);

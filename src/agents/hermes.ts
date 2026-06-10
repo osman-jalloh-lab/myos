@@ -597,14 +597,15 @@ ${OSMAN_CONTEXT}`,
       const flags = riskFlag(signals.inbox);
       const lines: string[] = [];
 
-      // Calendar
+      // Calendar — today + tomorrow
       const todayStr = new Date().toDateString();
+      const tomorrowStr = new Date(Date.now() + 86_400_000).toDateString();
       const todayEvents = signals.events.filter((e) => new Date(e.start).toDateString() === todayStr);
-      const upcomingEvents = signals.events.filter((e) => new Date(e.start).toDateString() !== todayStr);
+      const tomorrowEvents = signals.events.filter((e) => new Date(e.start).toDateString() === tomorrowStr);
 
       if (todayEvents.length) {
         lines.push(`Today: ${todayEvents.length} event${todayEvents.length !== 1 ? "s" : ""}`);
-        for (const e of todayEvents.slice(0, 3)) {
+        for (const e of todayEvents.slice(0, 4)) {
           const t = e.allDay
             ? "all day"
             : new Date(e.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
@@ -613,11 +614,17 @@ ${OSMAN_CONTEXT}`,
       } else {
         lines.push("No events today.");
       }
+      if (tomorrowEvents.length) {
+        lines.push(`Tomorrow: ${tomorrowEvents.length} event${tomorrowEvents.length !== 1 ? "s" : ""}`);
+        for (const e of tomorrowEvents.slice(0, 4)) {
+          const t = e.allDay
+            ? "all day"
+            : new Date(e.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+          lines.push(`  ${t} — ${e.summary}`);
+        }
+      }
       if (signals.conflicts.conflictCount > 0) {
         lines.push(`⚠️ ${signals.conflicts.conflictCount} scheduling conflict${signals.conflicts.conflictCount !== 1 ? "s" : ""} detected.`);
-      }
-      if (upcomingEvents.length) {
-        lines.push(`Upcoming: ${upcomingEvents.length} more event${upcomingEvents.length !== 1 ? "s" : ""} this week.`);
       }
 
       // Inbox
