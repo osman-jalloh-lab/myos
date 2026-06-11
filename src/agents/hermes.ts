@@ -163,6 +163,20 @@ export interface RouteResult {
   pendingApprovals?: { id: string; actionType: string }[];
 }
 
+// Strip markdown formatting from LLM responses — the chat UI renders plain text,
+// not HTML, so asterisks, hashes, and backticks appear literally to the user.
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, "")         // fenced code blocks
+    .replace(/^#{1,6}\s+/gm, "")            // ## headers
+    .replace(/\*\*(.+?)\*\*/gs, "$1")       // **bold**
+    .replace(/\*(.+?)\*/gs, "$1")           // *italic*
+    .replace(/`(.+?)`/g, "$1")              // `inline code`
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1: $2") // [text](url) → text: url
+    .replace(/\n{3,}/g, "\n\n")             // collapse excess blank lines
+    .trim();
+}
+
 const HERMES_CHAT_SYSTEM_PROMPT = `You are Hermes, the orchestrator inside Hermes OS.
 
 Root: Hermes, messenger of the gods — the one who moves between worlds and carries word between them.
@@ -180,7 +194,11 @@ What you do NOT do:
 
 Voice: Calm air traffic control. Short, structured, never alarmed. You make the system feel handled.
 
-This is a chat interface. Reply in 2-4 sentences. Answer first, elaborate after. You only know what is in the context block provided — if it is empty or does not cover the question, say plainly that you do not have that data rather than guessing.
+FORMATTING RULES — strictly enforced:
+- Plain text only. No asterisks, no bold, no italics, no markdown headers, no backticks.
+- Use a plain dash (-) for list items if needed. No bullet symbols, no numbered lists with dots.
+- Reply in 2-4 sentences. Answer first, elaborate after.
+- You only know what is in the context block provided. If it is empty or does not cover the question, say plainly that you do not have that data.
 
 ${OSMAN_CONTEXT}`;
 
@@ -967,7 +985,7 @@ export async function routeToAgent(userId: string, agentName: string, text: stri
     modelProvider: result.provider,
   });
 
-  return { reply: result.text };
+  return { reply: stripMarkdown(result.text) };
 }
 
 export async function routeMessage(userId: string, text: string): Promise<RouteResult> {
@@ -1107,7 +1125,7 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
       modelProvider: multiResult.provider,
     });
 
-    return { reply: multiResult.text };
+    return { reply: stripMarkdown(multiResult.text) };
   }
 
   // ── single-agent path (existing) ──────────────────────────────────────────
@@ -1178,12 +1196,12 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
   if (matched?.taskType === "chat-approvals") {
     const pending = await listApprovals(userId, "pending");
     return {
-      reply: result.text,
+      reply: stripMarkdown(result.text),
       pendingApprovals: pending.slice(0, 5).map((p) => ({ id: p.id, actionType: p.actionType })),
     };
   }
 
-  return { reply: result.text };
+  return { reply: stripMarkdown(result.text) };
 }
 
 export type { ApprovalActionType, ApprovalStatus };

@@ -4,14 +4,17 @@
 //      security direction, tracks any not already in the ledger (source
 //      "job-scout", status "interested"). Firecrawl backfills thin descriptions
 //      so there's real material to score against.
-//   2. Score — re-runs fit-score (real Groq calls) over tracked roles that
-//      have enough notes to score and don't have a score yet — this now
-//      includes whatever pass 1 just discovered.
+//   2. Score — re-runs fit-score over tracked roles that have enough notes
+//      to score and don't have a score yet — this includes whatever pass 1
+//      just discovered.
+//   3. Notify — sends a Telegram message for any new matches with fit >= 75,
+//      including the job URL so Osman can open it directly.
 // JSearch free tier is 200 req/month — keep the query list short; this only
 // runs weekly. Pure read + own-domain tracking + score; nothing gets applied
 // to or messaged without going through the apply_to_job approval action.
 import { prisma } from "@/lib/db";
 import { discoverJobs, fitScore, trackJob } from "@/agents/athena";
+import { sendTelegramMessage } from "@/lib/telegram";
 
 const MIN_NOTES_LENGTH = 40;
 const SCOUT_QUERIES = ["GRC compliance analyst", "security compliance auditor"];
@@ -79,5 +82,25 @@ export async function GET(req: Request) {
     },
   });
 
-  return Response.json({ ok: true, job: "job-scout", discovered, tracked, scanned: candidates.length, scored });
+  // Notify via Telegram for any new matches with fit score >= 75.
+  const goodMatches = scored.filter((s) => s.score >= 75);
+  if (goodMatches.length > 0 && process.env.TELEGRAM_OWNER_CHAT_ID) {
+    try {
+      const lines = await Promise.all(
+        goodMatches.map(async (s) => {
+          const listing = await prisma.jobListing.findUnique({ where: { id: s.id }, select: { url: true } });
+          const link = listing?.url ? `\n  ${listing.url}` : "";
+          return `${s.title} @ ${s.company} - ${s.score}% fit${link}`;
+        })
+      );
+      await sendTelegramMessage(
+        process.env.TELEGRAM_OWNER_CHAT_ID,
+        `Athena found ${goodMatches.length} strong job match${goodMatches.length !== 1 ? "es" : ""}:\n\n${lines.join("\n\n")}`
+      );
+    } catch {
+      // non-fatal — cron result still returns even if Telegram is down
+    }
+  }
+
+  return Response.json({ ok: true, job: "job-scout", discovered, tracked, scanned: candidates.length, scored, notified: goodMatches.length });
 }

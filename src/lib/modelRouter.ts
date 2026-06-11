@@ -11,7 +11,11 @@ export function pickProvider(taskType: string, dataClass: DataClass): Provider {
   if (taskType === "code" || taskType === "long-doc") return "anthropic";
   // PRIVATE data (email, finance, I-9) stays on Groq per CLAUDE.md rule 4
   if (dataClass === "PRIVATE") return process.env.OLLAMA_BASE_URL ? "ollama" : "groq";
-  // Chat and brief tasks get Claude when the key is available — better context reasoning
+  // Job-related tasks go to OpenAI (GPT-4o-mini is strong at job matching)
+  if (process.env.OPENAI_API_KEY && (taskType === "chat-jobs" || taskType === "job-scout" || taskType.startsWith("chat-agent-athena"))) {
+    return "openai";
+  }
+  // All other chat and brief tasks get Claude Haiku/Sonnet when the key is available
   if (process.env.ANTHROPIC_API_KEY && (taskType.startsWith("chat-") || taskType === "daily-brief")) {
     return "anthropic";
   }
@@ -29,12 +33,16 @@ const GROQ_MODEL = "llama-3.1-8b-instant";
 const ANTHROPIC_CHAT_MODEL = "claude-haiku-4-5-20251001";
 const ANTHROPIC_SYNTHESIS_MODEL = "claude-sonnet-4-6";
 
+// OpenAI model for job matching — GPT-4o-mini is strong at structured reasoning.
+const OPENAI_CHAT_MODEL = "gpt-4o-mini";
+
 // Rough list pricing per 1M tokens (not billing-accurate; update if pricing changes).
 const GROQ_COST_PER_MILLION = { input: 0.05, output: 0.08 };
 const ANTHROPIC_COST_PER_MILLION = {
   haiku: { input: 0.80, output: 4.00 },
   sonnet: { input: 3.00, output: 15.00 },
 };
+const OPENAI_COST_PER_MILLION = { input: 0.15, output: 0.60 }; // gpt-4o-mini
 
 interface ProviderResponse {
   text: string;
@@ -110,6 +118,43 @@ async function callOllama(system: string, user: string): Promise<ProviderRespons
   return { text: data.message?.content?.trim() ?? "" };
 }
 
+async function callOpenAI(system: string, user: string): Promise<ProviderResponse> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OPENAI_CHAT_MODEL,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature: 0.4,
+      max_tokens: 500,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`OpenAI API ${res.status}: ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+
+  return {
+    text: data.choices?.[0]?.message?.content?.trim() ?? "",
+    inputTokens: data.usage?.prompt_tokens,
+    outputTokens: data.usage?.completion_tokens,
+  };
+}
+
 async function callAnthropic(system: string, user: string, taskType?: string): Promise<ProviderResponse> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
@@ -157,18 +202,15 @@ async function callAnthropic(system: string, user: string, taskType?: string): P
 
 function estimateCost(provider: Provider, inputTokens = 0, outputTokens = 0, taskType?: string): number | undefined {
   if (provider === "groq") {
-    return (
-      (inputTokens / 1_000_000) * GROQ_COST_PER_MILLION.input +
-      (outputTokens / 1_000_000) * GROQ_COST_PER_MILLION.output
-    );
+    return (inputTokens / 1_000_000) * GROQ_COST_PER_MILLION.input + (outputTokens / 1_000_000) * GROQ_COST_PER_MILLION.output;
+  }
+  if (provider === "openai") {
+    return (inputTokens / 1_000_000) * OPENAI_COST_PER_MILLION.input + (outputTokens / 1_000_000) * OPENAI_COST_PER_MILLION.output;
   }
   if (provider === "anthropic") {
     const isSynthesis = taskType === "daily-brief" || taskType === "chat-multi-agent";
     const rates = isSynthesis ? ANTHROPIC_COST_PER_MILLION.sonnet : ANTHROPIC_COST_PER_MILLION.haiku;
-    return (
-      (inputTokens / 1_000_000) * rates.input +
-      (outputTokens / 1_000_000) * rates.output
-    );
+    return (inputTokens / 1_000_000) * rates.input + (outputTokens / 1_000_000) * rates.output;
   }
   return undefined;
 }
@@ -191,8 +233,9 @@ export interface ModelCallResult {
 async function runProvider(provider: Provider, system: string, user: string, taskType?: string): Promise<ProviderResponse> {
   if (provider === "groq") return callGroq(system, user);
   if (provider === "ollama") return callOllama(system, user);
+  if (provider === "openai") return callOpenAI(system, user);
   if (provider === "anthropic") return callAnthropic(system, user, taskType);
-  throw new Error(`Provider "openai" is not yet implemented in the model router`);
+  throw new Error(`Unknown provider: ${provider}`);
 }
 
 async function logUsage(params: ModelCallParams, provider: Provider, response: ProviderResponse): Promise<void> {
