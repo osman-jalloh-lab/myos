@@ -19,6 +19,7 @@ Tools available in Parawi/MyOS:
 - morning_brief: Get the day's brief — schedule, tasks, priorities. Trigger: "brief me", "what's my day", "morning brief", "what's on today", "what should I focus on"
 - income_opportunities: F-1-safe income ideas — freelance, passive income, campus jobs. Trigger: "income", "make money", "side hustle", "gigs", "F-1 jobs", "earn as a student"
 - email_schedule: Check or manage calendar events. Trigger: "my schedule", "what's today", "calendar", "meetings", "what's coming up"
+- job_tracker_sync: Scan inbox for job application emails and update the job tracker. Trigger: "update my job tracker", "check email for job updates", "scan email for applications", "look at my email and update tracker", "received applications", "application status from email"
 - chat: Everything else — questions, advice, general conversation.
 `.trim();
 
@@ -125,6 +126,9 @@ function planWithRegex(msg: string): { intent: string; extractedUrl: string | nu
   if (matchesAny(lc, [/\bfind\s+jobs\b/, /\bjob\s+openings\b/, /\bsearch\b.*\bjobs\b/, /\broles\s+in\b/, /\bjob\s+listings\b/]))
     return { intent: "job_search", extractedUrl: null };
 
+  if (matchesAny(lc, [/update.*job\s+tracker/, /job\s+tracker.*update/, /check.*email.*job/, /email.*job.*update/, /scan.*email.*appli/, /application.*status.*email/, /email.*application.*status/, /received.*appli/, /look.*email.*tracker/]))
+    return { intent: "job_tracker_sync", extractedUrl: null };
+
   if (matchesAny(lc, [/\bincome\b/, /\bmake\s+money\b/, /\bside\s+hustle\b/, /\bgigs?\b/, /\bf-1\s+jobs\b/, /\bearn\b.*\bstudent\b/]))
     return { intent: "income_opportunities", extractedUrl: null };
 
@@ -220,6 +224,14 @@ function buildPlan(
         confidence,
         steps: [{ id: "step_1", tool: "internal.chat.respond", input: { message: msg, _intent: "income_opportunities" }, risk: "read", requiresApproval: false }],
         reasoningSummary: "Income brief routed through Tyche.",
+      };
+
+    case "job_tracker_sync":
+      return {
+        intent,
+        confidence,
+        steps: [{ id: "step_1", tool: "internal.jobs.updateFromEmail", input: { message: msg }, risk: "read", requiresApproval: false }],
+        reasoningSummary: "Scan inbox for application-status emails, queue tracker updates for approval.",
       };
 
     case "morning_brief":

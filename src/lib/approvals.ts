@@ -15,7 +15,8 @@ export type ApprovalActionType =
   | "apply_to_job"
   | "log_expense"
   | "log_income"
-  | "add_job";
+  | "add_job"
+  | "update_job_status";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "executed";
 
@@ -81,6 +82,7 @@ const SCOPE_BLOCKED: Record<ApprovalActionType, string | null> = {
   log_expense: null,
   log_income: null,
   add_job: null,
+  update_job_status: null,
 };
 
 export async function approveAction(userId: string, id: string): Promise<ApprovalActionView> {
@@ -112,6 +114,7 @@ function buildExecutionNote(actionType: ApprovalActionType, payloadJson: string)
     if (actionType === "log_expense") return `Logged $${(p.amountUsd as number).toFixed(2)} expense${p.description ? ` — ${p.description}` : ""}.`;
     if (actionType === "log_income") return `Logged $${(p.amountUsd as number).toFixed(2)} income${p.description ? ` — ${p.description}` : ""}.`;
     if (actionType === "add_job") return `Tracking ${p.title} at ${p.company}.`;
+    if (actionType === "update_job_status") return `Job status updated to ${p.status}.`;
     if (actionType === "save_memory") return `Remembered: "${String(p.fact).slice(0, 80)}".`;
     if (actionType === "create_task") return `Task created: "${String(p.title).slice(0, 80)}".`;
     if (actionType === "delete_memory") return "Memory deleted.";
@@ -206,6 +209,14 @@ async function executeIfPossible(row: {
         source: "telegram",
         status: payload.status ?? "interested",
       },
+    });
+  }
+
+  if (actionType === "update_job_status") {
+    const payload = JSON.parse(row.payload) as { jobListingId: string; status: string };
+    await prisma.jobListing.updateMany({
+      where: { id: payload.jobListingId, userId: row.userId },
+      data: { status: payload.status },
     });
   }
 

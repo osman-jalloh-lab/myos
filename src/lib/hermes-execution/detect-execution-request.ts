@@ -16,6 +16,9 @@ const ACTION_PATTERNS = [
   /^(check|find|search|create|make|add|build|generate|write|draft|inspect|remind|scan|show|run|get|fetch|triage|compose|review|tailor|give me|pull up|look up|look at)\b/i,
   // Tool-specific triggers
   /github\.com\//i,
+  // Job tracker sync phrases
+  /\b(update|sync|check|scan).*(job\s+tracker|application|tracker)/i,
+  /\b(job\s+tracker|application\s+status).*(email|inbox|update)/i,
   // brief/schedule/calendar/today are handled better by the normal chat path (CONTEXT_MATCHERS)
   /\b(inbox|email|resume|cv|task|reminder|todo|to-do|job|jobs|income)\b/i,
   // Natural delegation phrases

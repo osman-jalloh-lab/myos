@@ -359,6 +359,119 @@ export function registerInternalTools(): void {
     },
   });
 
+  // ── internal.jobs.updateFromEmail ────────────────────────────────────────────
+  // Scans Gmail for application-status emails, then queues add_job or
+  // update_job_status approvals. Nothing writes without Osman's approval.
+
+  registerTool({
+    name: "internal.jobs.updateFromEmail",
+    description: "Scan inbox for job application emails and queue tracker updates for approval.",
+    risk: "read",
+    requiresApproval: false,
+    execute: async (_input, ctx: ToolContext) => {
+      const { fetchInboxMessages } = await import("@/lib/gmail");
+      const { createApproval } = await import("@/lib/approvals");
+      const { prisma } = await import("@/lib/db");
+
+      let messages: Awaited<ReturnType<typeof fetchInboxMessages>>;
+      try {
+        messages = await fetchInboxMessages(ctx.userId, 40);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          answer: `Gmail not accessible: ${msg}. Make sure a Google account is linked in Settings.`,
+          artifacts: [],
+        };
+      }
+
+      // Status signals ranked by specificity (most specific first)
+      const SIGNALS: { patterns: RegExp[]; status: string; label: string }[] = [
+        { patterns: [/pleased to offer|job offer|offer letter|extend.*offer|formally offer/i], status: "offer", label: "offer" },
+        { patterns: [/schedule.*interview|interview.*schedule|like to (invite|speak|chat)|phone (screen|call)|video interview|on.?site|next round/i], status: "interview", label: "interview" },
+        { patterns: [/regret to inform|not.*moving forward|position.*filled|unsuccessful|decided to (move|go) with|not.*selected|no longer.*considering/i], status: "rejected", label: "rejected" },
+        { patterns: [/received your application|we('ve| have) received|application.*submitted|thank.*applying|application.*received|application.*confirmation/i], status: "applied", label: "received confirmation" },
+      ];
+
+      // Extract company/role from subject line — best effort
+      function parseSubject(subject: string): { company: string; role: string } {
+        const companyMatch = subject.match(/(?:at|from|with|@)\s+([A-Z][A-Za-z0-9& ,.-]{1,40})/);
+        const roleMatch = subject.match(/(?:for|re:|regarding)\s+(.{5,60}?)(?:\s+(?:at|position|role|job)|$)/i);
+        return {
+          company: companyMatch?.[1]?.trim() ?? "Unknown Company",
+          role: roleMatch?.[1]?.trim() ?? subject.slice(0, 60),
+        };
+      }
+
+      // Fetch existing job listings for match-against
+      const existingJobs = await prisma.jobListing.findMany({
+        where: { userId: ctx.userId },
+        select: { id: true, company: true, title: true, status: true },
+      });
+
+      function findExistingJob(company: string) {
+        const lc = company.toLowerCase();
+        return existingJobs.find((j) =>
+          j.company.toLowerCase().includes(lc) || lc.includes(j.company.toLowerCase())
+        );
+      }
+
+      const queued: string[] = [];
+      const seen = new Set<string>(); // deduplicate by company+status
+
+      for (const msg of messages) {
+        const text = `${msg.subject ?? ""} ${msg.snippet ?? ""}`;
+        for (const signal of SIGNALS) {
+          if (!signal.patterns.some((p) => p.test(text))) continue;
+
+          const { company, role } = parseSubject(msg.subject ?? "");
+          const key = `${company.toLowerCase()}:${signal.status}`;
+          if (seen.has(key)) break;
+          seen.add(key);
+
+          const existing = findExistingJob(company);
+
+          if (existing) {
+            if (existing.status === signal.status) break; // already up to date
+            await createApproval(ctx.userId, "update_job_status", {
+              jobListingId: existing.id,
+              status: signal.status,
+              reason: `Email signal: "${(msg.subject ?? "").slice(0, 80)}"`,
+            });
+            queued.push(`Update "${existing.title}" at ${existing.company} → ${signal.status}`);
+          } else {
+            await createApproval(ctx.userId, "add_job", {
+              title: role,
+              company,
+              status: signal.status,
+              notes: `Discovered via email: ${(msg.subject ?? "").slice(0, 120)}`,
+            });
+            queued.push(`Add "${role}" at ${company} (${signal.label})`);
+          }
+          break; // one signal per email is enough
+        }
+      }
+
+      if (!queued.length) {
+        return {
+          answer: `Scanned ${messages.length} emails. No new application-status signals found. I looked for confirmations, interview invites, offers, and rejections.`,
+          artifacts: [],
+        };
+      }
+
+      return {
+        answer: `Scanned ${messages.length} emails and queued ${queued.length} update${queued.length !== 1 ? "s" : ""} for your approval:\n\n${queued.map((q) => `  • ${q}`).join("\n")}\n\nReview and approve them in the Approvals panel.`,
+        artifacts: [
+          {
+            type: "text" as const,
+            title: `${queued.length} job tracker update(s) queued`,
+            content: queued.join("\n"),
+            metadata: { count: queued.length, scanned: messages.length },
+          },
+        ],
+      };
+    },
+  });
+
   // ── internal.approval.create ─────────────────────────────────────────────────
 
   registerTool({
