@@ -1113,7 +1113,7 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
   // ── single-agent path (existing) ──────────────────────────────────────────
   const matched = buildContext(q);
   const rawContext = matched ? await matched.load(userId, trimmed) : "";
-  // Cap context at 3000 chars to stay within Groq free-tier TPM limits.
+  // Cap context at 3000 chars to stay within token limits.
   const context = rawContext.slice(0, 3000);
 
   // Direct-response gate: if the query is pure data retrieval (no drafting/synthesis
@@ -1131,6 +1131,28 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
     }
   }
 
+  // When no domain matched, load a minimal snapshot so Hermes is never
+  // answering blind — today's events + pending count give just enough
+  // grounding for conversational replies without a full agent load.
+  let baseSnapshot = "";
+  if (!matched) {
+    try {
+      const now = new Date();
+      const todayEnd = new Date(now); todayEnd.setHours(23, 59, 59, 999);
+      const todayEvts = await calendarRead(userId, now, todayEnd);
+      const counts = await approvalCounts(userId);
+      const evtLine = todayEvts.length
+        ? todayEvts.slice(0, 5).map((e) => {
+            const t = e.allDay ? "all day" : new Date(e.start).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+            return `${t} — ${e.summary}`;
+          }).join("; ")
+        : "nothing left on the calendar today";
+      baseSnapshot = `Today (${now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}): ${evtLine}. Pending approvals: ${counts.pending ?? 0}.`;
+    } catch {
+      // snapshot is best-effort; don't block the reply if it fails
+    }
+  }
+
   const result = await callModel({
     userId,
     taskType: matched?.taskType ?? "chat-general",
@@ -1139,7 +1161,9 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
     providerOverride,
     userPrompt: context
       ? `Context for this reply:\n${context}\n\nOsman just asked: "${trimmed}"\n\nReply in 2-4 sentences, conversationally, grounded only in the context above.`
-      : `Osman just asked: "${trimmed}"\n\nI have no specific data context loaded for this message. Reply briefly — if the question sounds like it needs data (calendar, email, finance, jobs, memory, approvals, brief), say you didn't catch a topic you can look up and name the topics you can check. Otherwise just answer conversationally.`,
+      : baseSnapshot
+        ? `Snapshot: ${baseSnapshot}\n\nOsman just asked: "${trimmed}"\n\nReply conversationally. If the question needs deeper data (email, finance, jobs) say which agent can help.`
+        : `Osman just asked: "${trimmed}"\n\nReply conversationally. If the question needs data (calendar, email, finance, jobs, memory) name which agent can look it up.`,
   });
 
   await logHandoff({

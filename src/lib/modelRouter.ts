@@ -1,5 +1,6 @@
 // Model router. Default provider Groq (Lean). Logs every call to ModelUsage.
 // PRIVATE data (email/I-9/finance) -> Groq on Vercel, or home Ollama via OLLAMA_BASE_URL tunnel.
+// Chat tasks (PERSONAL) -> Claude Haiku when ANTHROPIC_API_KEY is set (better reasoning).
 import { prisma } from "./db";
 
 export type DataClass = "PUBLIC" | "PERSONAL" | "PRIVATE" | "SECRET";
@@ -8,7 +9,12 @@ export type Provider = "groq" | "openai" | "anthropic" | "ollama";
 export function pickProvider(taskType: string, dataClass: DataClass): Provider {
   if (dataClass === "SECRET") throw new Error("SECRET data must never reach an LLM");
   if (taskType === "code" || taskType === "long-doc") return "anthropic";
+  // PRIVATE data (email, finance, I-9) stays on Groq per CLAUDE.md rule 4
   if (dataClass === "PRIVATE") return process.env.OLLAMA_BASE_URL ? "ollama" : "groq";
+  // Chat and brief tasks get Claude when the key is available — better context reasoning
+  if (process.env.ANTHROPIC_API_KEY && (taskType.startsWith("chat-") || taskType === "daily-brief")) {
+    return "anthropic";
+  }
   return (process.env.MODEL_ROUTER_DEFAULT_PROVIDER as Provider) || "groq";
 }
 
@@ -19,9 +25,16 @@ export const PROVIDER_FALLBACK: Provider[] = ["groq", "openai", "anthropic", "ol
 // Lean Mode default — small, fast, cheap. Good enough for structured-signal synthesis.
 const GROQ_MODEL = "llama-3.1-8b-instant";
 
-// Rough Groq list pricing per 1M tokens — only used to populate model_usage.est_cost_usd
-// for the cost panel. Not billing-accurate; update if Groq's pricing changes.
+// Claude models: Haiku for fast chat, Sonnet for synthesis/briefs.
+const ANTHROPIC_CHAT_MODEL = "claude-haiku-4-5-20251001";
+const ANTHROPIC_SYNTHESIS_MODEL = "claude-sonnet-4-6";
+
+// Rough list pricing per 1M tokens (not billing-accurate; update if pricing changes).
 const GROQ_COST_PER_MILLION = { input: 0.05, output: 0.08 };
+const ANTHROPIC_COST_PER_MILLION = {
+  haiku: { input: 0.80, output: 4.00 },
+  sonnet: { input: 3.00, output: 15.00 },
+};
 
 interface ProviderResponse {
   text: string;
@@ -97,11 +110,64 @@ async function callOllama(system: string, user: string): Promise<ProviderRespons
   return { text: data.message?.content?.trim() ?? "" };
 }
 
-function estimateCost(provider: Provider, inputTokens = 0, outputTokens = 0): number | undefined {
+async function callAnthropic(system: string, user: string, taskType?: string): Promise<ProviderResponse> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
+
+  // Synthesis tasks get Sonnet; everything else gets Haiku (fast + cheap).
+  const isSynthesis = taskType === "daily-brief" || taskType === "chat-multi-agent";
+  const model = isSynthesis ? ANTHROPIC_SYNTHESIS_MODEL : ANTHROPIC_CHAT_MODEL;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: isSynthesis ? 800 : 500,
+      system,
+      messages: [{ role: "user", content: user }],
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Anthropic API ${res.status}: ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as {
+    content?: { type: string; text?: string }[];
+    usage?: { input_tokens?: number; output_tokens?: number };
+  };
+
+  const text = (data.content ?? [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text ?? "")
+    .join("")
+    .trim();
+
+  return {
+    text,
+    inputTokens: data.usage?.input_tokens,
+    outputTokens: data.usage?.output_tokens,
+  };
+}
+
+function estimateCost(provider: Provider, inputTokens = 0, outputTokens = 0, taskType?: string): number | undefined {
   if (provider === "groq") {
     return (
       (inputTokens / 1_000_000) * GROQ_COST_PER_MILLION.input +
       (outputTokens / 1_000_000) * GROQ_COST_PER_MILLION.output
+    );
+  }
+  if (provider === "anthropic") {
+    const isSynthesis = taskType === "daily-brief" || taskType === "chat-multi-agent";
+    const rates = isSynthesis ? ANTHROPIC_COST_PER_MILLION.sonnet : ANTHROPIC_COST_PER_MILLION.haiku;
+    return (
+      (inputTokens / 1_000_000) * rates.input +
+      (outputTokens / 1_000_000) * rates.output
     );
   }
   return undefined;
@@ -122,12 +188,11 @@ export interface ModelCallResult {
   provider: Provider;
 }
 
-async function runProvider(provider: Provider, system: string, user: string): Promise<ProviderResponse> {
+async function runProvider(provider: Provider, system: string, user: string, taskType?: string): Promise<ProviderResponse> {
   if (provider === "groq") return callGroq(system, user);
   if (provider === "ollama") return callOllama(system, user);
-  // openai/anthropic have no implementation yet — fail loudly rather than
-  // silently sending data somewhere unexpected.
-  throw new Error(`Provider "${provider}" is not yet implemented in the model router`);
+  if (provider === "anthropic") return callAnthropic(system, user, taskType);
+  throw new Error(`Provider "openai" is not yet implemented in the model router`);
 }
 
 async function logUsage(params: ModelCallParams, provider: Provider, response: ProviderResponse): Promise<void> {
@@ -139,7 +204,7 @@ async function logUsage(params: ModelCallParams, provider: Provider, response: P
       dataClass: params.dataClass,
       inputTokens: response.inputTokens,
       outputTokens: response.outputTokens,
-      estCostUsd: estimateCost(provider, response.inputTokens, response.outputTokens),
+      estCostUsd: estimateCost(provider, response.inputTokens, response.outputTokens, params.taskType),
     },
   });
 }
@@ -156,7 +221,7 @@ export async function callModel(params: ModelCallParams): Promise<ModelCallResul
   const provider = params.providerOverride ?? pickProvider(params.taskType, params.dataClass);
 
   try {
-    const response = await runProvider(provider, params.systemPrompt, params.userPrompt);
+    const response = await runProvider(provider, params.systemPrompt, params.userPrompt, params.taskType);
     await logUsage(params, provider, response);
     return { text: response.text, provider };
   } catch (err) {
