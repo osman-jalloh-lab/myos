@@ -24,6 +24,9 @@ import { getContextCards, readMemory } from "@/agents/mnemosyne";
 import { releaseWatch, repoScoutTool, SCOUT_TOPICS } from "@/agents/sophos";
 import { incomeBrief, passiveIncomeScan } from "@/agents/tyche";
 import { OSMAN_CONTEXT } from "@/agents/souls/osman";
+import { getPersonalContext } from "@/lib/personalContext";
+
+const PERSONAL_CONTEXT = getPersonalContext();
 
 export const hermes = {
   name: "Hermes",
@@ -200,7 +203,7 @@ FORMATTING RULES — strictly enforced:
 - Reply in 2-4 sentences. Answer first, elaborate after.
 - You only know what is in the context block provided. If it is empty or does not cover the question, say plainly that you do not have that data.
 
-${OSMAN_CONTEXT}`;
+${OSMAN_CONTEXT}${PERSONAL_CONTEXT ? `\n\n--- PERSONAL CONTEXT ---\n${PERSONAL_CONTEXT}` : ""}`;
 
 interface ContextMatcher {
   match: RegExp;

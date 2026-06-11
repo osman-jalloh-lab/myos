@@ -46,3 +46,12 @@ Tools are owned exclusively (this enforces no-overlap). Skills are shared refere
 - `npm run dev` — local dev
 - `npm run build` — prisma generate + next build
 - `npm run db:migrate` — Prisma migrations (libSQL adapter against Turso; see deploy runbook)
+
+## Personal context
+`hermes-context/` is the source of truth about Osman — who he is, priorities, writing rules, connections, and decisions. Read it before answering anything personal. Key files:
+- `hermes-context/aios-intake.md` — full intake (Q1-Q7)
+- `hermes-context/context/priorities.md` — current 90-day priorities
+- `hermes-context/connections.md` — people, orgs, platforms
+- `hermes-context/decisions/log.md` — append-only decisions log
+- `hermes-context/3ms-framework.md` — weekly operating rhythm
+`src/lib/personalContext.ts` loads these at runtime into agent system prompts. `appendDecision()` in that file is how agents log decisions.
