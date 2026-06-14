@@ -13,7 +13,8 @@
     { "path": "/api/cron/meeting-reminder",  "schedule": "0 14 * * *"   },
     { "path": "/api/cron/email-watcher",     "schedule": "0 15 * * *"   },
     { "path": "/api/cron/job-scout-gmail",    "schedule": "0 14 * * *"   },
-    { "path": "/api/cron/job-tracker-sweep", "schedule": "0 16 * * *"   }
+    { "path": "/api/cron/job-tracker-sweep", "schedule": "0 16 * * *"   },
+    { "path": "/api/cron/thread-watcher",   "schedule": "0 18 * * *"   }
   ],
   "functions": {
     "app/api/**/*": { "maxDuration": 60 }

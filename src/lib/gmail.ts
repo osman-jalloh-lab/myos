@@ -460,6 +460,151 @@ export async function fetchJobAlertMessages(
   return all.sort((a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime());
 }
 
+// ── Thread staleness scanner ──────────────────────────────────────────────────
+// Finds threads where a real human sent the last message and Osman hasn't
+// replied yet. Used by the thread-watcher cron to surface "waiting on you"
+// threads before they go cold.
+
+export interface OpenThread {
+  threadId: string;
+  subject: string;
+  lastFrom: string;
+  lastSnippet: string;
+  lastMessageId: string;
+  lastReceivedAt: string; // ISO timestamp
+  hoursSinceLastMessage: number;
+  accountEmail: string;
+  accountLabel: string;
+}
+
+const OSMAN_EMAILS = [
+  "osman.jalloh@g.austincc.edu",
+  "osmanjalloh104@gmail.com",
+  "osman.jalloh@austincc.edu",
+];
+
+const AUTOMATED_PATTERNS = [
+  "noreply", "no-reply", "notification", "notifications@", "do-not-reply",
+  "donotreply", "mailer", "newsletter", "digest", "alert@", "alerts@",
+  "jobs-noreply", "jobalerts", "bounce@", "automated@", "info@", "hello@",
+  "updates@", "support@", "team@",
+];
+
+function isAutomated(from: string): boolean {
+  const lower = from.toLowerCase();
+  return AUTOMATED_PATTERNS.some((p) => lower.includes(p));
+}
+
+function isOsman(from: string): boolean {
+  const lower = from.toLowerCase();
+  return OSMAN_EMAILS.some((e) => lower.includes(e));
+}
+
+interface GmailThreadMessage {
+  id: string;
+  snippet?: string;
+  internalDate?: string;
+  payload?: { headers?: GmailHeader[] };
+}
+
+interface GmailThread {
+  id: string;
+  snippet?: string;
+  messages?: GmailThreadMessage[];
+}
+
+/**
+ * Scans all linked Gmail accounts for threads where a real human sent the
+ * last message more than `staleAfterHours` hours ago and Osman hasn't replied.
+ * These are threads that risk going cold without a nudge.
+ */
+export async function fetchOpenThreads(
+  userId: string,
+  staleAfterHours = 24,
+  lookbackDays = 14,
+  maxPerAccount = 30
+): Promise<OpenThread[]> {
+  const accounts = await prisma.googleAccount.findMany({
+    where: { userId },
+    select: { id: true, email: true, label: true },
+  });
+
+  const now = Date.now();
+  const staleMs = staleAfterHours * 60 * 60 * 1000;
+
+  // Broad search: recent inbox threads, excluding obvious noise categories
+  const query = `is:inbox newer_than:${lookbackDays}d -label:CATEGORY_PROMOTIONS -label:CATEGORY_SOCIAL -label:CATEGORY_FORUMS`;
+
+  const results = await Promise.allSettled(
+    accounts.map(async (account) => {
+      const token = await getValidToken(account.id);
+      const headers = { Authorization: `Bearer ${token}` };
+
+      const listParams = new URLSearchParams({ maxResults: String(maxPerAccount), q: query });
+      const listRes = await fetch(`${GMAIL_API}/threads?${listParams}`, { headers });
+      if (!listRes.ok) return [];
+      const list = (await listRes.json()) as { threads?: { id: string }[] };
+      const threadIds = list.threads ?? [];
+
+      const threads = await Promise.allSettled(
+        threadIds.map(async ({ id }) => {
+          const params = new URLSearchParams({ format: "metadata" });
+          params.append("metadataHeaders", "From");
+          params.append("metadataHeaders", "Subject");
+          const res = await fetch(`${GMAIL_API}/threads/${id}?${params}`, { headers });
+          if (!res.ok) return null;
+          const thread = (await res.json()) as GmailThread;
+
+          const messages = thread.messages ?? [];
+          if (messages.length === 0) return null;
+
+          const lastMsg = messages[messages.length - 1];
+          const lastFrom =
+            lastMsg.payload?.headers?.find((h) => h.name.toLowerCase() === "from")?.value ?? "";
+          const subject =
+            lastMsg.payload?.headers?.find((h) => h.name.toLowerCase() === "subject")?.value ??
+            "(no subject)";
+          const lastDate = lastMsg.internalDate ? Number(lastMsg.internalDate) : 0;
+          if (lastDate === 0) return null;
+
+          const hoursOld = (now - lastDate) / (60 * 60 * 1000);
+
+          // Skip: Osman sent last (already replied), automated sender, too recent, or too old
+          if (isOsman(lastFrom)) return null;
+          if (isAutomated(lastFrom)) return null;
+          if (now - lastDate < staleMs) return null;
+          if (now - lastDate > lookbackDays * 24 * 60 * 60 * 1000) return null;
+
+          return {
+            threadId: id,
+            subject,
+            lastFrom,
+            lastSnippet: lastMsg.snippet ?? "",
+            lastMessageId: lastMsg.id,
+            lastReceivedAt: new Date(lastDate).toISOString(),
+            hoursSinceLastMessage: Math.round(hoursOld),
+            accountEmail: account.email,
+            accountLabel: account.label,
+          } satisfies OpenThread;
+        })
+      );
+
+      return threads
+        .filter((r): r is PromiseFulfilledResult<OpenThread | null> => r.status === "fulfilled")
+        .map((r) => r.value)
+        .filter((t): t is OpenThread => t !== null);
+    })
+  );
+
+  const all: OpenThread[] = [];
+  for (const r of results) {
+    if (r.status === "fulfilled") all.push(...r.value);
+  }
+
+  // Most stale first — the ones most at risk of going cold
+  return all.sort((a, b) => b.hoursSinceLastMessage - a.hoursSinceLastMessage);
+}
+
 /**
  * Fetches the full plain-text body for a single Gmail message.
  * Looks up the account matching `accountEmail` to get the right OAuth token.
