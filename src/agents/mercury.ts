@@ -1,6 +1,6 @@
 // Mercury — external tool / MCP agent
 //
-// Owns: web_search, flight_search, hotel_search, maps, weather, price_compare.
+// Owns: web_search, google_flights_search, flight_search, hotel_search, maps, weather, price_compare.
 // NOT for: email, calendar, jobs, finance, memory, HR, or daily briefing (those
 // belong to existing agents — Mercury will say so and redirect).
 //
@@ -44,11 +44,20 @@ export const TOOL_REGISTRY: Record<string, ToolDefinition> = {
     connected: keysPresent("SERPER_API_KEY"),
     notConnectedHint: "Add SERPER_API_KEY (serper.dev) to Vercel env vars to enable live web search.",
   },
+  google_flights_search: {
+    id: "google_flights_search",
+    label: "Google Flights Search",
+    category: "travel",
+    description: "Search Google Flights for real-time flight options, prices, airlines, schedules, and layover details. Preferred for all flight searches.",
+    requiredParams: ["departure_id", "arrival_id", "outbound_date"],
+    connected: keysPresent("SERPAPI_API_KEY"),
+    notConnectedHint: "Add SERPAPI_API_KEY (serpapi.com) to Vercel env vars to enable Google Flights search.",
+  },
   flight_search: {
     id: "flight_search",
     label: "Flight Search",
     category: "travel",
-    description: "Search for available flights and fares between two cities",
+    description: "Fallback flight search via Amadeus when Google Flights is not available",
     requiredParams: ["origin", "destination", "departure_date", "adults"],
     connected: keysPresent("AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET"),
     notConnectedHint: "Add AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET (developers.amadeus.com) to enable flight search.",
@@ -134,10 +143,15 @@ Return ONLY valid JSON, no explanation:
 
 Rules:
 - If no tool fits, set tool to null.
-- Extract dates as YYYY-MM-DD. If a date is relative ("this weekend", "next Friday") and you can infer it, do so.
-- Airport codes: extract 3-letter IATA codes where possible (Austin = AUS, Atlanta = ATL, etc.).
+- Extract dates as YYYY-MM-DD. If a date is relative ("this weekend", "next Friday", "next month") and today is ${new Date().toISOString().slice(0, 10)}, infer the actual date.
+- Airport codes: extract 3-letter IATA codes where possible (Austin = AUS, Atlanta = ATL, New York = JFK, Los Angeles = LAX, Chicago = ORD, Dallas = DFW, Miami = MIA, Denver = DEN, Seattle = SEA, Boston = BOS, DC = DCA).
+- For ALL flight search requests, prefer google_flights_search over flight_search.
+  - google_flights_search params: departure_id (IATA), arrival_id (IATA), outbound_date (YYYY-MM-DD), return_date (YYYY-MM-DD if round trip), type ("1"=round trip "2"=one-way, default "2"), adults (default "1"), cabin_class (optional: ECONOMY PREMIUM_ECONOMY BUSINESS FIRST).
+  - If the user implies round trip ("round trip", "there and back", "return flight"), set type="1" and add return_date to missing if not given.
+  - If the user says "one way" or "one-way", set type="2".
+  - Mark departure_id or arrival_id as missing if only city names were given and you cannot map them to IATA codes.
 - If the city for hotel_search is not a 3-letter code, put it in "city" and leave "city_code" blank.
-- isTransactional = true only when the user explicitly wants to finalize a booking or purchase.
+- isTransactional = true only when the user explicitly wants to finalize a booking or purchase. Searching is NOT transactional.
 - For web_search, the full user query is the search query if nothing more specific is available.`,
     userPrompt: query,
   });
@@ -320,13 +334,107 @@ async function runMapsSearch(params: Record<string, string>): Promise<string> {
     .join("\n");
 }
 
+// ── Google Flights via SerpAPI ────────────────────────────────────────────────
+
+interface GFlightSegment {
+  airline: string;
+  flight_number: string;
+  airplane?: string;
+  departure_airport: { name: string; id: string; time: string };
+  arrival_airport: { name: string; id: string; time: string };
+  duration: number;
+  extensions?: string[];
+}
+
+interface GFlightOffer {
+  flights: GFlightSegment[];
+  layovers?: { duration: number; name: string; id: string; overnight?: boolean }[];
+  total_duration: number;
+  price: number;
+  type: string;
+  carbon_emissions?: { this_flight?: number; typical_for_this_route?: number; difference_percent?: number };
+}
+
+interface SerpFlightsResponse {
+  best_flights?: GFlightOffer[];
+  other_flights?: GFlightOffer[];
+  price_insights?: { lowest_price?: number; price_level?: string; typical_range?: number[] };
+  error?: string;
+}
+
+async function runGoogleFlightsSearch(params: Record<string, string>): Promise<string> {
+  const searchParams = new URLSearchParams({
+    engine: "google_flights",
+    api_key: process.env.SERPAPI_API_KEY!,
+    departure_id: (params.departure_id || params.origin || "").toUpperCase(),
+    arrival_id: (params.arrival_id || params.destination || "").toUpperCase(),
+    outbound_date: params.outbound_date || params.departure_date || "",
+    type: params.type || (params.return_date ? "1" : "2"),
+    adults: params.adults || "1",
+    currency: "USD",
+    hl: "en",
+  });
+
+  if (params.return_date) searchParams.set("return_date", params.return_date);
+  if (params.cabin_class) searchParams.set("travel_class", params.cabin_class);
+  if (params.children) searchParams.set("children", params.children);
+
+  const res = await fetch(`https://serpapi.com/search.json?${searchParams.toString()}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) throw new Error(`SerpAPI ${res.status}`);
+
+  const data = (await res.json()) as SerpFlightsResponse;
+  if (data.error) throw new Error(data.error);
+
+  const allFlights = [...(data.best_flights ?? []), ...(data.other_flights ?? [])];
+  if (!allFlights.length) return "No flights found for those dates and cities.";
+
+  const lines: string[] = [];
+
+  // Price context header
+  if (data.price_insights) {
+    const pi = data.price_insights;
+    if (pi.lowest_price) lines.push(`Lowest price found: $${pi.lowest_price}`);
+    if (pi.typical_range?.length === 2) lines.push(`Typical range: $${pi.typical_range[0]}–$${pi.typical_range[1]}`);
+    if (pi.price_level) lines.push(`Price level: ${pi.price_level}`);
+    lines.push("");
+  }
+
+  // Top results
+  for (const [i, offer] of allFlights.slice(0, 5).entries()) {
+    const first = offer.flights[0];
+    const last = offer.flights[offer.flights.length - 1];
+    const stops = offer.layovers?.length ?? 0;
+    const stopStr = stops === 0 ? "nonstop" : `${stops} stop${stops > 1 ? "s" : ""}`;
+    const dur = `${Math.floor(offer.total_duration / 60)}h ${offer.total_duration % 60}m`;
+    const dep = first.departure_airport.time;
+    const arr = last.arrival_airport.time;
+    const layoverNote = offer.layovers
+      ?.map((l) => `${l.id} ${Math.floor(l.duration / 60)}h${l.overnight ? " overnight" : ""}`)
+      .join(", ");
+    const bagNote = first.extensions?.find((e) => /bag|carry|check/i.test(e));
+
+    let line = `${i + 1}. ${first.airline} (${first.flight_number}) — $${offer.price} — ${dep} → ${arr} — ${dur}, ${stopStr}`;
+    if (layoverNote) line += ` (via ${layoverNote})`;
+    if (bagNote) line += ` — ${bagNote}`;
+    if (first.airplane) line += ` — ${first.airplane}`;
+    lines.push(line);
+  }
+
+  lines.push("");
+  lines.push("Search results only — nothing has been booked. Book manually or request approval.");
+  return lines.join("\n");
+}
+
 async function dispatchTool(toolId: string, params: Record<string, string>): Promise<string> {
   switch (toolId) {
-    case "web_search":   return runWebSearch(params);
-    case "weather":      return runWeather(params);
-    case "flight_search": return runFlightSearch(params);
-    case "hotel_search": return runHotelSearch(params);
-    case "maps":         return runMapsSearch(params);
+    case "web_search":            return runWebSearch(params);
+    case "weather":               return runWeather(params);
+    case "google_flights_search": return runGoogleFlightsSearch(params);
+    case "flight_search":         return runFlightSearch(params);
+    case "hotel_search":          return runHotelSearch(params);
+    case "maps":                  return runMapsSearch(params);
     default: throw new Error(`No implementation for tool: ${toolId}`);
   }
 }
