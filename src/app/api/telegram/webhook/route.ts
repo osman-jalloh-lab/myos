@@ -26,11 +26,13 @@ const BOT_COMMANDS: Record<string, string> = {
   "/tasks":      "what tasks are pending",
   "/calendar":   "what's on my calendar today and tomorrow",
   "/finance":    "finance snapshot",
+  "/tools":      "what external tools are connected",
   "/help":       "list what you can help with",
 };
 
 // Agent shortcut prefixes: "/iris what's in my inbox today" → ask iris ...
-const AGENT_PREFIXES = ["iris", "kairos", "athena", "plutus", "argus", "mnemosyne", "sophos", "themis", "tyche"];
+// "/mercury find me a flight to Atlanta" → Mercury external tool agent
+const AGENT_PREFIXES = ["iris", "kairos", "athena", "plutus", "argus", "mnemosyne", "sophos", "themis", "tyche", "mercury"];
 
 function resolveCommandText(raw: string): { text: string; targetAgent: string | null } {
   const lower = raw.toLowerCase().trim();

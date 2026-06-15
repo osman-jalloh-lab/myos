@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { routeMessage, routeToAgent, type RouteResult } from "@/agents/hermes";
+import { handleMercuryRequest } from "@/agents/mercury";
 
 export type ChatChannel = "dashboard" | "telegram";
 
@@ -79,9 +80,17 @@ export async function sendMessage(
     data: { userId, role: "user", content: text, channel, targetAgent },
   });
 
-  const route = targetAgent
-    ? await routeToAgent(userId, targetAgent, text, channel)
-    : await routeMessage(userId, text, channel);
+  let route: RouteResult;
+  if (targetAgent === "mercury") {
+    // Mercury handles external tool/API requests independently — it does not
+    // go through Hermes routing, keeping the two agent graphs separate.
+    const { reply, pendingApprovals } = await handleMercuryRequest(userId, text, channel);
+    route = { reply, pendingApprovals };
+  } else {
+    route = targetAgent
+      ? await routeToAgent(userId, targetAgent, text, channel)
+      : await routeMessage(userId, text, channel);
+  }
 
   const replyRow = await prisma.chatMessage.create({
     data: { userId, role: "assistant", content: route.reply, channel, targetAgent },
