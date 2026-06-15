@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { sendMessage } from "@/lib/chat";
 import {
   sendTelegramMessage,
+  sendChatAction,
   answerCallbackQuery,
   isFromOwner,
   type InlineButton,
@@ -9,10 +10,52 @@ import {
 } from "@/lib/telegram";
 import type { RouteResult } from "@/agents/hermes";
 
-// Renders each pending approval as one row of Approve/Reject buttons whose
-// callback_data is literally "approve <id>" / "reject <id>" — the exact text
-// routeMessage's approval-verb branch already parses, so a button tap takes
-// the same code path as typing the command by hand.
+// Bot command shortcuts — map Telegram slash commands to natural-language
+// queries so every command fans through the same routeMessage() intent router.
+// This means Osman gets the full agent chain, not a hardcoded shortcut.
+const BOT_COMMANDS: Record<string, string> = {
+  "/start":      "systems online",
+  "/brief":      "brief me on today",
+  "/b":          "brief me on today",
+  "/email":      "triage my inbox",
+  "/e":          "triage my inbox",
+  "/jobs":       "job tracker status",
+  "/j":          "job tracker status",
+  "/approvals":  "show pending approvals",
+  "/a":          "show pending approvals",
+  "/tasks":      "what tasks are pending",
+  "/calendar":   "what's on my calendar today and tomorrow",
+  "/finance":    "finance snapshot",
+  "/help":       "list what you can help with",
+};
+
+// Agent shortcut prefixes: "/iris what's in my inbox today" → ask iris ...
+const AGENT_PREFIXES = ["iris", "kairos", "athena", "plutus", "argus", "mnemosyne", "sophos", "themis", "tyche"];
+
+function resolveCommandText(raw: string): { text: string; targetAgent: string | null } {
+  const lower = raw.toLowerCase().trim();
+
+  // /agent message → route directly to that agent
+  for (const agent of AGENT_PREFIXES) {
+    if (lower.startsWith(`/${agent} `) || lower.startsWith(`/${agent}\n`)) {
+      return { text: raw.slice(agent.length + 2).trim(), targetAgent: agent };
+    }
+    // Just "/iris" with no message → ask that agent for their standard briefing
+    if (lower === `/${agent}`) {
+      return { text: "give me your current status", targetAgent: agent };
+    }
+  }
+
+  // Plain bot command → mapped query text
+  const cmdKey = lower.split(" ")[0]; // handle "/brief something" → "/brief"
+  if (BOT_COMMANDS[cmdKey]) {
+    const extra = raw.slice(cmdKey.length).trim();
+    return { text: extra ? `${BOT_COMMANDS[cmdKey]}: ${extra}` : BOT_COMMANDS[cmdKey], targetAgent: null };
+  }
+
+  return { text: raw, targetAgent: null };
+}
+
 function approvalButtons(route: RouteResult): InlineButton[][] | undefined {
   if (!route.pendingApprovals?.length) return undefined;
   return route.pendingApprovals.map((p) => [
@@ -22,20 +65,20 @@ function approvalButtons(route: RouteResult): InlineButton[][] | undefined {
 }
 
 /**
- * POST /api/telegram/webhook — receives Telegram Bot API updates.
+ * POST /api/telegram/webhook
  *
- * Single-user bridge: every update is checked against TELEGRAM_OWNER_CHAT_ID
- * before anything runs (anything else is silently ignored — not an error
- * response, since Telegram would just retry). Verified via the
- * X-Telegram-Bot-Api-Secret-Token header Telegram echoes back, matched
- * against TELEGRAM_WEBHOOK_SECRET (set via setWebhook at registration time).
+ * Telegram is the primary live-chat interface for Hermes OS. Every message from
+ * Osman routes through the same sendMessage() → routeMessage() chain as the
+ * dashboard, with channel="telegram" so responses get Telegram HTML formatting
+ * and the Jarvis-flavored system prompt.
  *
- * Both plain text and inline-button taps funnel into the exact same
- * sendMessage() -> Hermes.routeMessage() core the dashboard chat uses —
- * Telegram is a new *client* of the approval queue, never a new path around
- * it (CLAUDE.md rule 3). "Approve"/"Reject" buttons literally send the text
- * "approve <id>" / "reject <id>" through routeMessage, which calls the same
- * approveAction/rejectAction the /approvals page calls.
+ * Features added vs the base implementation:
+ * - Typing indicator fires immediately before any async work
+ * - Bot command shortcuts (/brief, /email, /jobs, /iris, /athena, etc.)
+ * - /agent shortcuts bypass Hermes and talk directly to a named agent
+ * - Reply context: when Osman taps "Reply" on a notification, the quoted
+ *   message text is prepended as context so Hermes knows what he's responding to
+ * - Responses use parse_mode: "HTML" for rich formatting
  */
 export async function POST(req: Request) {
   const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
@@ -49,33 +92,33 @@ export async function POST(req: Request) {
   }
 
   const update = (await req.json().catch(() => null)) as TelegramUpdate | null;
-  if (!update) return new Response("ok"); // malformed — ack so Telegram doesn't retry forever
+  if (!update) return new Response("ok");
 
   if (!isFromOwner(update, ownerChatId)) {
     const senderId = update.message?.from?.id ?? update.callback_query?.from?.id;
-    console.error(`[telegram webhook] sender ${senderId} != configured owner ${ownerChatId} — ignoring`);
-    return new Response("ok"); // ignore anyone who isn't Osman; not an error to Telegram
-  }
-
-  // Single-user system — the owner's Telegram chat maps to the one Hermes user.
-  // No User row exists until Osman signs in via Google on the dashboard once.
-  const user = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
-  if (!user) {
-    console.error(`[telegram webhook] no User row yet — sign in on the dashboard first`);
+    console.error(`[telegram webhook] sender ${senderId} != owner — ignoring`);
     return new Response("ok");
   }
 
+  const user = await prisma.user.findFirst({ orderBy: { createdAt: "asc" } });
+  if (!user) {
+    console.error("[telegram webhook] no User row yet — sign in on dashboard first");
+    return new Response("ok");
+  }
+
+  // ── Callback query (inline button tap) ──────────────────────────────────────
   if (update.callback_query) {
     const cq = update.callback_query;
     const chatId = cq.message?.chat.id;
-    const text = cq.data?.trim();
-    if (chatId && text) {
-      const result = await sendMessage(user.id, text, "telegram");
+    const raw = cq.data?.trim();
+    if (chatId && raw) {
+      await sendChatAction(chatId, "typing");
+      const result = await sendMessage(user.id, raw, "telegram");
       await answerCallbackQuery(cq.id, result.route.reply.slice(0, 180));
       try {
-        await sendTelegramMessage(chatId, result.reply.content, approvalButtons(result.route));
+        await sendTelegramMessage(chatId, result.reply.content, approvalButtons(result.route), "HTML");
       } catch (err) {
-        console.error(`[telegram webhook] failed to deliver reply to chat ${chatId}:`, (err as Error).message);
+        console.error(`[telegram webhook] callback reply failed:`, (err as Error).message);
       }
     } else {
       await answerCallbackQuery(cq.id);
@@ -83,15 +126,34 @@ export async function POST(req: Request) {
     return new Response("ok");
   }
 
+  // ── Plain text message ───────────────────────────────────────────────────────
   const chatId = update.message?.chat.id;
-  const text = update.message?.text?.trim();
-  if (chatId && text) {
-    const result = await sendMessage(user.id, text, "telegram");
+  const rawText = update.message?.text?.trim();
+  if (!chatId || !rawText) return new Response("ok");
+
+  // Fire typing indicator immediately — Osman's phone sees "typing..." while
+  // we route the request. This is the single biggest feel change.
+  await sendChatAction(chatId, "typing");
+
+  // Capture reply context: when Osman taps "Reply" on a notification, inject
+  // the quoted message as a context prefix so Hermes knows what he's replying to.
+  const replyToText = update.message?.reply_to_message?.text;
+  const contextPrefix = replyToText
+    ? `[Context — replying to: "${replyToText.slice(0, 300)}"]\n`
+    : "";
+
+  const { text: resolvedText, targetAgent } = resolveCommandText(rawText);
+  const fullText = contextPrefix + resolvedText;
+
+  try {
+    const result = await sendMessage(user.id, fullText, "telegram", targetAgent);
+    await sendTelegramMessage(chatId, result.reply.content, approvalButtons(result.route), "HTML");
+  } catch (err) {
+    console.error(`[telegram webhook] reply failed:`, (err as Error).message);
+    // Best-effort fallback — send plain error note so Osman knows something broke
     try {
-      await sendTelegramMessage(chatId, result.reply.content, approvalButtons(result.route));
-    } catch (err) {
-      console.error(`[telegram webhook] failed to deliver reply to chat ${chatId}:`, (err as Error).message);
-    }
+      await sendTelegramMessage(chatId, "Something went wrong on my end. Check Vercel logs.");
+    } catch { /* nothing more to do */ }
   }
 
   return new Response("ok");

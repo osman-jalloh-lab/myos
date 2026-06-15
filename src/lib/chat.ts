@@ -79,7 +79,9 @@ export async function sendMessage(
     data: { userId, role: "user", content: text, channel, targetAgent },
   });
 
-  const route = targetAgent ? await routeToAgent(userId, targetAgent, text) : await routeMessage(userId, text);
+  const route = targetAgent
+    ? await routeToAgent(userId, targetAgent, text, channel)
+    : await routeMessage(userId, text, channel);
 
   const replyRow = await prisma.chatMessage.create({
     data: { userId, role: "assistant", content: route.reply, channel, targetAgent },

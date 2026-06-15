@@ -180,6 +180,27 @@ function stripMarkdown(text: string): string {
     .trim();
 }
 
+// Converts LLM markdown to Telegram HTML for the bot reply path.
+// Mirrors toTelegramHtml() in telegram.ts but kept here so hermes.ts has no
+// runtime dependency on the Telegram transport (keeps agent logic portable).
+function formatForTelegram(text: string): string {
+  let out = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  out = out.replace(/```(?:\w+\n)?([\s\S]*?)```/g, (_m, code: string) => `<pre>${code.trim()}</pre>`);
+  out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
+  out = out.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+  out = out.replace(/\*(.+?)\*/g, "<i>$1</i>");
+  out = out.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>");
+  out = out.replace(/\n{3,}/g, "\n\n");
+  return out.trim();
+}
+
+function formatReply(text: string, channel?: string): string {
+  return channel === "telegram" ? formatForTelegram(text) : stripMarkdown(text);
+}
+
 const HERMES_CHAT_SYSTEM_PROMPT = `You are Hermes, the orchestrator inside Hermes OS.
 
 Root: Hermes, messenger of the gods — the one who moves between worlds and carries word between them.
@@ -202,6 +223,29 @@ FORMATTING RULES — strictly enforced:
 - Use a plain dash (-) for list items if needed. No bullet symbols, no numbered lists with dots.
 - Reply in 2-4 sentences. Answer first, elaborate after.
 - You only know what is in the context block provided. If it is empty or does not cover the question, say plainly that you do not have that data.
+
+${OSMAN_CONTEXT}${PERSONAL_CONTEXT ? `\n\n--- PERSONAL CONTEXT ---\n${PERSONAL_CONTEXT}` : ""}`;
+
+// Telegram-specific variant: same identity and rules, but uses Telegram HTML
+// formatting and a slightly warmer, more conversational tone — this is the live
+// chat interface Osman uses from his phone, so it should feel like J.A.R.V.I.S.,
+// not a log file. Responses can be 3-5 sentences since mobile reading is natural.
+const HERMES_TELEGRAM_SYSTEM_PROMPT = `You are Hermes, the orchestrator of Hermes OS — Osman Jalloh's personal operating system. Think J.A.R.V.I.S.: calm, capable, always one step ahead. This is the live Telegram interface — Osman is on his phone. Be sharp.
+
+Your role:
+- You are the first responder. Everything comes through you. You route, synthesize, and escalate.
+- You pull from the agents (Iris = email, Kairos = calendar, Athena = jobs/resume, Plutus = finance, Argus = daily brief, Mnemosyne = memory, Sophos = new tools, Themis = I-9/work compliance, Tyche = income opportunities).
+- You never claim to have sent, applied, booked, or changed anything. Those go through the approval queue.
+
+Voice: Calm confidence. Precise. Occasionally dry. Never corporate. Never alarmed. You make the situation feel handled.
+
+Formatting — Telegram HTML (apply sparingly, not on every word):
+- <b>bold</b> for key names, companies, deadlines, dollar amounts.
+- <i>italic</i> for status labels or subtle emphasis.
+- <code>code</code> for IDs, dates, technical values.
+- Use a plain dash (-) for short lists. No bullet symbols.
+- 3-5 sentences. Lead with the answer, follow with what matters. If there's an action item, name it last — Osman acts on the last thing he reads.
+- If the context is empty or doesn't cover the question, say so plainly and name which agent can look it up.
 
 ${OSMAN_CONTEXT}${PERSONAL_CONTEXT ? `\n\n--- PERSONAL CONTEXT ---\n${PERSONAL_CONTEXT}` : ""}`;
 
@@ -1040,7 +1084,12 @@ ${OSMAN_CONTEXT}`,
 
 const HERMES_AGENT_ROSTER = Object.keys(AGENT_PROFILES);
 
-export async function routeToAgent(userId: string, agentName: string, text: string): Promise<RouteResult> {
+export async function routeToAgent(
+  userId: string,
+  agentName: string,
+  text: string,
+  channel?: string,
+): Promise<RouteResult> {
   const key = agentName.toLowerCase();
   const profile = AGENT_PROFILES[key];
   if (!profile) {
@@ -1063,17 +1112,25 @@ export async function routeToAgent(userId: string, agentName: string, text: stri
           outputSummary: direct.slice(0, 500),
           modelProvider: "none",
         });
-        return { reply: direct };
+        return { reply: formatReply(direct, channel) };
       }
     }
   }
+
+  const isTelegram = channel === "telegram";
+  const systemPrompt = isTelegram
+    ? profile.systemPrompt.replace(
+        /FORMATTING RULES[^$]*/s,
+        "Formatting: use Telegram HTML — <b>bold</b> for key values, <i>italic</i> for labels. Plain dash for lists. 3-5 sentences."
+      )
+    : profile.systemPrompt;
 
   const result = await callModel({
     userId,
     taskType: `chat-agent-${key}`,
     dataClass: profile.dataClass ?? "PERSONAL",
-    systemPrompt: profile.systemPrompt,
-    userPrompt: `Context for this reply:\n${context}\n\nOsman just asked you directly: "${trimmed}"\n\nReply in 2-4 sentences, conversationally, grounded only in the context above and your own domain.`,
+    systemPrompt,
+    userPrompt: `Context for this reply:\n${context}\n\nOsman just asked you directly: "${trimmed}"\n\nReply in ${isTelegram ? "3-5" : "2-4"} sentences, conversationally, grounded only in the context above and your own domain.`,
     providerOverride,
   });
 
@@ -1084,10 +1141,12 @@ export async function routeToAgent(userId: string, agentName: string, text: stri
     modelProvider: result.provider,
   });
 
-  return { reply: stripMarkdown(result.text) };
+  return { reply: formatReply(result.text, channel) };
 }
 
-export async function routeMessage(userId: string, text: string): Promise<RouteResult> {
+export async function routeMessage(userId: string, text: string, channel?: string): Promise<RouteResult> {
+  const isTelegram = channel === "telegram";
+  const activeSystemPrompt = isTelegram ? HERMES_TELEGRAM_SYSTEM_PROMPT : HERMES_CHAT_SYSTEM_PROMPT;
   const { cleaned: trimmed, providerOverride } = detectModelOverride(text.trim());
   const approvalVerb = trimmed.match(/^(approve|reject)\s+([a-zA-Z0-9-]+)/i);
 
@@ -1137,7 +1196,7 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
         status: "in_progress",
       },
     });
-    const agentReply = await routeToAgent(userId, agentKey, instruction.trim());
+    const agentReply = await routeToAgent(userId, agentKey, instruction.trim(), channel);
     await prisma.task.update({ where: { id: task.id }, data: { status: "done", resolvedAt: new Date() } });
     return { reply: `Assigned to ${profile.displayName} — here's what they found: ${agentReply.reply}` };
   }
@@ -1263,7 +1322,7 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
       userId,
       taskType: "chat-multi-agent",
       dataClass: "PERSONAL",
-      systemPrompt: HERMES_CHAT_SYSTEM_PROMPT,
+      systemPrompt: activeSystemPrompt,
       providerOverride,
       userPrompt: `Context assembled from multiple agents:\n\n${combinedContext.slice(0, 4000)}\n\nOsman asked: "${trimmed}"\n\nSynthesis goal: ${multiRoute.synthesisHint}\n\nReply in 3-5 sentences, combining insights from all agents above into one cohesive answer.`,
     });
@@ -1275,7 +1334,7 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
       modelProvider: multiResult.provider,
     });
 
-    return { reply: stripMarkdown(multiResult.text) };
+    return { reply: formatReply(multiResult.text, channel) };
   }
 
   // ── single-agent path (existing) ──────────────────────────────────────────
@@ -1321,14 +1380,15 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
     }
   }
 
+  const sentenceCount = isTelegram ? "3-5" : "2-4";
   const result = await callModel({
     userId,
     taskType: matched?.taskType ?? "chat-general",
     dataClass: "PERSONAL",
-    systemPrompt: HERMES_CHAT_SYSTEM_PROMPT,
+    systemPrompt: activeSystemPrompt,
     providerOverride,
     userPrompt: context
-      ? `Context for this reply:\n${context}\n\nOsman just asked: "${trimmed}"\n\nReply in 2-4 sentences, conversationally, grounded only in the context above.`
+      ? `Context for this reply:\n${context}\n\nOsman just asked: "${trimmed}"\n\nReply in ${sentenceCount} sentences, conversationally, grounded only in the context above.`
       : baseSnapshot
         ? `Snapshot: ${baseSnapshot}\n\nOsman just asked: "${trimmed}"\n\nReply conversationally. If the question needs deeper data (email, finance, jobs) say which agent can help.`
         : `Osman just asked: "${trimmed}"\n\nReply conversationally. If the question needs data (calendar, email, finance, jobs, memory) name which agent can look it up.`,
@@ -1346,12 +1406,12 @@ export async function routeMessage(userId: string, text: string): Promise<RouteR
   if (matched?.taskType === "chat-approvals") {
     const pending = await listApprovals(userId, "pending");
     return {
-      reply: stripMarkdown(result.text),
+      reply: formatReply(result.text, channel),
       pendingApprovals: pending.slice(0, 5).map((p) => ({ id: p.id, actionType: p.actionType })),
     };
   }
 
-  return { reply: stripMarkdown(result.text) };
+  return { reply: formatReply(result.text, channel) };
 }
 
 export type { ApprovalActionType, ApprovalStatus };
