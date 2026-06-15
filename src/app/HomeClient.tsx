@@ -51,6 +51,7 @@ const AGENTS = [
   { id: "mnemosyne", av: "MN", name: "Mnemosyne",  role: "Memory",        color: "var(--cc-teal)",    color2: "var(--cc-teal-2)",   status: "maintaining context · surfacing facts",      load: 18, warn: false },
   { id: "sophos",    av: "SO", name: "Sophos",     role: "Skills Scout",  color: "var(--cc-cyan)",    color2: "var(--cc-cyan)",     status: "watching releases · building skill digest",  load: 12, warn: false },
   { id: "themis",    av: "TH", name: "Themis",     role: "Work",          color: "var(--cc-rose)",    color2: "var(--cc-rose-2)",   status: "I-9 / M-274 · client services knowledge",    load: 15, warn: false },
+  { id: "mercury",  av: "MC", name: "Mercury",    role: "Ultimate Assistant", color: "var(--cc-gold)", color2: "var(--cc-gold-2)",  status: "flights · weather · web search · maps · tools", load: 0,  warn: false },
 ];
 
 const AGENT_META: Record<string, { displayName: string; accentColor: string; emptyText: string }> = {
@@ -63,6 +64,7 @@ const AGENT_META: Record<string, { displayName: string; accentColor: string; emp
   mnemosyne: { displayName: "Mnemosyne", accentColor: "var(--cc-teal)",   emptyText: "Ask Mnemosyne what it remembers — approved facts relevant to what you're working on." },
   sophos:    { displayName: "Sophos",    accentColor: "var(--cc-cyan)",   emptyText: "Ask Sophos what's new — recent Anthropic releases or repos worth a look for your stack." },
   themis:    { displayName: "Themis",    accentColor: "var(--cc-rose)",   emptyText: "Ask Themis about work — I-9 rules, M-274 procedure, reverification, ticket answers. Grounded in your knowledge files." },
+  mercury:   { displayName: "Mercury",   accentColor: "var(--cc-gold)",   emptyText: "Ask Mercury anything external — search flights, check weather, look up places, or search the web. Never books without your approval." },
 };
 
 // ─── helpers ─────────────────────────────────────────────────────────────────

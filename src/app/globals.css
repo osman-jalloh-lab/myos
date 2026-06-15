@@ -29,6 +29,7 @@
   --cc-teal:    #14B8A6; --cc-teal-2:   #2DD4BF;
   --cc-cyan:    #38BDF8; --cc-cyan-2:   #7DD3FC;
   --cc-rose:    #FB7185; --cc-rose-2:   #FDA4AF;
+  --cc-gold:    #EAB308; --cc-gold-2:   #FDE047;
   --cc-success: #22C55E;
   --cc-warn:    #F59E0B;
   --cc-error:   #EF4444;
@@ -43,6 +44,7 @@
   --mnemo:   #2DD4BF;   /* teal            */
   --sophos:  #7DD3FC;   /* light cyan      */
   --themis:  #FB7185;   /* rose (work/law) */
+  --mercury: #EAB308;   /* gold (external tools / travel) */
 
   /* ── Typography — resolved from Next.js next/font/google variables ── */
   --cc-sans:  var(--font-sans,  "Hanken Grotesk", system-ui, sans-serif);
