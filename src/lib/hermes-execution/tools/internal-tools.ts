@@ -544,6 +544,93 @@ export function registerInternalTools(): void {
     },
   });
 
+  // ── internal.code.buildAndPush ───────────────────────────────────────────────
+  // Runs code in E2B, captures files written to /home/user/output/, then pushes
+  // them to osman-jalloh-lab/prometheus-builds on GitHub.
+  // Requires both E2B_API_KEY and GITHUB_TOKEN.
+
+  registerTool({
+    name: "internal.code.buildAndPush",
+    description: "Build an application in E2B sandbox, capture output files, and push them to GitHub. Use when Prometheus builds something worth keeping — a script, a tool, a prototype.",
+    risk: "external_write",
+    requiresApproval: false,
+    execute: async (input) => {
+      const { runCodeAndCapture, e2bConnected } = await import("@/lib/e2b");
+      const { pushToGitHub, githubConnected } = await import("@/lib/github-push");
+
+      if (!e2bConnected()) {
+        return {
+          answer: "E2B code execution is not connected. Add E2B_API_KEY to Vercel env vars.",
+          artifacts: [],
+        };
+      }
+      if (!githubConnected()) {
+        return {
+          answer: "GitHub persistence is not connected. Add GITHUB_TOKEN to Vercel env vars (needs repo scope — github.com/settings/tokens).",
+          artifacts: [],
+        };
+      }
+
+      const message = String(input.message ?? "");
+      const codeArg = input.code as string | undefined;
+      const langArg = (input.language as string | undefined) ?? "python";
+      const language = (["python", "javascript", "bash"].includes(langArg) ? langArg : "python") as "python" | "javascript" | "bash";
+      const projectName = (input.projectName as string | undefined) ?? `build-${new Date().toISOString().slice(0, 10)}`;
+
+      const fenceMatch = message.match(/```(?:python|javascript|js|bash|sh)?\s*\n([\s\S]+?)```/);
+      const code = codeArg ?? fenceMatch?.[1]?.trim() ?? message.trim();
+
+      if (!code) {
+        return { answer: "No code to execute. Provide a code block.", artifacts: [] };
+      }
+
+      let result;
+      try {
+        result = await runCodeAndCapture(code, language);
+      } catch (err) {
+        return { answer: `Build failed: ${err instanceof Error ? err.message : String(err)}`, artifacts: [] };
+      }
+
+      if (!result.files?.length) {
+        // Nothing in /output — fall back to saving the code itself
+        result.files = [{ path: `main.${language === "javascript" ? "js" : language === "bash" ? "sh" : "py"}`, content: code }];
+      }
+
+      let pushResult;
+      try {
+        pushResult = await pushToGitHub(result.files, {
+          folder: projectName,
+          commitMessage: `feat: ${projectName} — built by Prometheus`,
+        });
+      } catch (err) {
+        return {
+          answer: `Code ran OK but GitHub push failed: ${err instanceof Error ? err.message : String(err)}\n\nOutput:\n${result.output.slice(0, 1000)}`,
+          artifacts: [],
+        };
+      }
+
+      const outputText = result.output || "(no output)";
+      const errorText = result.error ? `\n\nError: ${result.error}` : "";
+
+      return {
+        answer: `Built and pushed to GitHub.\n\n**Repo:** ${pushResult.repoUrl}\n**Files:** ${pushResult.files.join(", ")}\n\n**Output:**\n\`\`\`\n${outputText.slice(0, 1500)}${errorText}\n\`\`\``,
+        artifacts: [
+          {
+            type: "text" as const,
+            title: `${projectName} — pushed to GitHub`,
+            content: outputText + errorText,
+            metadata: {
+              repoUrl: pushResult.repoUrl,
+              files: pushResult.files,
+              language,
+              projectName,
+            },
+          },
+        ],
+      };
+    },
+  });
+
   // ── internal.approval.create ─────────────────────────────────────────────────
 
   registerTool({
