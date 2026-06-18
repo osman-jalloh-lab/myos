@@ -481,6 +481,69 @@ export function registerInternalTools(): void {
     },
   });
 
+  // ── internal.code.execute ────────────────────────────────────────────────────
+  // Runs code in an E2B cloud sandbox. Safe — isolated container, killed after run.
+  // Used by Prometheus to turn ideas into working prototypes / data transforms.
+
+  registerTool({
+    name: "internal.code.execute",
+    description: "Execute Python, JavaScript, or bash code in an isolated E2B cloud sandbox. Use to prototype ideas, run calculations, transform data, or build small scripts.",
+    risk: "read",
+    requiresApproval: false,
+    execute: async (input) => {
+      const { runCode, e2bConnected } = await import("@/lib/e2b");
+
+      if (!e2bConnected()) {
+        return {
+          answer: "E2B code execution is not connected. Add E2B_API_KEY to Vercel env vars (get a free key at e2b.dev — 100 hours/month on the free tier).",
+          artifacts: [],
+        };
+      }
+
+      const message = String(input.message ?? "");
+      const codeArg = input.code as string | undefined;
+      const langArg = (input.language as string | undefined) ?? "python";
+      const language = (["python", "javascript", "bash"].includes(langArg) ? langArg : "python") as "python" | "javascript" | "bash";
+
+      // If no code block was provided, extract from message fences or use message as code
+      const fenceMatch = message.match(/```(?:python|javascript|js|bash|sh)?\s*\n([\s\S]+?)```/);
+      const code = codeArg ?? fenceMatch?.[1]?.trim() ?? message.trim();
+
+      if (!code) {
+        return {
+          answer: "No code to execute. Provide a code block or describe what you want to run.",
+          artifacts: [],
+        };
+      }
+
+      let result;
+      try {
+        result = await runCode(code, language);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          answer: `Execution failed: ${msg}`,
+          artifacts: [],
+        };
+      }
+
+      const outputText = result.output || "(no output)";
+      const errorText = result.error ? `\n\nError: ${result.error}` : "";
+
+      return {
+        answer: `Code executed (${language}):\n\`\`\`\n${outputText.slice(0, 2000)}${errorText}\n\`\`\``,
+        artifacts: [
+          {
+            type: "text" as const,
+            title: `Code execution result (${language})`,
+            content: outputText + errorText,
+            metadata: { language, hasError: !!result.error, outputLength: outputText.length },
+          },
+        ],
+      };
+    },
+  });
+
   // ── internal.approval.create ─────────────────────────────────────────────────
 
   registerTool({
