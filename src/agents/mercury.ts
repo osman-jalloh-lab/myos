@@ -41,8 +41,8 @@ export const TOOL_REGISTRY: Record<string, ToolDefinition> = {
     category: "search",
     description: "Search the public web for current information, news, or any topic",
     requiredParams: ["query"],
-    connected: keysPresent("SERPER_API_KEY"),
-    notConnectedHint: "Add SERPER_API_KEY (serper.dev) to Vercel env vars to enable live web search.",
+    connected: keysPresent("FIRECRAWL_API_KEY"),
+    notConnectedHint: "Add FIRECRAWL_API_KEY (firecrawl.dev) to Vercel env vars to enable live web search.",
   },
   google_flights_search: {
     id: "google_flights_search",
@@ -167,31 +167,28 @@ Rules:
 // ── Tool implementations ──────────────────────────────────────────────────────
 
 async function runWebSearch(params: Record<string, string>): Promise<string> {
-  const res = await fetch("https://google.serper.dev/search", {
+  const res = await fetch("https://api.firecrawl.dev/v1/search", {
     method: "POST",
     headers: {
-      "X-API-KEY": process.env.SERPER_API_KEY!,
+      "Authorization": `Bearer ${process.env.FIRECRAWL_API_KEY}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ q: params.query, num: 8 }),
-    signal: AbortSignal.timeout(10000),
+    body: JSON.stringify({ query: params.query, limit: 6 }),
+    signal: AbortSignal.timeout(12000),
   });
-  if (!res.ok) throw new Error(`Serper ${res.status}`);
+  if (!res.ok) throw new Error(`Firecrawl ${res.status}`);
 
   const data = (await res.json()) as {
-    organic?: { title: string; link: string; snippet: string }[];
-    answerBox?: { answer?: string; snippet?: string };
-    knowledgeGraph?: { description?: string };
+    data?: { url: string; title?: string; description?: string }[];
   };
 
-  const parts: string[] = [];
-  if (data.answerBox?.answer) parts.push(`Direct answer: ${data.answerBox.answer}`);
-  else if (data.answerBox?.snippet) parts.push(`Featured: ${data.answerBox.snippet}`);
-  if (data.knowledgeGraph?.description) parts.push(`Context: ${data.knowledgeGraph.description}`);
-  for (const r of (data.organic ?? []).slice(0, 5)) {
-    parts.push(`- ${r.title}: ${r.snippet} [${r.link}]`);
-  }
-  return parts.join("\n") || "No results found.";
+  const results = data.data ?? [];
+  if (!results.length) return "No results found.";
+
+  return results
+    .slice(0, 5)
+    .map((r, i) => `${i + 1}. ${r.title ?? r.url}: ${r.description ?? ""} [${r.url}]`)
+    .join("\n");
 }
 
 async function runWeather(params: Record<string, string>): Promise<string> {
