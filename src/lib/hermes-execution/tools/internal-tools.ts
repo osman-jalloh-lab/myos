@@ -612,8 +612,14 @@ export function registerInternalTools(): void {
       const outputText = result.output || "(no output)";
       const errorText = result.error ? `\n\nError: ${result.error}` : "";
 
+      const liveUrl = pushResult.pagesUrl
+        ? `\n\n**Live site (ready in ~1 min):** ${pushResult.pagesUrl}`
+        : "";
+      const repoLine = `\n\n**Repo:** ${pushResult.repoUrl}`;
+      const filesLine = `\n**Files:** ${pushResult.files.join(", ")}`;
+
       return {
-        answer: `Built and pushed to GitHub.\n\n**Repo:** ${pushResult.repoUrl}\n**Files:** ${pushResult.files.join(", ")}\n\n**Output:**\n\`\`\`\n${outputText.slice(0, 1500)}${errorText}\n\`\`\``,
+        answer: `Built and pushed to GitHub.${liveUrl}${repoLine}${filesLine}\n\n**Output:**\n\`\`\`\n${outputText.slice(0, 1500)}${errorText}\n\`\`\``,
         artifacts: [
           {
             type: "text" as const,
@@ -621,6 +627,7 @@ export function registerInternalTools(): void {
             content: outputText + errorText,
             metadata: {
               repoUrl: pushResult.repoUrl,
+              pagesUrl: pushResult.pagesUrl ?? undefined,
               files: pushResult.files,
               language,
               projectName,

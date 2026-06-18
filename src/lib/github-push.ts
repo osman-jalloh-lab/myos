@@ -3,13 +3,14 @@
 // Requires GITHUB_TOKEN with repo scope in env.
 
 export interface PushFile {
-  path: string;   // relative path in the repo, e.g. "src/main.py"
+  path: string;   // relative path inside the project folder, e.g. "index.html"
   content: string;
 }
 
 export interface PushResult {
   repoUrl: string;
   commitUrl: string;
+  pagesUrl: string | null;  // null until GitHub Pages finishes building (~1 min)
   files: string[];
 }
 
@@ -40,7 +41,6 @@ async function ensureRepoExists(owner: string, repo: string): Promise<void> {
   if (check.status === 200) return;
   if (check.status !== 404) throw new Error(`GitHub repo check returned ${check.status}`);
 
-  // Create it
   const create = await ghFetch("/user/repos", "POST", {
     name: repo,
     description: "Projects built by Prometheus — Hermes OS idea forge",
@@ -51,8 +51,30 @@ async function ensureRepoExists(owner: string, repo: string): Promise<void> {
     const err = (await create.json().catch(() => ({}))) as { message?: string };
     throw new Error(`Failed to create repo: ${err.message ?? create.status}`);
   }
-  // Give GitHub a moment to initialize the repo
-  await new Promise((r) => setTimeout(r, 2000));
+  // Wait for GitHub to initialize the default branch
+  await new Promise((r) => setTimeout(r, 2500));
+}
+
+// Enable GitHub Pages on the repo (serves from root of main branch).
+// Idempotent — safe to call on every push, returns existing URL if already enabled.
+async function ensureGitHubPages(owner: string, repo: string): Promise<string> {
+  const pagesUrl = `https://${owner}.github.io/${repo}`;
+
+  // Check if already enabled
+  const check = await ghFetch(`/repos/${owner}/${repo}/pages`, "GET");
+  if (check.status === 200) return pagesUrl;
+
+  // Enable it
+  const enable = await ghFetch(`/repos/${owner}/${repo}/pages`, "POST", {
+    source: { branch: "main", path: "/" },
+  });
+
+  if (!enable.ok && enable.status !== 409) {
+    // 409 = already exists, that's fine
+    console.warn(`[github-push] Pages enable returned ${enable.status} — continuing`);
+  }
+
+  return pagesUrl;
 }
 
 async function getFileSha(owner: string, repo: string, path: string): Promise<string | undefined> {
@@ -63,16 +85,21 @@ async function getFileSha(owner: string, repo: string, path: string): Promise<st
   return data.sha;
 }
 
+// Detects whether the file list looks like a website (has index.html).
+function isWebsite(files: PushFile[]): boolean {
+  return files.some((f) => f.path === "index.html" || f.path.endsWith("/index.html"));
+}
+
 export async function pushToGitHub(
   files: PushFile[],
   opts?: {
-    repo?: string;           // default: osman-jalloh-lab/prometheus-builds
-    folder?: string;         // subfolder inside repo, e.g. "compound-interest-2026-06-18"
+    repo?: string;          // default: osman-jalloh-lab/prometheus-builds
+    folder?: string;        // subfolder, e.g. "fresh-cuts-barbershop"
     commitMessage?: string;
   }
 ): Promise<PushResult> {
   if (!process.env.GITHUB_TOKEN) {
-    throw new Error("GITHUB_TOKEN is not set. Add it to Vercel env vars (Settings → Environment Variables). Needs repo scope.");
+    throw new Error("GITHUB_TOKEN is not set. Add it to Vercel env vars (needs repo scope).");
   }
 
   const repoFull = opts?.repo ?? DEFAULT_REPO;
@@ -103,9 +130,18 @@ export async function pushToGitHub(
     pushed.push(repoPath);
   }
 
+  // Enable GitHub Pages if the build contains a website
+  let pagesUrl: string | null = null;
+  if (isWebsite(files)) {
+    const base = await ensureGitHubPages(owner, repo);
+    // URL to the specific project folder
+    pagesUrl = `${base}/${folder}/`;
+  }
+
   return {
     repoUrl: `https://github.com/${owner}/${repo}/tree/main/${folder}`,
     commitUrl: `https://github.com/${owner}/${repo}/commits/main`,
+    pagesUrl,
     files: pushed,
   };
 }
