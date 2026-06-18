@@ -17,6 +17,7 @@ import { callModel } from "@/lib/modelRouter";
 import type { Provider } from "@/lib/modelRouter";
 import { calendarRead, conflictScan } from "@/agents/kairos";
 import { triageInbox } from "@/agents/iris";
+import { fetchThreadBody } from "@/lib/gmail";
 import { morningBrief, synthesize, riskFlag } from "@/agents/argus";
 import { plutusReport } from "@/agents/plutus";
 import { appTrackerSummary } from "@/agents/athena";
@@ -735,11 +736,27 @@ Voice: Crisp and human. You write the way Osman would on a good day: clear, brie
 This is a chat interface. Reply in 2-4 sentences. Answer first, elaborate after.
 
 ${OSMAN_CONTEXT}`,
-    load: async (userId) => {
+    load: async (userId, query) => {
       const t = await triageInbox(userId);
-      const top = t.needsAttention.slice(0, 5).map((m) => ({ from: m.from, subject: m.subject }));
+      const top = t.needsAttention.slice(0, 5).map((m) => ({ from: m.from, subject: m.subject, id: m.id, threadId: m.threadId }));
       const cats = Object.fromEntries(Object.entries(t.byCategory).map(([k, v]) => [k, v.length]));
-      return `Inbox: ${t.unread} unread of ${t.total} total. Categories: ${JSON.stringify(cats)}. Needs attention: ${JSON.stringify(top)}`;
+      let base = `Inbox: ${t.unread} unread of ${t.total} total. Categories: ${JSON.stringify(cats)}. Needs attention: ${JSON.stringify(top)}`;
+
+      // When drafting, fetch the actual thread body so Iris has real context
+      const isDraftIntent = /draft|reply|respond|write back|follow.?up/i.test(query);
+      if (isDraftIntent) {
+        const target = top[0];
+        if (target?.threadId) {
+          const thread = await fetchThreadBody(userId, target.threadId).catch(() => []);
+          if (thread.length > 0) {
+            const threadText = thread
+              .map((m) => `From: ${m.from}\nDate: ${m.date}\nSubject: ${m.subject}\n${m.body}`)
+              .join("\n---\n");
+            base += `\n\nFull thread for drafting:\n${threadText}`;
+          }
+        }
+      }
+      return base;
     },
   },
   kairos: {

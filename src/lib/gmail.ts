@@ -189,6 +189,52 @@ export async function draftReply(
   return createApproval(userId, "draft_email", params);
 }
 
+// ── Thread body fetch — used by Iris for draft replies ────────────────────────
+
+export interface ThreadMessage {
+  from: string;
+  subject: string;
+  date: string;
+  body: string;
+}
+
+export async function fetchThreadBody(
+  userId: string,
+  threadId: string
+): Promise<ThreadMessage[]> {
+  const accounts = await prisma.googleAccount.findMany({
+    where: { userId },
+    select: { id: true },
+  });
+
+  for (const account of accounts) {
+    try {
+      const token = await getValidToken(account.id);
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await fetch(`${GMAIL_API}/threads/${threadId}?format=full`, { headers });
+      if (!res.ok) continue;
+
+      const thread = (await res.json()) as { messages?: GmailFullMessage[] };
+      const messages = thread.messages ?? [];
+
+      return messages.map((msg) => {
+        const h = (name: string) =>
+          msg.payload?.headers?.find((hdr) => hdr.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+        const body = msg.payload ? extractBodyFromPart(msg.payload as GmailMessagePart) : "";
+        return {
+          from: h("from"),
+          subject: h("subject"),
+          date: h("date"),
+          body: body.slice(0, 3000),
+        };
+      });
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
 // ── Job Scout: full-body email fetch ─────────────────────────────────────────
 // Queries job-alert senders only (allowlist), fetches full message body for
 // LLM parsing, and filters out newsletters/promos. Used by the daily
