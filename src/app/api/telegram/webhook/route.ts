@@ -32,7 +32,7 @@ const BOT_COMMANDS: Record<string, string> = {
 
 // Agent shortcut prefixes: "/iris what's in my inbox today" → ask iris ...
 // "/mercury find me a flight to Atlanta" → Mercury external tool agent
-const AGENT_PREFIXES = ["iris", "kairos", "athena", "plutus", "argus", "mnemosyne", "sophos", "themis", "tyche", "mercury"];
+const AGENT_PREFIXES = ["iris", "kairos", "athena", "plutus", "argus", "mnemosyne", "sophos", "themis", "tyche", "mercury", "prometheus"];
 
 function resolveCommandText(raw: string): { text: string; targetAgent: string | null } {
   const lower = raw.toLowerCase().trim();
