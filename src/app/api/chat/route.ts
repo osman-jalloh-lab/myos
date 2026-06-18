@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { chatHistory, channelHistory, sendMessage } from "@/lib/chat";
 import { shouldUseExecutionLayer } from "@/lib/hermes-execution/detect-execution-request";
+import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 /**
  * GET  /api/chat?agent=<name>  — recent chat history for a thread
@@ -38,6 +39,10 @@ export async function POST(req: Request) {
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // 20 messages per minute per user — generous for normal use, blocks runaway loops
+  const rl = rateLimit(`chat:${session.user.id}`, { limit: 20, windowMs: 60_000 });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   const body = (await req.json().catch(() => null)) as { message?: string; agentName?: string } | null;
   if (!body?.message?.trim()) {

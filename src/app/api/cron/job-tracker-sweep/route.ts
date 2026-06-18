@@ -1,4 +1,4 @@
-// Vercel Cron: job-tracker-sweep. Schedule: daily at 16:00 UTC (11 AM CT).
+﻿// Vercel Cron: job-tracker-sweep. Schedule: daily at 16:00 UTC (11 AM CT).
 // Sweeps Gmail for the last 2 days for job application evidence.
 // Logs new applications, updates existing records, and sends Telegram alerts
 // for urgent items (Interview Request, Needs Reply).
@@ -8,7 +8,7 @@ import { sweepGmailApplications } from "@/lib/appTracker";
 import { sendTelegramMessage } from "@/lib/telegram";
 
 export async function GET(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
 

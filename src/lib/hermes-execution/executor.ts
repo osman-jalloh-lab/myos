@@ -138,17 +138,15 @@ export async function execute(
           call.error = err instanceof Error ? err.message : String(err);
           call.completedAt = new Date().toISOString();
           await logRun(req.userId, plan.intent, step.tool, "failed", call.error);
+          // Do NOT return approval_required here — the tool threw before it could
+          // create an ApprovalAction row. Returning approval_required would tell
+          // the user "pending approval" when nothing is actually in the queue.
           return {
-            status: "approval_required",
-            answer: "I can do that, but I need your approval first. (Note: approval queueing encountered an issue — check the approvals system.)",
+            status: "failed",
+            answer: `I tried to queue that for your approval but something went wrong: ${call.error}. Try again or check the Approvals panel.`,
             plan,
             toolCalls,
             artifacts,
-            approval: {
-              actionType: step.tool,
-              summary: step.tool,
-              payload: step.input,
-            },
           };
         }
       }

@@ -1,4 +1,4 @@
-// Vercel Cron: job-scout-gmail. Schedule: daily at 14:00 UTC (9 AM CT).
+﻿// Vercel Cron: job-scout-gmail. Schedule: daily at 14:00 UTC (9 AM CT).
 // Runs the Gmail-alert pipeline: parse alerts → score leads → build kits → Telegram digest.
 // Additive alongside the existing /api/cron/job-scout (JSearch path) — both are safe to coexist.
 // NEVER submits or sends applications — all outbound actions are ApprovalAction queue items.
@@ -7,7 +7,7 @@ import { runJobScoutPipeline } from "@/lib/job-scout/pipeline";
 import { sendTelegramMessage } from "@/lib/telegram";
 
 export async function GET(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
 

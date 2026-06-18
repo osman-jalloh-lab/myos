@@ -1,4 +1,4 @@
-// Vercel Cron: job-scout. Schedule defined in vercel.json (weekly, UTC).
+﻿// Vercel Cron: job-scout. Schedule defined in vercel.json (weekly, UTC).
 // Two passes:
 //   1. Discover — searches JSearch for live postings matching Osman's GRC/
 //      security direction, tracks any not already in the ledger (source
@@ -20,7 +20,7 @@ const MIN_NOTES_LENGTH = 40;
 const SCOUT_QUERIES = ["GRC compliance analyst", "security compliance auditor"];
 
 export async function GET(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
 

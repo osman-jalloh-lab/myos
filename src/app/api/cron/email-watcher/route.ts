@@ -1,4 +1,4 @@
-// Vercel Cron: email-watcher.
+﻿// Vercel Cron: email-watcher.
 // Fetches recent action-needed emails, fetches their full bodies, routes each
 // to the right downstream agent, and sends a Telegram notification:
 //
@@ -49,7 +49,7 @@ const AGENT_LABEL: Record<string, string> = {
 };
 
 export async function GET(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
 

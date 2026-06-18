@@ -10,7 +10,9 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
-    "eval": "npx tsx --test eval/daily-brief.eval.ts eval/multi-agent.eval.ts"
+    "eval": "npx tsx --test eval/daily-brief.eval.ts eval/multi-agent.eval.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
@@ -19,6 +21,7 @@
     "@libsql/client": "^0.15.0",
     "@prisma/adapter-libsql": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@sentry/nextjs": "^10.58.0",
     "groq-sdk": "^0.7.0",
     "next": "^16.0.0",
     "next-auth": "^5.0.0-beta.25",
@@ -32,6 +35,7 @@
     "eslint": "^9.0.0",
     "eslint-config-next": "^16.0.0",
     "prisma": "^7.8.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.9"
   }
 }

@@ -66,7 +66,29 @@ function splitMessage(text: string, limit = 4000): string[] {
   return chunks;
 }
 
+// Serializes outbound sends per chatId — prevents interleaved messages when
+// multiple async paths (typing indicator, reply, approval buttons) fire in parallel.
+const sendQueues = new Map<string | number, Promise<void>>();
+
+function queueSend(chatId: string | number, fn: () => Promise<void>): Promise<void> {
+  const prev = sendQueues.get(chatId) ?? Promise.resolve();
+  const next = prev.then(fn).catch(() => {});
+  sendQueues.set(chatId, next);
+  // GC the entry once the chain settles so the Map doesn't grow unbounded
+  next.then(() => { if (sendQueues.get(chatId) === next) sendQueues.delete(chatId); });
+  return next;
+}
+
 export async function sendTelegramMessage(
+  chatId: string | number,
+  text: string,
+  buttons?: InlineButton[][],
+  parseMode?: "HTML"
+): Promise<void> {
+  return queueSend(chatId, () => _sendTelegramMessage(chatId, text, buttons, parseMode));
+}
+
+async function _sendTelegramMessage(
   chatId: string | number,
   text: string,
   buttons?: InlineButton[][],

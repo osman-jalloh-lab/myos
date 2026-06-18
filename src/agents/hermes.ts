@@ -1166,7 +1166,14 @@ export async function routeToAgent(
   agentName: string,
   text: string,
   channel?: string,
+  _depth = 0,
 ): Promise<RouteResult> {
+  // Guard against infinite delegation loops (agent A → agent B → agent A ...)
+  if (_depth > 3) {
+    console.error(`[hermes] routeToAgent recursion depth exceeded for agent=${agentName}`);
+    return { reply: "I hit a routing loop — please rephrase your request." };
+  }
+
   const key = agentName.toLowerCase();
   const profile = AGENT_PROFILES[key];
   if (!profile) {

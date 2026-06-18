@@ -1,4 +1,4 @@
-// Vercel Cron: meeting-reminder — runs every 5 minutes.
+﻿// Vercel Cron: meeting-reminder — runs every 5 minutes.
 // Checks calendar for events starting in the next 10 minutes.
 // Sends a Telegram heads-up if one is found. Deduplicates via AgentRun table
 // so the same meeting never triggers more than one notification.
@@ -14,7 +14,7 @@ const LOOKAHEAD_MS = 10 * 60 * 1000; // notify if meeting starts within 10 min
 const DEDUP_WINDOW_MS = 60 * 60 * 1000; // don't re-notify same event for 1 hour
 
 export async function GET(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
 

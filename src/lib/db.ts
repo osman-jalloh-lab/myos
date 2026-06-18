@@ -16,7 +16,4 @@ function createPrismaClient(): PrismaClient {
 }
 
 export const prisma: PrismaClient =
-  globalForPrisma.prisma ?? createPrismaClient();
-
-// Reuse client across hot-reloads in dev; never leak connections in prod.
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+  globalForPrisma.prisma ?? (globalForPrisma.prisma = createPrismaClient());

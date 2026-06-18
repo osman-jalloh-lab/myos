@@ -253,6 +253,78 @@ async function logUsage(params: ModelCallParams, provider: Provider, response: P
 }
 
 /**
+ * Streaming variant of callModel — yields text delta chunks as they arrive.
+ * Only Groq (OpenAI-compatible SSE) and Anthropic support streaming today.
+ * Falls back to yielding the full response as a single chunk for other providers.
+ *
+ * Usage:
+ *   for await (const chunk of callModelStream(params)) { ... }
+ */
+export async function* callModelStream(params: ModelCallParams): AsyncGenerator<string, void, unknown> {
+  const provider = params.providerOverride ?? pickProvider(params.taskType, params.dataClass);
+  let fullText = "";
+
+  if (provider === "groq") {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) throw new Error("GROQ_API_KEY is not set");
+
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: GROQ_MODEL,
+        messages: [
+          { role: "system", content: params.systemPrompt },
+          { role: "user", content: params.userPrompt },
+        ],
+        temperature: 0.4,
+        max_tokens: 400,
+        stream: true,
+      }),
+    });
+
+    if (!res.ok || !res.body) throw new Error(`Groq streaming API ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = line.slice(6).trim();
+          if (payload === "[DONE]") break;
+          try {
+            const parsed = JSON.parse(payload) as { choices?: { delta?: { content?: string } }[] };
+            const chunk = parsed.choices?.[0]?.delta?.content ?? "";
+            if (chunk) { fullText += chunk; yield chunk; }
+          } catch { /* skip malformed lines */ }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+  } else {
+    // Non-streaming providers — yield the full response as one chunk
+    const response = await runProvider(provider, params.systemPrompt, params.userPrompt, params.taskType);
+    fullText = response.text;
+    yield response.text;
+    await logUsage(params, provider, response);
+    return;
+  }
+
+  await logUsage(params, provider, { text: fullText });
+}
+
+/**
  * Routes a call through the model router, then logs it to model_usage.
  * Resilience: if the picked provider fails (rate limit, outage, bad key) and
  * Osman has a home Ollama reachable via OLLAMA_BASE_URL, retry once on Ollama

@@ -1,4 +1,4 @@
-// Vercel Cron: skills-scout. Schedule defined in vercel.json (weekly, UTC).
+﻿// Vercel Cron: skills-scout. Schedule defined in vercel.json (weekly, UTC).
 // Runs Sophos's three read-only scouting tools (release-watch, repo-scout,
 // video-digest) over a fixed topic list aligned with Osman's GRC/security/AI
 // direction, then synthesizes the findings into a digest via skill-brief.
@@ -10,7 +10,7 @@ import { releaseWatch, repoScoutTool, videoDigestTool, skillBrief, SCOUT_TOPICS 
 import { sendTelegramMessage } from "@/lib/telegram";
 
 export async function GET(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
 

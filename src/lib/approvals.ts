@@ -85,6 +85,20 @@ const SCOPE_BLOCKED: Record<ApprovalActionType, string | null> = {
   update_job_status: null,
 };
 
+async function writeAuditLog(
+  userId: string,
+  action: string,
+  resourceType: string,
+  resourceId: string,
+  detail?: string
+): Promise<void> {
+  try {
+    await prisma.auditLog.create({ data: { userId, action, resourceType, resourceId, detail: detail?.slice(0, 500) } });
+  } catch {
+    // Audit log failures must never break the main flow
+  }
+}
+
 export async function approveAction(userId: string, id: string): Promise<ApprovalActionView> {
   const row = await prisma.approvalAction.findFirstOrThrow({ where: { id, userId } });
   if (row.status !== "pending") throw new Error(`Action is already ${row.status}`);
@@ -94,7 +108,9 @@ export async function approveAction(userId: string, id: string): Promise<Approva
     data: { status: "approved", resolvedAt: new Date() },
   });
 
-  return executeIfPossible(updated);
+  const result = await executeIfPossible(updated);
+  await writeAuditLog(userId, "approved", "ApprovalAction", id, `${row.actionType} — ${result.executionNote ?? "approved"}`);
+  return result;
 }
 
 export async function rejectAction(userId: string, id: string): Promise<ApprovalActionView> {
@@ -105,6 +121,7 @@ export async function rejectAction(userId: string, id: string): Promise<Approval
     where: { id },
     data: { status: "rejected", resolvedAt: new Date() },
   });
+  await writeAuditLog(userId, "rejected", "ApprovalAction", id, `${row.actionType}`);
   return toView(updated);
 }
 

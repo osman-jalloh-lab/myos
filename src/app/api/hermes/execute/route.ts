@@ -10,6 +10,7 @@ import { execute } from "@/lib/hermes-execution/executor";
 import { ensureRegistryInitialized } from "@/lib/hermes-execution/tool-registry";
 import { loadMcpToolsIntoRegistry } from "@/lib/hermes-execution/mcp-adapter";
 import type { ExecutionRequest } from "@/lib/hermes-execution/types";
+import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
 // Initialize tool registry on first request (lazy, not at module load)
 let registryReady = false;
@@ -28,7 +29,6 @@ export async function POST(req: Request) {
 
   let userId: string;
   if (isMcpGateway) {
-    // MCP gateway path — authenticated by shared secret, runs as system user
     userId = "mcp-gateway";
   } else {
     const session = await auth();
@@ -37,6 +37,10 @@ export async function POST(req: Request) {
     }
     userId = session.user.id;
   }
+
+  // 10 executions per minute — tighter than chat since each call spins up tools
+  const rl = rateLimit(`execute:${userId}`, { limit: 10, windowMs: 60_000 });
+  if (!rl.allowed) return rateLimitResponse(rl);
 
   // ── parse body ─────────────────────────────────────────────────────────────
   const body = (await req.json().catch(() => null)) as {

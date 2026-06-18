@@ -1,4 +1,4 @@
-// Vercel Cron: github-scout. Schedule defined in vercel.json (weekly, UTC).
+﻿// Vercel Cron: github-scout. Schedule defined in vercel.json (weekly, UTC).
 // Runs Athena's read-only github-scout tool against a fixed set of search terms
 // aligned with Osman's GRC/security direction, and logs the run for the
 // dashboard. PUBLIC data, no auth, no writes — pure signal surfacing.
@@ -8,7 +8,7 @@ import { githubScout } from "@/agents/athena";
 const SCOUT_QUERIES = ["GRC compliance security tooling", "security audit automation"];
 
 export async function GET(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
 

@@ -3,6 +3,12 @@ import { encrypt, decrypt } from "./encrypt";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
+// Deduplicates concurrent refresh calls for the same account.
+// If a refresh is already in flight, callers share the same Promise instead
+// of each hitting Google independently — prevents the race where two parallel
+// requests both see an expired token and both try to refresh it.
+const inflightRefreshes = new Map<string, Promise<string>>();
+
 /** Returns a valid (refreshed if needed) access token for the given GoogleAccount id. */
 export async function getValidToken(googleAccountId: string): Promise<string> {
   const account = await prisma.googleAccount.findUniqueOrThrow({
@@ -14,40 +20,64 @@ export async function getValidToken(googleAccountId: string): Promise<string> {
     return decrypt(account.accessToken);
   }
 
+  // If a refresh is already in flight for this account, wait for it.
+  const inflight = inflightRefreshes.get(googleAccountId);
+  if (inflight) {
+    return inflight;
+  }
+
   if (!account.refreshToken) {
     throw new Error(`No refresh token on account ${googleAccountId}. User must re-link.`);
   }
 
-  const body = new URLSearchParams({
-    grant_type: "refresh_token",
-    refresh_token: decrypt(account.refreshToken),
-    client_id: process.env.AUTH_GOOGLE_ID!,
-    client_secret: process.env.AUTH_GOOGLE_SECRET!,
-  });
+  const refreshPromise = (async (): Promise<string> => {
+    try {
+      // Re-read the account inside the lock — another request may have already
+      // refreshed while we were waiting on the inflight check above.
+      const fresh = await prisma.googleAccount.findUniqueOrThrow({
+        where: { id: googleAccountId },
+      });
+      if (fresh.expiresAt > new Date(Date.now() + 60_000)) {
+        return decrypt(fresh.accessToken);
+      }
 
-  const res = await fetch(GOOGLE_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-  });
+      const body = new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: decrypt(fresh.refreshToken!),
+        client_id: process.env.AUTH_GOOGLE_ID!,
+        client_secret: process.env.AUTH_GOOGLE_SECRET!,
+      });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Token refresh failed (${res.status}): ${text}`);
-  }
+      const res = await fetch(GOOGLE_TOKEN_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
 
-  const data = (await res.json()) as {
-    access_token: string;
-    expires_in: number;
-  };
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Token refresh failed (${res.status}): ${text}`);
+      }
 
-  await prisma.googleAccount.update({
-    where: { id: googleAccountId },
-    data: {
-      accessToken: encrypt(data.access_token),
-      expiresAt: new Date(Date.now() + data.expires_in * 1000),
-    },
-  });
+      const data = (await res.json()) as {
+        access_token: string;
+        expires_in: number;
+      };
 
-  return data.access_token;
+      await prisma.googleAccount.update({
+        where: { id: googleAccountId },
+        data: {
+          accessToken: encrypt(data.access_token),
+          expiresAt: new Date(Date.now() + data.expires_in * 1000),
+        },
+      });
+
+      return data.access_token;
+    } finally {
+      inflightRefreshes.delete(googleAccountId);
+    }
+  })();
+
+  inflightRefreshes.set(googleAccountId, refreshPromise);
+  return refreshPromise;
 }

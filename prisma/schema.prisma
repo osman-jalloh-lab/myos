@@ -27,6 +27,7 @@ model User {
   masterResume   MasterResume?
   chatMessages   ChatMessage[]
   trackedApps    TrackedApplication[]
+  auditLogs      AuditLog[]
 }
 
 model GoogleAccount {
@@ -53,6 +54,8 @@ model AgentRun {
   modelProvider String?
   status        String   @default("completed")
   createdAt     DateTime @default(now())
+  @@index([agentName, createdAt])
+  @@index([createdAt])
 }
 
 model DailyBrief {
@@ -91,6 +94,8 @@ model ApprovalAction {
   status     String   @default("pending") // pending|approved|rejected|executed
   createdAt  DateTime @default(now())
   resolvedAt DateTime?
+  @@index([userId, status])
+  @@index([userId, createdAt])
 }
 
 model ModelUsage {
@@ -104,6 +109,8 @@ model ModelUsage {
   outputTokens Int?
   estCostUsd  Float?
   createdAt   DateTime @default(now())
+  @@index([userId, createdAt])
+  @@index([provider, createdAt])
 }
 
 model Memory {
@@ -274,4 +281,20 @@ model TrackedApplication {
   @@unique([userId, fingerprint])
   @@index([userId, status])
   @@index([userId, lastUpdatedAt])
+}
+
+// Append-only audit trail — every approval, rejection, and sensitive action.
+// Never deleted. Used for accountability and incident reconstruction.
+model AuditLog {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action       String   // "approved" | "rejected" | "executed" | "rate_limited" | "auth_failed"
+  resourceType String   // "ApprovalAction" | "Task" | "ChatMessage" | "MemoryFact"
+  resourceId   String?  // ID of the affected row
+  detail       String?  // Human-readable summary, max 500 chars
+  ipHash       String?  // SHA-256 of IP for abuse detection (not raw IP — privacy)
+  createdAt    DateTime @default(now())
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
 }

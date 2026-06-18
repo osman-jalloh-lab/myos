@@ -1,4 +1,4 @@
-// Vercel Cron: thread-watcher.
+﻿// Vercel Cron: thread-watcher.
 // Scans all linked Gmail accounts for threads where a real human sent the last
 // message and Osman hasn't replied yet. Catches things the email-watcher misses
 // because email-watcher only looks at NEW emails in the last 20 minutes —
@@ -41,7 +41,7 @@ function displayName(from: string): string {
 }
 
 export async function GET(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
 

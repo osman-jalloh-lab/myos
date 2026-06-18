@@ -1,4 +1,4 @@
-// Vercel Cron: daily-brief. Schedule defined in vercel.json (UTC).
+﻿// Vercel Cron: daily-brief. Schedule defined in vercel.json (UTC).
 // Generates and persists today's brief for every user via Argus.morningBrief,
 // then sends it to Telegram so Osman wakes up to a morning summary.
 import { prisma } from "@/lib/db";
@@ -9,7 +9,7 @@ const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
 const WEBHOOK_URL = "https://www.parawi.com/api/telegram/webhook";
 
 export async function GET(req: Request) {
-  if (req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
     return new Response("Unauthorized", { status: 401 });
   }
 
