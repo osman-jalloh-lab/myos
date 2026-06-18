@@ -21,14 +21,6 @@ async function initRegistry() {
 }
 
 export async function POST(req: Request) {
-  // ── feature flag ───────────────────────────────────────────────────────────
-  if (process.env.HERMES_EXECUTION_ENABLED !== "true") {
-    return NextResponse.json(
-      { error: "Execution layer is not enabled. Set HERMES_EXECUTION_ENABLED=true." },
-      { status: 503 }
-    );
-  }
-
   // ── auth: session (browser) OR API key (MCP gateway) ─────────────────────
   const incomingKey = req.headers.get("X-Parawi-Key");
   const configuredKey = process.env.PARAWI_MCP_API_KEY;

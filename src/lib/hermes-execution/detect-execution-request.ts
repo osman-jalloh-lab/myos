@@ -42,6 +42,5 @@ export function isExecutionRequest(message: string): boolean {
 }
 
 export function shouldUseExecutionLayer(message: string): boolean {
-  if (process.env.HERMES_EXECUTION_ENABLED !== "true") return false;
   return isExecutionRequest(message);
 }
