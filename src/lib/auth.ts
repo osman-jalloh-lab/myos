@@ -3,16 +3,14 @@ import Google from "next-auth/providers/google";
 import { prisma } from "./db";
 import { encrypt } from "./encrypt";
 
-// Phase 3: Gmail is read-only here. No gmail.compose/gmail.send scope is
-// requested — Iris can only read, classify, and propose drafts as pending
-// ApprovalAction rows. Real Gmail draft/send scopes wait for the approval
-// queue (Phase 4), per CLAUDE.md rule "no write power until approval queue exists".
 const GOOGLE_SCOPES = [
   "openid",
   "email",
   "profile",
   "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.compose",
 ].join(" ");
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
