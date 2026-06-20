@@ -119,12 +119,46 @@ export async function fetchInboxMessages(
 const NEWSLETTER_HINTS = ["unsubscribe", "newsletter", "digest"];
 const NOTIFICATION_SENDERS = ["no-reply", "noreply", "notifications@", "notification@"];
 
+// Senders that push marketing, job-spam, or social blasts. These must never be
+// treated as action_needed even when Gmail fails to tag them PROMOTIONS/SOCIAL.
+// Match is a substring test against the lowercased From header, so a bare domain
+// covers all of its subdomains (e.g. "jobcase.com" also catches pmail.jobcase.com).
+const LOW_PRIORITY_SENDER_DOMAINS = [
+  "jobcase.com",
+  "everyjobforme.com",
+  "meetup.com",
+  "ziprecruiter.com",
+  "indeed.com",
+  "glassdoor.com",
+  "linkedin.com",
+  // add new marketing/job-spam domains here as they show up
+];
+
+// Optional second signal: manipulative subject patterns common to job-spam and
+// social blasts. Used only to demote, never to promote, so a false match just
+// moves noise out of the priority list.
+const LOW_PRIORITY_SUBJECT_HINTS = [
+  "is interested in you",
+  "jobs for you",
+  "people you may know",
+  "just scheduled:",
+  "view your matches",
+];
+
 /** Heuristic, metadata-only classification — no LLM call needed for Lean Mode. */
 export function classify(message: EmailMessage): EmailCategory {
   const labels = message.labels;
   const from = message.from.toLowerCase();
   const subject = message.subject.toLowerCase();
   const snippet = message.snippet.toLowerCase();
+
+  // Demote known marketing / job-spam senders before any action_needed path.
+  if (LOW_PRIORITY_SENDER_DOMAINS.some((d) => from.includes(d))) {
+    return "promotion";
+  }
+  if (LOW_PRIORITY_SUBJECT_HINTS.some((h) => subject.includes(h))) {
+    return "notification";
+  }
 
   if (labels.includes("CATEGORY_PROMOTIONS")) return "promotion";
   if (labels.includes("CATEGORY_SOCIAL") || labels.includes("CATEGORY_FORUMS")) {

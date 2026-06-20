@@ -29,6 +29,7 @@ model User {
   trackedApps    TrackedApplication[]
   auditLogs      AuditLog[]
   agentTasks     AgentTask[]
+  engineeringTasks EngineeringTask[]
 }
 
 model GoogleAccount {
@@ -299,6 +300,30 @@ model AgentTask {
   error       String?  // error message, set on failed
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  @@index([userId, status])
+  @@index([userId, createdAt])
+}
+
+model EngineeringTask {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title             String
+  repositorySlug    String
+  operationType     String
+  riskLevel         String
+  approvalRequired  Boolean  @default(false)
+  status            String   @default("queued")
+  correlationId     String?
+  executorName      String?
+  executorJobId     String?
+  resultSummary     String?
+  errorReference    String?
+  sanitizedError    String?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
   @@index([userId, status])
   @@index([userId, createdAt])
 }
