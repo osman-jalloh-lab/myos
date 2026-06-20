@@ -14,6 +14,11 @@ import {
   type ApprovalStatus,
 } from "@/lib/approvals";
 import { queryTaskState, formatTaskStateReply, realityCheck } from "@/lib/realityCheck";
+import {
+  getLatestAgentTask,
+  getActiveAgentTasks,
+  formatAgentTaskStatusReply,
+} from "@/lib/agentTasks";
 import { callModel } from "@/lib/modelRouter";
 import type { Provider } from "@/lib/modelRouter";
 import { calendarRead, conflictScan } from "@/agents/kairos";
@@ -1256,22 +1261,38 @@ export async function routeMessage(userId: string, text: string, channel?: strin
   }
 
   // ── reality layer — status / task-state verification ─────────────────────────
-  // Hard rule: "are you done", "check task state", "did it run", "is it fixed",
-  // "what happened", etc. MUST query AgentRun + Task records first.
-  // Hermes is not allowed to substitute approval queue status for task status.
-  // If no Task or AgentRun record exists, Hermes must say so explicitly.
+  // Hard rule: status questions ("are you done", "did it run", "is it fixed",
+  // "what happened", "progress", "did you finish") MUST consult the AgentTask
+  // execution registry FIRST. Approval queue status is never a substitute.
+  // If no AgentTask record exists, Hermes must say so — never invent completion.
   const REALITY_CHECK_PATTERN =
-    /\b(are you done|check task state|task state|did (it|that|this) run|did (it|that|this) work|did (it|that|this) (complete|finish)|is it (done|fixed|complete|finished|working)|what happened|what'?s the (status|state)|verify (it|this|that)|can you verify|check if (it|this|that)|did you complete|was (it|that) completed|confirm (it ran|it completed|completion)|did that (go through|ship)|is the (fix|build|change) in|what'?s the task state)\b/i;
+    /\b(are you done|did you finish|check task state|task state|progress|did (it|that|this) run|did (it|that|this) work|did (it|that|this) (complete|finish)|did you run it|is it (done|fixed|complete|finished|working)|what happened|what'?s the (status|state)|verify (it|this|that)|can you verify|check if (it|this|that)|did you complete|was (it|that) completed|confirm (it ran|it completed|completion)|did that (go through|ship)|is the (fix|build|change) in|what'?s the task state)\b/i;
 
   if (REALITY_CHECK_PATTERN.test(trimmed)) {
-    const snapshot = await queryTaskState(userId);
-    const replyText = formatTaskStateReply(snapshot);
+    // Query AgentTask (the execution registry) first — this is the authoritative source.
+    const [latest, active] = await Promise.all([
+      getLatestAgentTask(userId),
+      getActiveAgentTasks(userId),
+    ]);
 
-    // Tag the response with the reality check so callers can see the evidence basis
+    let replyText: string;
+    let evidenceSource: "AgentTask" | "AgentRun" | "none";
+
+    if (latest) {
+      // AgentTask row exists — answer from it, never from approvals
+      replyText = formatAgentTaskStatusReply(latest, active);
+      evidenceSource = "AgentTask";
+    } else {
+      // No AgentTask — fall back to AgentRun log (background cron runs, etc.)
+      const snapshot = await queryTaskState(userId);
+      replyText = formatTaskStateReply(snapshot);
+      evidenceSource = snapshot.hasTasks || snapshot.recentRuns.length > 0 ? "AgentRun" : "none";
+    }
+
     const check = realityCheck({
       claim: replyText,
-      evidence: snapshot.hasTasks || snapshot.recentRuns.length > 0 ? snapshot : null,
-      source: snapshot.hasTasks ? "AgentTask" : snapshot.recentRuns.length > 0 ? "AgentRun" : "none",
+      evidence: latest ?? (evidenceSource !== "none" ? {} : null),
+      source: evidenceSource,
     });
 
     await logHandoff({
@@ -1473,9 +1494,17 @@ export async function routeMessage(userId: string, text: string, channel?: strin
     }
   }
 
-  // When no domain matched, load a minimal snapshot so Hermes is never
-  // answering blind — today's events + pending count give just enough
-  // grounding for conversational replies without a full agent load.
+  // Build structured context block — RECENT CHAT + RELEVANT MEMORY +
+  // PROJECT STATUS + CURRENT USER MESSAGE.
+  // This gives every callModel call a grounded view of what's happening,
+  // not just the domain data from one CONTEXT_MATCHER.
+  const { getRecentAgentTasks } = await import("@/lib/agentTasks");
+  const [recentMemories, recentAgentTasks] = await Promise.all([
+    readMemory(userId).catch(() => []),
+    getRecentAgentTasks(userId, 3).catch(() => []),
+  ]);
+
+  // Minimal calendar+approval snapshot so Hermes is never answering blind
   let baseSnapshot = "";
   if (!matched) {
     try {
@@ -1491,22 +1520,35 @@ export async function routeMessage(userId: string, text: string, channel?: strin
         : "nothing left on the calendar today";
       baseSnapshot = `Today (${now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}): ${evtLine}. Pending approvals: ${counts.pending ?? 0}.`;
     } catch {
-      // snapshot is best-effort; don't block the reply if it fails
+      // best-effort; never block the reply
     }
   }
 
+  // Assemble structured prompt sections
+  const memorySummary = recentMemories.length > 0
+    ? recentMemories.slice(0, 3).map((m) => `- ${m.fact}`).join("\n")
+    : "None.";
+
+  const projectStatus = recentAgentTasks.length > 0
+    ? recentAgentTasks.map((t) => `- ${t.status.toUpperCase()}: ${t.title}${t.result ? ` (result: ${t.result.slice(0, 80)})` : ""}${t.error ? ` (error: ${t.error.slice(0, 80)})` : ""}`).join("\n")
+    : "No active or recent agent tasks.";
+
   const sentenceCount = isTelegram ? "3-5" : "2-4";
+
+  const structuredUserPrompt = [
+    context ? `AGENT CONTEXT (${matched?.taskType ?? "general"}):\n${context}` : baseSnapshot ? `SNAPSHOT:\n${baseSnapshot}` : "",
+    `RELEVANT MEMORY:\n${memorySummary}`,
+    `PROJECT STATUS (AgentTask registry):\n${projectStatus}`,
+    `CURRENT USER MESSAGE:\n${trimmed}`,
+  ].filter(Boolean).join("\n\n");
+
   const result = await callModel({
     userId,
     taskType: matched?.taskType ?? "chat-general",
     dataClass: "PERSONAL",
     systemPrompt: activeSystemPrompt,
     providerOverride,
-    userPrompt: context
-      ? `Context for this reply:\n${context}\n\nOsman just asked: "${trimmed}"\n\nReply in ${sentenceCount} sentences, conversationally, grounded only in the context above.`
-      : baseSnapshot
-        ? `Snapshot: ${baseSnapshot}\n\nOsman just asked: "${trimmed}"\n\nReply conversationally. If the question needs deeper data (email, finance, jobs) say which agent can help.`
-        : `Osman just asked: "${trimmed}"\n\nReply conversationally. If the question needs data (calendar, email, finance, jobs, memory) name which agent can look it up.`,
+    userPrompt: `${structuredUserPrompt}\n\nReply in ${sentenceCount} sentences, grounded only in the sections above. If a section is empty, do not fabricate data for it.`,
   });
 
   await logHandoff({

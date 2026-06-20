@@ -28,6 +28,7 @@ model User {
   chatMessages   ChatMessage[]
   trackedApps    TrackedApplication[]
   auditLogs      AuditLog[]
+  agentTasks     AgentTask[]
 }
 
 model GoogleAccount {
@@ -281,6 +282,25 @@ model TrackedApplication {
   @@unique([userId, fingerprint])
   @@index([userId, status])
   @@index([userId, lastUpdatedAt])
+}
+
+// Execution registry — every task Hermes claims to be running must have a row here.
+// Hard rule: Hermes may only say "done" / "completed" / "build passed" if a row
+// with status="completed" exists. Status questions consult this table first.
+model AgentTask {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  description String
+  status      String   @default("queued") // queued | running | blocked | completed | failed
+  files       String?  // JSON array of file paths involved
+  result      String?  // summary of the outcome, set on completed/failed
+  error       String?  // error message, set on failed
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  @@index([userId, status])
+  @@index([userId, createdAt])
 }
 
 // Append-only audit trail — every approval, rejection, and sensitive action.
