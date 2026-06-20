@@ -13,6 +13,7 @@ import {
   type ApprovalActionType,
   type ApprovalStatus,
 } from "@/lib/approvals";
+import { queryTaskState, formatTaskStateReply, realityCheck } from "@/lib/realityCheck";
 import { callModel } from "@/lib/modelRouter";
 import type { Provider } from "@/lib/modelRouter";
 import { calendarRead, conflictScan } from "@/agents/kairos";
@@ -1252,6 +1253,36 @@ export async function routeMessage(userId: string, text: string, channel?: strin
           : "something went wrong on my end resolving that — try again from the dashboard's approvals page.";
       return { reply: `Couldn't ${verb} "${id}": ${reason}` };
     }
+  }
+
+  // ── reality layer — status / task-state verification ─────────────────────────
+  // Hard rule: "are you done", "check task state", "did it run", "is it fixed",
+  // "what happened", etc. MUST query AgentRun + Task records first.
+  // Hermes is not allowed to substitute approval queue status for task status.
+  // If no Task or AgentRun record exists, Hermes must say so explicitly.
+  const REALITY_CHECK_PATTERN =
+    /\b(are you done|check task state|task state|did (it|that|this) run|did (it|that|this) work|did (it|that|this) (complete|finish)|is it (done|fixed|complete|finished|working)|what happened|what'?s the (status|state)|verify (it|this|that)|can you verify|check if (it|this|that)|did you complete|was (it|that) completed|confirm (it ran|it completed|completion)|did that (go through|ship)|is the (fix|build|change) in|what'?s the task state)\b/i;
+
+  if (REALITY_CHECK_PATTERN.test(trimmed)) {
+    const snapshot = await queryTaskState(userId);
+    const replyText = formatTaskStateReply(snapshot);
+
+    // Tag the response with the reality check so callers can see the evidence basis
+    const check = realityCheck({
+      claim: replyText,
+      evidence: snapshot.hasTasks || snapshot.recentRuns.length > 0 ? snapshot : null,
+      source: snapshot.hasTasks ? "AgentTask" : snapshot.recentRuns.length > 0 ? "AgentRun" : "none",
+    });
+
+    await logHandoff({
+      agentName: "hermes",
+      inputSummary: trimmed.slice(0, 200),
+      outputSummary: `[reality:${check.status}] ${replyText.slice(0, 400)}`,
+      modelProvider: "none",
+      status: "completed",
+    });
+
+    return { reply: formatReply(replyText, channel) };
   }
 
   // ── orchestration: "ask/tell/have/assign <agent> to <thing>" ────────────────
