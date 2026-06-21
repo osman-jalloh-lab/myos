@@ -305,25 +305,42 @@ model AgentTask {
 }
 
 model EngineeringTask {
-  id                String   @id @default(cuid())
-  userId            String
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  title             String
-  repositorySlug    String
-  operationType     String
-  riskLevel         String
-  approvalRequired  Boolean  @default(false)
-  status            String   @default("queued")
-  correlationId     String?
-  executorName      String?
-  executorJobId     String?
-  resultSummary     String?
-  errorReference    String?
-  sanitizedError    String?
-  startedAt         DateTime?
-  completedAt       DateTime?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id                    String    @id @default(cuid())
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title                 String
+  repositorySlug        String
+  operationType         String
+  riskLevel             String
+  approvalRequired      Boolean   @default(false)
+  status                String    @default("queued")
+  correlationId         String?
+  executorName          String?
+  executorJobId         String?
+  resultSummary         String?
+  errorReference        String?
+  sanitizedError        String?
+  startedAt             DateTime?
+  completedAt           DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  // Phase 2 — branch execution
+  approvalStatus        String?
+  approvedAt            DateTime?
+  approvedBy            String?
+  branchName            String?
+  commitSha             String?
+  pullRequestUrl        String?
+  implementationSummary String?
+  validationResults     String?
+  // Phase 3 — deployment
+  deployTarget          String?
+  deployStatus          String?
+  vercelDeploymentId    String?
+  deploymentUrl         String?
+  deployStartedAt       DateTime?
+  deployCompletedAt     DateTime?
+  rollbackReference     String?
   @@index([userId, status])
   @@index([userId, createdAt])
 }
