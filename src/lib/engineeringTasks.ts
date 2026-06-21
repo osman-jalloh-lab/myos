@@ -408,7 +408,7 @@ async function inspectRepository(repoSlug: string): Promise<{
     };
   }
 
-  const token = process.env.GITHUB_TOKEN;
+  const token = (process.env.GITHUB_TOKEN ?? "").replace(/^﻿/, "").trim();
   if (!token) {
     return {
       status: "blocked_missing_credentials",
@@ -768,7 +768,7 @@ async function executeCodeChangeBranch(
   executorJobId: string
 ): Promise<BranchExecutionResult> {
   const repoSlug = task.repositorySlug;
-  const token = process.env.GITHUB_TOKEN;
+  const token = (process.env.GITHUB_TOKEN ?? "").replace(/^﻿/, "").trim();
 
   if (!token) {
     return {
