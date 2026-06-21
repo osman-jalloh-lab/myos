@@ -1145,9 +1145,10 @@ export async function deployPreviewBranch(taskId: string, executorJobId: string)
     ? `https://api.vercel.com/v13/deployments?teamId=${vercelTeamId}`
     : "https://api.vercel.com/v13/deployments";
 
+  // Omitting `target` creates a preview deployment by default.
+  // Vercel v13 API only accepts 'production', 'staging', or custom env — not 'preview'.
   const deployBody: Record<string, unknown> = {
     name: vercelProjectId ?? "myos",
-    target: "preview",
     gitSource: {
       type: "github",
       org: "osman-jalloh-lab",
