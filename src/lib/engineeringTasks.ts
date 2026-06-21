@@ -25,6 +25,7 @@ export type EngineeringTaskStatus =
   | "pull_request_open"
   // Phase 3 — deployment
   | "deployment_pending_approval"
+  | "deployment_in_progress"
   | "deployed"
   | "deployment_failed"
   | "rolled_back";
@@ -1094,6 +1095,30 @@ export async function claimApprovedDeploymentTask(
   return toView(row as TaskRow);
 }
 
+// Vercel states that are definitively terminal — no further polling needed.
+const VERCEL_READY_STATE = "READY";
+const VERCEL_FAILURE_STATES = new Set(["ERROR", "CANCELED"]);
+// Bounded retry policy: 8 polls × 3 s = 24 s max, well within the 60 s function limit.
+const VERCEL_POLL_MAX = 8;
+const VERCEL_POLL_INTERVAL_MS = 3_000;
+
+async function pollVercelState(
+  deploymentId: string,
+  token: string,
+  teamId: string | undefined
+): Promise<{ readyState: string; errorCode?: string }> {
+  const url = teamId
+    ? `https://api.vercel.com/v13/deployments/${deploymentId}?teamId=${teamId}`
+    : `https://api.vercel.com/v13/deployments/${deploymentId}`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw new Error(`Vercel poll returned ${res.status}`);
+  const json = (await res.json()) as { readyState?: string; errorCode?: string };
+  return { readyState: json.readyState ?? "UNKNOWN", errorCode: json.errorCode };
+}
+
 export async function deployPreviewBranch(taskId: string, executorJobId: string): Promise<EngineeringTaskView> {
   const task = await prisma.engineeringTask.findUnique({ where: { id: taskId } });
   if (!task) throw new Error(`Engineering task ${taskId} not found.`);
@@ -1111,9 +1136,7 @@ export async function deployPreviewBranch(taskId: string, executorJobId: string)
 
   const vercelToken = (process.env.VERCEL_TOKEN ?? "").replace(/^﻿/, "").trim() || null;
   if (!vercelToken) {
-    logEvent("engineering_task.deployment_blocked", {
-      reason: "VERCEL_TOKEN environment variable is not set",
-    });
+    logEvent("engineering_task.deployment_blocked", { reason: "VERCEL_TOKEN not set" });
     return updateEngineeringTaskStatus(taskId, {
       status: "blocked_missing_credentials",
       errorReference: "VERCEL_TOKEN is required for preview deployment. Add it to Vercel environment variables.",
@@ -1135,8 +1158,6 @@ export async function deployPreviewBranch(taskId: string, executorJobId: string)
   logEvent("engineering_task.deployment_started", { target: "preview", branchName });
 
   const deployStartedAt = new Date();
-
-  // Attempt Vercel Deployments API
   const vercelProjectId = process.env.VERCEL_PROJECT_ID;
   const vercelTeamId = process.env.VERCEL_TEAM_ID;
   const vercelOrgSlug = process.env.VERCEL_ORG_SLUG;
@@ -1146,7 +1167,7 @@ export async function deployPreviewBranch(taskId: string, executorJobId: string)
     : "https://api.vercel.com/v13/deployments";
 
   // Omitting `target` creates a preview deployment by default.
-  // Vercel v13 API only accepts 'production', 'staging', or custom env — not 'preview'.
+  // Vercel v13 API only accepts 'production', 'staging', or a custom env name.
   const deployBody: Record<string, unknown> = {
     name: vercelProjectId ?? "myos",
     gitSource: {
@@ -1158,14 +1179,12 @@ export async function deployPreviewBranch(taskId: string, executorJobId: string)
   };
   if (vercelOrgSlug) deployBody.meta = { githubOrg: vercelOrgSlug };
 
+  // ── Step 1: Submit deployment ───────────────────────────────────────────────
   let deployRes: Response;
   try {
     deployRes = await fetch(deployUrl, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${vercelToken}`,
-        "Content-Type": "application/json",
-      },
+      headers: { Authorization: `Bearer ${vercelToken}`, "Content-Type": "application/json" },
       body: JSON.stringify(deployBody),
       signal: AbortSignal.timeout(20_000),
     });
@@ -1210,27 +1229,114 @@ export async function deployPreviewBranch(taskId: string, executorJobId: string)
   const deploymentUrl = deployJson.url
     ? `https://${deployJson.url}`
     : (deployJson.alias?.[0] ? `https://${deployJson.alias[0]}` : null);
+  const initialState = deployJson.readyState ?? "UNKNOWN";
 
-  logEvent("engineering_task.deployment_queued", {
-    vercelDeploymentId,
-    deploymentUrl,
-    readyState: deployJson.readyState,
-  });
+  logEvent("engineering_task.deployment_submitted", { vercelDeploymentId, deploymentUrl, initialState });
 
-  return updateEngineeringTaskStatus(taskId, {
-    status: "deployed",
+  // ── Step 2: Persist in-progress immediately (not deployed — not READY yet) ─
+  await updateEngineeringTaskStatus(taskId, {
+    status: "deployment_in_progress",
     deployTarget: "preview",
-    deployStatus: deployJson.readyState ?? "building",
+    deployStatus: initialState,
     vercelDeploymentId,
     deploymentUrl,
     deployStartedAt,
-    deployCompletedAt: new Date(),
+  });
+
+  // ── Step 3: Bounded poll until terminal state ───────────────────────────────
+  if (!vercelDeploymentId) {
+    return updateEngineeringTaskStatus(taskId, {
+      status: "deployment_failed",
+      errorReference: "Vercel did not return a deployment ID — cannot poll for status.",
+      sanitizedError: "Missing deployment ID in Vercel response.",
+      deployStatus: "failed",
+      deployStartedAt,
+    });
+  }
+
+  let lastState = initialState;
+  let lastErrorCode: string | undefined;
+
+  for (let attempt = 1; attempt <= VERCEL_POLL_MAX; attempt++) {
+    await new Promise((r) => setTimeout(r, VERCEL_POLL_INTERVAL_MS));
+
+    try {
+      const poll = await pollVercelState(vercelDeploymentId, vercelToken, vercelTeamId);
+      lastState = poll.readyState;
+      lastErrorCode = poll.errorCode;
+    } catch (err) {
+      logEvent("engineering_task.deployment_poll_error", {
+        attempt,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Non-fatal: continue polling on transient network errors
+      continue;
+    }
+
+    logEvent("engineering_task.deployment_poll", { attempt, lastState, vercelDeploymentId });
+
+    // Update deployStatus on every poll so DB reflects latest known state
+    await updateEngineeringTaskStatus(taskId, {
+      status: "deployment_in_progress",
+      deployStatus: lastState,
+    });
+
+    if (lastState === VERCEL_READY_STATE) {
+      logEvent("engineering_task.deployment_ready", { vercelDeploymentId, deploymentUrl });
+      return updateEngineeringTaskStatus(taskId, {
+        status: "deployed",
+        deployTarget: "preview",
+        deployStatus: "READY",
+        vercelDeploymentId,
+        deploymentUrl,
+        deployStartedAt,
+        deployCompletedAt: new Date(),
+        resultSummary: [
+          `Preview deployment ready`,
+          `Branch: ${branchName}`,
+          `Vercel deployment ID: ${vercelDeploymentId}`,
+          `Preview URL: ${deploymentUrl ?? "unknown"}`,
+          `State: READY`,
+          `Polls: ${attempt}`,
+        ].join("\n"),
+      });
+    }
+
+    if (VERCEL_FAILURE_STATES.has(lastState)) {
+      logEvent("engineering_task.deployment_terminal_failure", { lastState, lastErrorCode, vercelDeploymentId });
+      return updateEngineeringTaskStatus(taskId, {
+        status: "deployment_failed",
+        deployStatus: lastState,
+        deployStartedAt,
+        errorReference: `Vercel deployment ${vercelDeploymentId} reached state ${lastState}${lastErrorCode ? ` (${lastErrorCode})` : ""}. Preview URL: ${deploymentUrl ?? "none"}`,
+        sanitizedError: `Vercel deployment failed with state ${lastState}.`,
+        resultSummary: [
+          `Preview deployment failed`,
+          `Branch: ${branchName}`,
+          `Vercel deployment ID: ${vercelDeploymentId}`,
+          `Terminal state: ${lastState}`,
+          lastErrorCode ? `Error code: ${lastErrorCode}` : "",
+        ].filter(Boolean).join("\n"),
+      });
+    }
+  }
+
+  // Polls exhausted — deployment is still in progress. Leave status as deployment_in_progress.
+  // A subsequent executor run can re-check or the Vercel dashboard can be consulted.
+  logEvent("engineering_task.deployment_poll_exhausted", {
+    vercelDeploymentId,
+    lastState,
+    maxPolls: VERCEL_POLL_MAX,
+  });
+  return updateEngineeringTaskStatus(taskId, {
+    status: "deployment_in_progress",
+    deployStatus: lastState,
     resultSummary: [
-      `Preview deployment initiated`,
+      `Preview deployment submitted — still in progress after ${VERCEL_POLL_MAX} polls`,
       `Branch: ${branchName}`,
-      `Vercel deployment ID: ${vercelDeploymentId ?? "unknown"}`,
+      `Vercel deployment ID: ${vercelDeploymentId}`,
       `Preview URL: ${deploymentUrl ?? "pending"}`,
-      `State: ${deployJson.readyState ?? "unknown"}`,
+      `Last known state: ${lastState}`,
     ].join("\n"),
   });
 }
