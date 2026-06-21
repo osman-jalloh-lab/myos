@@ -28,6 +28,7 @@ import { morningBrief, synthesize, riskFlag } from "@/agents/argus";
 import { plutusReport } from "@/agents/plutus";
 import { appTrackerSummary } from "@/agents/athena";
 import { getContextCards, readMemory } from "@/agents/mnemosyne";
+import { createEngineeringTask } from "@/lib/engineeringTasks";
 import { releaseWatch, repoScoutTool, SCOUT_TOPICS } from "@/agents/sophos";
 import { incomeBrief, passiveIncomeScan } from "@/agents/tyche";
 import { OSMAN_CONTEXT } from "@/agents/souls/osman";
@@ -1389,6 +1390,36 @@ export async function routeMessage(userId: string, text: string, channel?: strin
     return { reply: `${verb} ${app.companyName} — ${app.jobTitle} as ${app.status}.${followUpNote}` };
   }
 
+  // ── build intent ─────────────────────────────────────────────────────────
+  // Detects "build/create/make X" and queues a repo inspection task so the
+  // engineering executor actually has work to pick up. Without this, Hermes
+  // just talks — the executor queue never gets a row.
+  const BUILD_INTENT_RE = /^(?:build(?:\s+me)?|create(?:\s+me)?|make(?:\s+me)?|develop|start\s+building)\s+(?:a\s+|an\s+|the\s+)?(.{3,120})/i;
+  const buildMatch = trimmed.match(BUILD_INTENT_RE);
+  if (buildMatch) {
+    const rawName = buildMatch[1]
+      .replace(/\s+(?:for\s+me|please|now)\s*$/i, "")
+      .replace(/[.!?]+$/, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (rawName.length >= 3) {
+      const taskTitle = `Build: ${rawName.slice(0, 160)}`;
+      const task = await createEngineeringTask({
+        userId,
+        title: taskTitle,
+        repositorySlug: "osman-jalloh-lab/parawi",
+        operationType: "read_only_repo_inspection",
+        riskLevel: "low",
+        approvalRequired: false,
+      });
+      const shortId = task.id.slice(0, 8);
+      const replyText = isTelegram
+        ? `Queued: <b>${rawName.slice(0, 80)}</b>\n\nTask ID: <code>${shortId}</code>\n\nPhase 1 (repo inspection) runs on the next cron cycle. Once done, say "status of ${rawName.slice(0, 30)}" and I'll show you what I found and what changes I'm proposing.`
+        : `Queued build task: "${rawName.slice(0, 80)}" (${shortId}). The executor will inspect the repo next cron run. Ask for a status update when ready.`;
+      return { reply: formatReply(replyText, channel) };
+    }
+  }
+
   // ── write-intent commands ─────────────────────────────────────────────────
   // Natural-language commands that propose a DB write via the approval queue.
   // Hermes queues the intent and returns inline Approve/Cancel buttons (Telegram)
@@ -1500,9 +1531,15 @@ export async function routeMessage(userId: string, text: string, channel?: strin
   // This gives every callModel call a grounded view of what's happening,
   // not just the domain data from one CONTEXT_MATCHER.
   const { getRecentAgentTasks } = await import("@/lib/agentTasks");
-  const [recentMemories, recentAgentTasks] = await Promise.all([
+  const [recentMemories, recentAgentTasks, recentEngTasks] = await Promise.all([
     readMemory(userId).catch(() => []),
     getRecentAgentTasks(userId, 3).catch(() => []),
+    prisma.engineeringTask.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: { id: true, title: true, status: true, resultSummary: true, createdAt: true },
+    }).catch(() => []),
   ]);
 
   // Minimal calendar+approval snapshot so Hermes is never answering blind
@@ -1530,8 +1567,15 @@ export async function routeMessage(userId: string, text: string, channel?: strin
     ? recentMemories.slice(0, 3).map((m) => `- ${m.fact}`).join("\n")
     : "None.";
 
-  const projectStatus = recentAgentTasks.length > 0
-    ? recentAgentTasks.map((t) => `- ${t.status.toUpperCase()}: ${t.title}${t.result ? ` (result: ${t.result.slice(0, 80)})` : ""}${t.error ? ` (error: ${t.error.slice(0, 80)})` : ""}`).join("\n")
+  const agentTaskLines = recentAgentTasks.map(
+    (t) => `- [agent] ${t.status.toUpperCase()}: ${t.title}${t.result ? ` — ${t.result.slice(0, 80)}` : ""}${t.error ? ` — error: ${t.error.slice(0, 80)}` : ""}`
+  );
+  const engTaskLines = recentEngTasks.map(
+    (t) => `- [build] ${t.status.toUpperCase()}: ${t.title.slice(0, 80)}${t.resultSummary ? ` — ${t.resultSummary.slice(0, 120)}` : ""}`
+  );
+  const allTaskLines = [...agentTaskLines, ...engTaskLines];
+  const projectStatus = allTaskLines.length > 0
+    ? allTaskLines.join("\n")
     : "No active or recent agent tasks.";
 
   const sentenceCount = isTelegram ? "3-5" : "2-4";
