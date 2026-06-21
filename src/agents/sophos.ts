@@ -7,7 +7,7 @@
 
 import { prisma } from "@/lib/db";
 import { callModel } from "@/lib/modelRouter";
-import { fetchReleaseNotes, repoScout, videoDigest, type ScoutedRepo, type ScoutedVideo } from "@/lib/sophos";
+import { fetchReleaseNotes, repoScout, videoDigest, checkNewSkills, type ScoutedRepo, type ScoutedVideo, type NewSkillsResult } from "@/lib/sophos";
 
 export const sophos = {
   name: "Sophos",
@@ -15,10 +15,13 @@ export const sophos = {
   tools: ["release-watch", "repo-scout", "video-digest", "skill-brief"] as const,
 };
 
-// Topics Sophos scouts for — aligned with Osman's GRC/security/AI direction
-// (mirrors the spirit of Athena's SCOUT_QUERIES, but capability-oriented:
-// "what could help Osman build/learn" rather than "where could Osman work").
-export const SCOUT_TOPICS = ["AI agent security tooling", "GRC compliance automation skills"];
+// Topics Sophos scouts for — targeted at Claude Code skills, MCP servers,
+// and GRC/AI tooling that could be added to Hermes OS or Osman's workflow.
+export const SCOUT_TOPICS = [
+  "claude-code MCP server tool",
+  "AI agent workflow automation tool",
+  "GRC compliance automation AI",
+];
 
 // ── release-watch ─────────────────────────────────────────────────────────────
 
@@ -38,6 +41,12 @@ export async function videoDigestTool(query: string): Promise<ScoutedVideo[]> {
   return videoDigest(query);
 }
 
+// ── new-skills check ─────────────────────────────────────────────────────────
+
+export async function checkSkillsRepo(userId: string): Promise<NewSkillsResult> {
+  return checkNewSkills(userId);
+}
+
 // ── skill-brief ───────────────────────────────────────────────────────────────
 // Synthesizes whatever release-watch/repo-scout/video-digest turned up into a
 // short "here's what's new and might help you" digest via Groq (PUBLIC data —
@@ -48,6 +57,7 @@ export interface SkillBriefInput {
   releaseNotes: string | null;
   repos: ScoutedRepo[];
   videos: ScoutedVideo[];
+  newSkills?: NewSkillsResult;
 }
 
 export interface SkillBriefResult {
@@ -65,27 +75,56 @@ who knows his direction. Be brief, concrete, and skip anything irrelevant to him
 No em dashes.`;
 
 function buildBriefPrompt(input: SkillBriefInput): string {
-  const sections = [
+  const sections: string[] = [];
+
+  // New Claude Code skills — always leads if present
+  if (input.newSkills && input.newSkills.newSkills.length > 0) {
+    sections.push(
+      `NEW Claude Code skills available in affaan-m/everything-claude-code (${input.newSkills.totalInRepo} total, ${input.newSkills.newSkills.length} new since last check):\n` +
+      input.newSkills.newSkills.map((s) => `- ${s}`).join("\n") +
+      `\n\nThese can be installed with: npx skills add affaan-m/everything-claude-code/<skill-name>`
+    );
+  } else if (input.newSkills) {
+    sections.push(
+      `Claude Code skills (affaan-m/everything-claude-code): ${input.newSkills.totalInRepo} total — no new ones since last check.`
+    );
+  }
+
+  sections.push(
     input.releaseNotes
-      ? `Recent Claude/Anthropic release notes (excerpt):\n${input.releaseNotes.slice(0, 3000)}`
-      : "Release notes: unavailable this run.",
+      ? `Claude/Anthropic release notes (recent excerpt):\n${input.releaseNotes.slice(0, 2500)}`
+      : "Release notes: unavailable this run (FIRECRAWL_API_KEY not set — fell back to raw page fetch)."
+  );
+
+  sections.push(
     input.repos.length
-      ? `GitHub repos trending in capability/tooling search:\n${input.repos
-          .map((r) => `- ${r.fullName} (${r.stars}★, ${r.language ?? "?"}) — ${r.description ?? "no description"}`)
+      ? `GitHub repos found in capability/tooling search:\n${input.repos
+          .map((r) => `- ${r.fullName} (${r.stars}★) — ${r.description ?? "no description"} — ${r.url}`)
           .join("\n")}`
-      : "GitHub repos: nothing found this run.",
-    input.videos.length
-      ? `Recent relevant videos:\n${input.videos.map((v) => `- "${v.title}" — ${v.channel} (${v.url})`).join("\n")}`
-      : "Videos: unavailable or nothing found this run (YOUTUBE_API_KEY may be unset).",
-  ];
-  return `${sections.join("\n\n")}\n\nWrite a short digest (4-7 sentences) telling Osman what's worth his attention from the above and why, grounded only in what's listed. If nothing here is genuinely useful to him, say so plainly instead of padding it out.`;
+      : "GitHub repo search: nothing found this run."
+  );
+
+  if (input.videos.length) {
+    sections.push(
+      `Recent relevant videos:\n${input.videos.map((v) => `- "${v.title}" — ${v.channel} (${v.url})`).join("\n")}`
+    );
+  }
+
+  return (
+    sections.join("\n\n") +
+    "\n\nWrite a concise digest (4-8 sentences). Lead with any new Claude Code skills — name them specifically and say whether they're worth installing. Then cover anything else worth Osman's attention. Be direct. Skip anything clearly irrelevant."
+  );
 }
 
 export async function skillBrief(userId: string, input: SkillBriefInput): Promise<SkillBriefResult> {
-  const hasFindings = Boolean(input.releaseNotes) || input.repos.length > 0 || input.videos.length > 0;
+  const hasNewSkills = (input.newSkills?.newSkills.length ?? 0) > 0;
+  const hasFindings = hasNewSkills || Boolean(input.releaseNotes) || input.repos.length > 0 || input.videos.length > 0;
 
   if (!hasFindings) {
-    return { text: "No fresh signal this run, nothing worth flagging — release notes, repo search, and video search all came back empty.", hasFindings: false };
+    return {
+      text: "No fresh signal this run — release notes fetch, GitHub search, and skills check all came back empty.",
+      hasFindings: false,
+    };
   }
 
   const result = await callModel({

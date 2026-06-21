@@ -2,31 +2,161 @@
 // signal — Sophos never installs, configures, or applies anything; it only
 // produces digests for Osman to act on himself (see skill-brief in @/agents/sophos).
 
+import { prisma } from "@/lib/db";
+
 const RELEASE_NOTES_URL = "https://docs.anthropic.com/en/release-notes/overview";
 
+// The primary skills repo Sophos tracks for new installable Claude Code skills.
+const SKILLS_REPO_OWNER = "affaan-m";
+const SKILLS_REPO_NAME = "everything-claude-code";
+const SKILLS_MEMORY_KEY = "sophos:known_skills";
+
 /**
- * release-watch — scrapes Anthropic/Claude release notes via Firecrawl and
- * returns the page as markdown for skill-brief to summarize. Returns null on
- * any failure (no Firecrawl key, network issue, etc.) — a missing source
- * shouldn't crash the digest, just shrink it.
+ * release-watch — scrapes Anthropic/Claude release notes via Firecrawl.
+ * Falls back to a direct fetch if Firecrawl key is absent — still gets the
+ * page, just without markdown conversion.
  */
 export async function fetchReleaseNotes(): Promise<string | null> {
-  const key = process.env.FIRECRAWL_API_KEY;
-  if (!key) return null;
+  const firecrawlKey = process.env.FIRECRAWL_API_KEY;
 
+  if (firecrawlKey) {
+    try {
+      const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${firecrawlKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ url: RELEASE_NOTES_URL, formats: ["markdown"], onlyMainContent: true }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { data?: { markdown?: string } };
+        const md = data.data?.markdown;
+        if (md) return md.slice(0, 6000);
+      }
+    } catch { /* fall through to direct fetch */ }
+  }
+
+  // No Firecrawl key — hit the page directly and pull the raw text.
   try {
-    const res = await fetch("https://api.firecrawl.dev/v1/scrape", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ url: RELEASE_NOTES_URL, formats: ["markdown"], onlyMainContent: true }),
+    const res = await fetch(RELEASE_NOTES_URL, {
+      headers: { "User-Agent": "hermes-os-sophos/1.0" },
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as { data?: { markdown?: string } };
-    return data.data?.markdown?.slice(0, 6000) ?? null;
+    const html = await res.text();
+    // Strip HTML tags and collapse whitespace for a rough plain-text excerpt.
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return text.slice(0, 4000) || null;
   } catch {
     return null;
   }
 }
+
+// ── New skills tracker ────────────────────────────────────────────────────────
+
+export interface NewSkillsResult {
+  newSkills: string[];
+  totalInRepo: number;
+  lastChecked: string | null;
+}
+
+interface GithubTreeItem {
+  path: string;
+  type: string;
+}
+
+/**
+ * checkNewSkills — compares the current skill list in affaan-m/everything-claude-code
+ * against the last-known list stored in the Memory table. Returns any skills
+ * that have appeared since the last run. Uses public GitHub API — no token needed.
+ */
+export async function checkNewSkills(userId: string): Promise<NewSkillsResult> {
+  const token = process.env.GITHUB_TOKEN ?? "";
+  const headers: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "hermes-os-sophos",
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  // Fetch repo tree (top-level only — each skill is a top-level directory)
+  const res = await fetch(
+    `https://api.github.com/repos/${SKILLS_REPO_OWNER}/${SKILLS_REPO_NAME}/git/trees/main?recursive=0`,
+    { headers, signal: AbortSignal.timeout(15_000) }
+  );
+
+  if (!res.ok) {
+    const alt = await fetch(
+      `https://api.github.com/repos/${SKILLS_REPO_OWNER}/${SKILLS_REPO_NAME}/contents/`,
+      { headers, signal: AbortSignal.timeout(15_000) }
+    );
+    if (!alt.ok) return { newSkills: [], totalInRepo: 0, lastChecked: null };
+
+    const items = (await alt.json()) as Array<{ name: string; type: string }>;
+    const skills = items
+      .filter((i) => i.type === "dir" && !i.name.startsWith(".") && i.name !== "node_modules")
+      .map((i) => i.name)
+      .sort();
+
+    return await diffSkills(userId, skills);
+  }
+
+  const tree = (await res.json()) as { tree?: GithubTreeItem[] };
+  const skills = (tree.tree ?? [])
+    .filter((i) => i.type === "tree" && !i.path.includes("/") && !i.path.startsWith("."))
+    .map((i) => i.path)
+    .sort();
+
+  return await diffSkills(userId, skills);
+}
+
+async function diffSkills(userId: string, currentSkills: string[]): Promise<NewSkillsResult> {
+  // Load the last-known skill list from Memory table
+  const stored = await prisma.memory.findFirst({
+    where: { userId, fact: { startsWith: SKILLS_MEMORY_KEY } },
+    orderBy: { createdAt: "desc" },
+  });
+
+  let knownSkills: string[] = [];
+  let lastChecked: string | null = null;
+
+  if (stored) {
+    lastChecked = stored.createdAt.toISOString();
+    try {
+      // Format stored: "sophos:known_skills::[\"skill1\",\"skill2\",...]"
+      const jsonPart = stored.fact.slice(SKILLS_MEMORY_KEY.length + 2);
+      knownSkills = JSON.parse(jsonPart) as string[];
+    } catch { /* first run or corrupt — treat all as new */ }
+  }
+
+  const knownSet = new Set(knownSkills);
+  const newSkills = currentSkills.filter((s) => !knownSet.has(s));
+
+  // Persist the updated skill list so next run only reports genuinely new ones
+  if (currentSkills.length > 0) {
+    const fact = `${SKILLS_MEMORY_KEY}::${JSON.stringify(currentSkills)}`;
+    await prisma.memory.create({
+      data: { userId, fact: fact.slice(0, 2000), source: "sophos" },
+    });
+    // Clean up stale entries (keep only the latest)
+    if (stored) {
+      await prisma.memory.deleteMany({
+        where: {
+          userId,
+          fact: { startsWith: SKILLS_MEMORY_KEY },
+          id: { not: stored.id },
+          createdAt: { lt: new Date(Date.now() - 60 * 60 * 1000) },
+        },
+      });
+    }
+  }
+
+  return { newSkills, totalInRepo: currentSkills.length, lastChecked };
+}
+
+// ── GitHub repo search ────────────────────────────────────────────────────────
 
 export interface ScoutedRepo {
   name: string;
@@ -49,19 +179,16 @@ interface GithubSearchItem {
 }
 
 /**
- * repo-scout — searches public GitHub repos for capability/tooling keywords
- * (agent frameworks, skill registries, MCP servers — Osman's AI/GRC direction).
- * Uses the same unauthenticated public search API Athena's github-scout calls,
- * but with capability-oriented queries — different purpose, owned independently
- * by Sophos, not a reach into Athena's tool (see CLAUDE.md no-overlap note).
+ * repo-scout — searches public GitHub repos for capability/tooling keywords.
+ * Capability-oriented queries (different from Athena's job-oriented queries).
  */
-export async function repoScout(query: string, max = 6): Promise<ScoutedRepo[]> {
+export async function repoScout(query: string, max = 5): Promise<ScoutedRepo[]> {
   const params = new URLSearchParams({ q: query, sort: "updated", order: "desc", per_page: String(max) });
   const res = await fetch(`https://api.github.com/search/repositories?${params}`, {
     headers: { Accept: "application/vnd.github+json", "User-Agent": "hermes-os-sophos" },
+    signal: AbortSignal.timeout(12_000),
   });
   if (!res.ok) throw new Error(`GitHub search ${res.status}`);
-
   const data = (await res.json()) as { items?: GithubSearchItem[] };
   return (data.items ?? []).map((item) => ({
     name: item.name,
@@ -73,6 +200,8 @@ export async function repoScout(query: string, max = 6): Promise<ScoutedRepo[]> 
     updatedAt: item.updated_at,
   }));
 }
+
+// ── YouTube digest ────────────────────────────────────────────────────────────
 
 export interface ScoutedVideo {
   title: string;
@@ -92,11 +221,6 @@ interface YoutubeSearchItem {
   };
 }
 
-/**
- * video-digest — searches YouTube for recent videos on a topic via the YouTube
- * Data API v3. Returns [] (not an error) when YOUTUBE_API_KEY is unset, so a
- * missing key shrinks the digest rather than failing the whole run.
- */
 export async function videoDigest(query: string, max = 5): Promise<ScoutedVideo[]> {
   const key = process.env.YOUTUBE_API_KEY;
   if (!key) return [];
@@ -109,8 +233,10 @@ export async function videoDigest(query: string, max = 5): Promise<ScoutedVideo[
     maxResults: String(max),
     key,
   });
-  const res = await fetch(`https://www.googleapis.com/youtube/v3/search?${params}`);
-  if (!res.ok) throw new Error(`YouTube search ${res.status}`);
+  const res = await fetch(`https://www.googleapis.com/youtube/v3/search?${params}`, {
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!res.ok) return [];
 
   const data = (await res.json()) as { items?: YoutubeSearchItem[] };
   return (data.items ?? [])
