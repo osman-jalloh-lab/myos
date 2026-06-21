@@ -19,7 +19,7 @@ async function main() {
     data: {
       userId: user.id,
       title: "Read-only inspection of osman-jalloh-lab/parawi",
-      repositorySlug: "osman-jalloh-lab/parawi",
+      repositorySlug: "osman-jalloh-lab/myos",
       operationType: "read_only_repo_inspection",
       riskLevel: "low",
       approvalRequired: false,

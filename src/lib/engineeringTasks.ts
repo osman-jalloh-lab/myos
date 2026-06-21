@@ -669,7 +669,7 @@ export async function claimApprovedCodeChangeTask(
       status: { in: ["created", "queued"] },
       operationType: "repo_code_change",
       approvalRequired: true,
-      repositorySlug: "osman-jalloh-lab/parawi",
+      repositorySlug: "osman-jalloh-lab/myos",
       approvalStatus: { in: [...APPROVED_STATUSES] },
     },
     orderBy: { createdAt: "asc" },
@@ -681,7 +681,7 @@ export async function claimApprovedCodeChangeTask(
       where: {
         status: { in: ["created", "queued"] },
         operationType: "repo_code_change",
-        repositorySlug: "osman-jalloh-lab/parawi",
+        repositorySlug: "osman-jalloh-lab/myos",
         approvalStatus: null,
       },
       orderBy: { createdAt: "asc" },
