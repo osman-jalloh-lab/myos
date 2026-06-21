@@ -1109,7 +1109,7 @@ export async function deployPreviewBranch(taskId: string, executorJobId: string)
     }));
   };
 
-  const vercelToken = process.env.VERCEL_TOKEN;
+  const vercelToken = (process.env.VERCEL_TOKEN ?? "").replace(/^﻿/, "").trim() || null;
   if (!vercelToken) {
     logEvent("engineering_task.deployment_blocked", {
       reason: "VERCEL_TOKEN environment variable is not set",
