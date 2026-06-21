@@ -3,8 +3,10 @@ import { NextResponse } from "next/server";
 import {
   claimQueuedTask,
   claimApprovedCodeChangeTask,
+  claimApprovedDeploymentTask,
   inspectEngineeringTask,
   implementCodeChangeTask,
+  deployPreviewBranch,
   type EngineeringTaskView,
 } from "@/lib/engineeringTasks";
 
@@ -45,12 +47,18 @@ export async function GET(req: Request) {
 
   // Try Phase 1 (read-only inspection) first
   let task: EngineeringTaskView | null = await claimQueuedTask(executorName, executorJobId);
-  let taskType: "inspection" | "code_change" = "inspection";
+  let taskType: "inspection" | "code_change" | "preview_deployment" = "inspection";
 
   // If no inspection task, try Phase 2 (approved code change)
   if (!task) {
     task = await claimApprovedCodeChangeTask(executorName, executorJobId);
     taskType = "code_change";
+  }
+
+  // If no code change task, try Phase 3 (approved preview deployment)
+  if (!task) {
+    task = await claimApprovedDeploymentTask(executorName, executorJobId);
+    taskType = "preview_deployment";
   }
 
   if (!task) {
@@ -70,8 +78,10 @@ export async function GET(req: Request) {
 
     if (taskType === "inspection") {
       updatedTask = await inspectEngineeringTask(task.id);
-    } else {
+    } else if (taskType === "code_change") {
       updatedTask = await implementCodeChangeTask(task.id, executorJobId);
+    } else {
+      updatedTask = await deployPreviewBranch(task.id, executorJobId);
     }
 
     return NextResponse.json({ ok: true, task: updatedTask });

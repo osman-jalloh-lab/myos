@@ -1071,7 +1071,7 @@ export async function claimApprovedDeploymentTask(
     where: {
       operationType: "preview_deployment",
       status: { in: ["queued", "deployment_pending_approval"] },
-      repositorySlug: "osman-jalloh-lab/parawi",
+      repositorySlug: "osman-jalloh-lab/myos",
       approvalStatus: { in: [...APPROVED_FOR_DEPLOYMENT_STATUSES] },
     },
     orderBy: { createdAt: "asc" },
@@ -1151,7 +1151,7 @@ export async function deployPreviewBranch(taskId: string, executorJobId: string)
     gitSource: {
       type: "github",
       org: "osman-jalloh-lab",
-      repo: "parawi",
+      repo: "myos",
       ref: branchName,
     },
   };
