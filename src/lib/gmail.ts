@@ -24,6 +24,22 @@ export type EmailCategory =
   | "promotion"
   | "notification";
 
+export interface AccountSyncResult {
+  accountId: string;
+  maskedEmail: string;
+  label: string;
+  status: "completed" | "failed" | "reauth_required";
+  messagesScanned: number;
+  messagesImported: number;
+  lastSyncTime: string;
+  errorRef?: string;
+}
+
+export interface InboxSyncSummary {
+  messages: EmailMessage[];
+  accounts: AccountSyncResult[];
+}
+
 interface GmailHeader {
   name: string;
   value: string;
@@ -46,74 +62,193 @@ function header(msg: GmailMessage, name: string): string {
   );
 }
 
+function maskEmail(email: string): string {
+  const at = email.indexOf("@");
+  if (at < 0) return "****";
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  const visible = local.slice(0, Math.min(2, local.length));
+  return `${visible}${"*".repeat(Math.max(2, local.length - visible.length))}@${domain}`;
+}
+
+function classifyTokenError(message: string): "failed" | "reauth_required" {
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("no refresh token") ||
+    lower.includes("invalid_grant") ||
+    lower.includes("401")
+  ) {
+    return "reauth_required";
+  }
+  return "failed";
+}
+
 /** Fetches metadata-only messages (no bodies) across all linked accounts. */
 export async function fetchInboxMessages(
   userId: string,
   maxPerAccount = 15
 ): Promise<EmailMessage[]> {
+  const { messages } = await syncGmailInbox(userId, maxPerAccount);
+  return messages;
+}
+
+/**
+ * Fetches inbox messages across all linked accounts with per-account sync status.
+ * Surfaces token failures and network errors that were previously silently dropped.
+ */
+export async function syncGmailInbox(
+  userId: string,
+  maxPerAccount = 15
+): Promise<InboxSyncSummary> {
   const accounts = await prisma.googleAccount.findMany({
     where: { userId },
     select: { id: true, email: true, label: true },
   });
 
-  const results = await Promise.allSettled(
-    accounts.map(async (account) => {
-      const token = await getValidToken(account.id);
-      const headers = { Authorization: `Bearer ${token}` };
-
-      const listParams = new URLSearchParams({
-        maxResults: String(maxPerAccount),
-        labelIds: "INBOX",
-      });
-      const listRes = await fetch(`${GMAIL_API}/messages?${listParams}`, { headers });
-      if (!listRes.ok) {
-        throw new Error(`Gmail list ${listRes.status} for ${account.email}`);
-      }
-      const list = (await listRes.json()) as { messages?: { id: string }[] };
-      const ids = list.messages ?? [];
-
-      const messages = await Promise.allSettled(
-        ids.map(async ({ id }) => {
-          const params = new URLSearchParams({ format: "metadata" });
-          params.append("metadataHeaders", "Subject");
-          params.append("metadataHeaders", "From");
-          const res = await fetch(`${GMAIL_API}/messages/${id}?${params}`, { headers });
-          if (!res.ok) throw new Error(`Gmail get ${res.status} for ${id}`);
-          const msg = (await res.json()) as GmailMessage;
-          const labels = msg.labelIds ?? [];
-          return {
-            id: msg.id,
-            threadId: msg.threadId,
-            subject: header(msg, "Subject") || "(no subject)",
-            from: header(msg, "From"),
-            snippet: msg.snippet ?? "",
-            receivedAt: msg.internalDate
-              ? new Date(Number(msg.internalDate)).toISOString()
-              : new Date().toISOString(),
-            labels,
-            isUnread: labels.includes("UNREAD"),
-            isImportant: labels.includes("IMPORTANT"),
-            accountEmail: account.email,
-            accountLabel: account.label,
-          } satisfies EmailMessage;
-        })
-      );
-
-      return messages
-        .filter((r): r is PromiseFulfilledResult<EmailMessage> => r.status === "fulfilled")
-        .map((r) => r.value);
+  console.log(
+    JSON.stringify({
+      event: "gmail_accounts_discovered",
+      userId,
+      count: accounts.length,
+      masked: accounts.map((a) => maskEmail(a.email)),
     })
   );
 
-  const all: EmailMessage[] = [];
-  for (const r of results) {
-    if (r.status === "fulfilled") all.push(...r.value);
-    // Rejected accounts (bad token, network) are silently skipped — same pattern as calendar.ts
+  if (accounts.length === 0) {
+    console.log(
+      JSON.stringify({ event: "gmail_sync_completed", userId, totalAccounts: 0, totalMessages: 0 })
+    );
+    return { messages: [], accounts: [] };
   }
 
-  return all.sort(
-    (a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()
+  console.log(JSON.stringify({ event: "gmail_sync_started", userId, count: accounts.length }));
+
+  const settled = await Promise.allSettled(
+    accounts.map(
+      async (account): Promise<{ messages: EmailMessage[]; result: AccountSyncResult }> => {
+        const syncTime = new Date().toISOString();
+        const masked = maskEmail(account.email);
+
+        console.log(
+          JSON.stringify({ event: "gmail_account_sync_started", accountId: account.id, masked })
+        );
+
+        try {
+          const token = await getValidToken(account.id);
+          const headers = { Authorization: `Bearer ${token}` };
+
+          const listParams = new URLSearchParams({
+            maxResults: String(maxPerAccount),
+            labelIds: "INBOX",
+          });
+          const listRes = await fetch(`${GMAIL_API}/messages?${listParams}`, { headers });
+          if (!listRes.ok) {
+            throw new Error(`Gmail list ${listRes.status} for ${account.email}`);
+          }
+          const list = (await listRes.json()) as { messages?: { id: string }[] };
+          const ids = list.messages ?? [];
+
+          const fetched = await Promise.allSettled(
+            ids.map(async ({ id }) => {
+              const params = new URLSearchParams({ format: "metadata" });
+              params.append("metadataHeaders", "Subject");
+              params.append("metadataHeaders", "From");
+              const res = await fetch(`${GMAIL_API}/messages/${id}?${params}`, { headers });
+              if (!res.ok) throw new Error(`Gmail get ${res.status} for ${id}`);
+              const msg = (await res.json()) as GmailMessage;
+              const labels = msg.labelIds ?? [];
+              return {
+                id: msg.id,
+                threadId: msg.threadId,
+                subject: header(msg, "Subject") || "(no subject)",
+                from: header(msg, "From"),
+                snippet: msg.snippet ?? "",
+                receivedAt: msg.internalDate
+                  ? new Date(Number(msg.internalDate)).toISOString()
+                  : new Date().toISOString(),
+                labels,
+                isUnread: labels.includes("UNREAD"),
+                isImportant: labels.includes("IMPORTANT"),
+                accountEmail: account.email,
+                accountLabel: account.label,
+              } satisfies EmailMessage;
+            })
+          );
+
+          const messages = fetched
+            .filter((r): r is PromiseFulfilledResult<EmailMessage> => r.status === "fulfilled")
+            .map((r) => r.value);
+
+          const result: AccountSyncResult = {
+            accountId: account.id,
+            maskedEmail: masked,
+            label: account.label,
+            status: "completed",
+            messagesScanned: ids.length,
+            messagesImported: messages.length,
+            lastSyncTime: syncTime,
+          };
+
+          console.log(JSON.stringify({ event: "gmail_account_sync_completed", ...result }));
+          return { messages, result };
+        } catch (err) {
+          const errorRef = (err instanceof Error ? err.message : String(err)).slice(0, 200);
+          const status = classifyTokenError(errorRef);
+          const result: AccountSyncResult = {
+            accountId: account.id,
+            maskedEmail: masked,
+            label: account.label,
+            status,
+            messagesScanned: 0,
+            messagesImported: 0,
+            lastSyncTime: syncTime,
+            errorRef,
+          };
+          console.error(JSON.stringify({ event: "gmail_account_sync_failed", ...result }));
+          return { messages: [], result };
+        }
+      }
+    )
   );
+
+  const allMessages: EmailMessage[] = [];
+  const accountResults: AccountSyncResult[] = [];
+
+  for (const r of settled) {
+    if (r.status === "fulfilled") {
+      allMessages.push(...r.value.messages);
+      accountResults.push(r.value.result);
+    } else {
+      // fetchAccountMessages catches internally — this branch covers unexpected rejections
+      console.error(
+        JSON.stringify({
+          event: "gmail_account_sync_failed",
+          reason: String(r.reason).slice(0, 200),
+        })
+      );
+    }
+  }
+
+  const completedCount = accountResults.filter((a) => a.status === "completed").length;
+  const failedCount = accountResults.filter((a) => a.status !== "completed").length;
+
+  console.log(
+    JSON.stringify({
+      event: "gmail_sync_completed",
+      userId,
+      totalAccounts: accounts.length,
+      completedAccounts: completedCount,
+      failedAccounts: failedCount,
+      totalMessages: allMessages.length,
+    })
+  );
+
+  return {
+    messages: allMessages.sort(
+      (a, b) => new Date(b.receivedAt).getTime() - new Date(a.receivedAt).getTime()
+    ),
+    accounts: accountResults,
+  };
 }
 
 const NEWSLETTER_HINTS = ["unsubscribe", "newsletter", "digest"];
