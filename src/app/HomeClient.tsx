@@ -149,6 +149,20 @@ export default function HomeClient({
   const [activeFilter, setFilter] = useState("All");
   const [copied, setCopied]       = useState<string | null>(null);
   const [activeAgent, setActiveAgent] = useState<string | null>(initialAgent);
+  const [accountList, setAccountList] = useState(accounts);
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
+
+  async function disconnectAccount(id: string) {
+    setDisconnecting(id);
+    try {
+      const res = await fetch(`/api/accounts?id=${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setAccountList((prev) => prev.filter((a) => a.id !== id));
+      }
+    } finally {
+      setDisconnecting(null);
+    }
+  }
 
   const pendingCount  = approvals.length;
   const openTaskCount = tasks.length;
@@ -615,25 +629,31 @@ export default function HomeClient({
                   </span>
                 </h3>
               </header>
-              {accounts.length > 0 ? (
+              {accountList.length > 0 ? (
                 <>
-                  {accounts.map((acc) => (
+                  {accountList.map((acc) => (
                     <div key={acc.id} className="cc-row-item">
                       <div style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(59,130,246,.16)", color: "var(--cc-blue-2)", display: "grid", placeItems: "center", fontWeight: 700, fontSize: 12, flexShrink: 0 }}>G</div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acc.email}</div>
                         <div style={{ fontSize: 10, color: "var(--cc-fg-faint)", fontFamily: "var(--cc-mono)" }}>{acc.label}{acc.isDefault ? " · default" : ""}</div>
                       </div>
-                      <span className="cc-chip" style={{ background: "rgba(16,185,129,.12)", color: "var(--cc-green-2)", border: "1px solid rgba(16,185,129,.25)" }}>active</span>
+                      {!acc.isDefault && (
+                        <button
+                          onClick={() => disconnectAccount(acc.id)}
+                          disabled={disconnecting === acc.id}
+                          style={{ fontSize: 10, padding: "3px 8px", borderRadius: 6, border: "1px solid rgba(239,68,68,.35)", background: "rgba(239,68,68,.08)", color: "var(--cc-red-2, #f87171)", cursor: "pointer", opacity: disconnecting === acc.id ? 0.5 : 1, flexShrink: 0 }}
+                        >
+                          {disconnecting === acc.id ? "…" : "Disconnect"}
+                        </button>
+                      )}
                     </div>
                   ))}
-                  {accounts.length < 3 && (
-                    <div style={{ padding: "12px 18px", display: "flex", gap: 8, flexWrap: "wrap", borderTop: "1px solid var(--cc-border-sub)" }}>
-                      {(["Work", "UT", "Personal"] as const).filter((l) => !accounts.some((a) => a.label === l)).map((label) => (
-                        <a key={label} href={`/api/accounts/link?label=${label}`} className="cc-link-btn">+ {label}</a>
-                      ))}
-                    </div>
-                  )}
+                  <div style={{ padding: "12px 18px", display: "flex", gap: 8, flexWrap: "wrap", borderTop: "1px solid var(--cc-border-sub)" }}>
+                    {(["Work", "UT", "Personal"] as const).filter((l) => !accountList.some((a) => a.label === l)).map((label) => (
+                      <a key={label} href={`/api/accounts/link?label=${label}`} className="cc-link-btn">+ {label}</a>
+                    ))}
+                  </div>
                 </>
               ) : isAuthenticated ? (
                 <div className="cc-empty">No accounts linked. Connect a Google account to start.</div>
