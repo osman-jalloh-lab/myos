@@ -74,7 +74,8 @@ export async function sendMessage(
   userId: string,
   text: string,
   channel: ChatChannel = "dashboard",
-  targetAgent: string | null = null
+  targetAgent: string | null = null,
+  chatContext?: string
 ): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView; route: RouteResult }> {
   const userRow = await prisma.chatMessage.create({
     data: { userId, role: "user", content: text, channel, targetAgent },
@@ -88,8 +89,8 @@ export async function sendMessage(
     route = { reply, pendingApprovals };
   } else {
     route = targetAgent
-      ? await routeToAgent(userId, targetAgent, text, channel)
-      : await routeMessage(userId, text, channel);
+      ? await routeToAgent(userId, targetAgent, text, channel, 0, chatContext)
+      : await routeMessage(userId, text, channel, chatContext);
   }
 
   const replyRow = await prisma.chatMessage.create({

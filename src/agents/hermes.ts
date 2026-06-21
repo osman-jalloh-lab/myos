@@ -1173,6 +1173,7 @@ export async function routeToAgent(
   text: string,
   channel?: string,
   _depth = 0,
+  chatContext?: string,
 ): Promise<RouteResult> {
   // Guard against infinite delegation loops (agent A → agent B → agent A ...)
   if (_depth > 3) {
@@ -1220,7 +1221,7 @@ export async function routeToAgent(
     taskType: `chat-agent-${key}`,
     dataClass: profile.dataClass ?? "PERSONAL",
     systemPrompt,
-    userPrompt: `Context for this reply:\n${context}\n\nOsman just asked you directly: "${trimmed}"\n\nReply in ${isTelegram ? "3-5" : "2-4"} sentences, conversationally, grounded only in the context above and your own domain.`,
+    userPrompt: `${chatContext ? `MEMORY CONTEXT:\n${chatContext}\n\n` : ""}Context for this reply:\n${context}\n\nOsman just asked you directly: "${trimmed}"\n\nReply in ${isTelegram ? "3-5" : "2-4"} sentences, conversationally, grounded only in the context above and your own domain.`,
     providerOverride,
   });
 
@@ -1234,7 +1235,7 @@ export async function routeToAgent(
   return { reply: formatReply(result.text, channel) };
 }
 
-export async function routeMessage(userId: string, text: string, channel?: string): Promise<RouteResult> {
+export async function routeMessage(userId: string, text: string, channel?: string, chatContext?: string): Promise<RouteResult> {
   const isTelegram = channel === "telegram";
   const activeSystemPrompt = isTelegram ? HERMES_TELEGRAM_SYSTEM_PROMPT : HERMES_CHAT_SYSTEM_PROMPT;
   const { cleaned: trimmed, providerOverride } = detectModelOverride(text.trim());
@@ -1460,7 +1461,7 @@ export async function routeMessage(userId: string, text: string, channel?: strin
       dataClass: "PERSONAL",
       systemPrompt: activeSystemPrompt,
       providerOverride,
-      userPrompt: `Context assembled from multiple agents:\n\n${combinedContext.slice(0, 4000)}\n\nOsman asked: "${trimmed}"\n\nSynthesis goal: ${multiRoute.synthesisHint}\n\nReply in 3-5 sentences, combining insights from all agents above into one cohesive answer.`,
+      userPrompt: `${chatContext ? `MEMORY CONTEXT:\n${chatContext}\n\n` : ""}Context assembled from multiple agents:\n\n${combinedContext.slice(0, 4000)}\n\nOsman asked: "${trimmed}"\n\nSynthesis goal: ${multiRoute.synthesisHint}\n\nReply in 3-5 sentences, combining insights from all agents above into one cohesive answer.`,
     });
 
     await logHandoff({
@@ -1536,6 +1537,7 @@ export async function routeMessage(userId: string, text: string, channel?: strin
   const sentenceCount = isTelegram ? "3-5" : "2-4";
 
   const structuredUserPrompt = [
+    chatContext ? `ACTIVE CONTEXT (projects, session, recent chat):\n${chatContext}` : "",
     context ? `AGENT CONTEXT (${matched?.taskType ?? "general"}):\n${context}` : baseSnapshot ? `SNAPSHOT:\n${baseSnapshot}` : "",
     `RELEVANT MEMORY:\n${memorySummary}`,
     `PROJECT STATUS (AgentTask registry):\n${projectStatus}`,

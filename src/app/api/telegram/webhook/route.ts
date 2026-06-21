@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { sendMessage } from "@/lib/chat";
+import { buildContextBlock, updateSessionAfterResponse } from "@/lib/memory-context";
 import {
   sendTelegramMessage,
   sendChatAction,
@@ -115,10 +116,13 @@ export async function POST(req: Request) {
     const raw = cq.data?.trim();
     if (chatId && raw) {
       await sendChatAction(chatId, "typing");
-      const result = await sendMessage(user.id, raw, "telegram");
+      const chatIdStr = String(chatId);
+      const chatContext = await buildContextBlock(chatIdStr, user.id, raw).catch(() => "");
+      const result = await sendMessage(user.id, raw, "telegram", null, chatContext || undefined);
       await answerCallbackQuery(cq.id, result.route.reply.slice(0, 180));
       try {
         await sendTelegramMessage(chatId, result.reply.content, approvalButtons(result.route), "HTML");
+        await updateSessionAfterResponse(chatIdStr, user.id, raw).catch(() => {});
       } catch (err) {
         console.error(`[telegram webhook] callback reply failed:`, (err as Error).message);
       }
@@ -147,9 +151,16 @@ export async function POST(req: Request) {
   const { text: resolvedText, targetAgent } = resolveCommandText(rawText);
   const fullText = contextPrefix + resolvedText;
 
+  // Build memory context block before the LLM call — session, active project, recent messages.
+  // Failures are non-fatal: a missing context block degrades gracefully to stateless behavior.
+  const chatIdStr = String(chatId);
+  const chatContext = await buildContextBlock(chatIdStr, user.id, fullText).catch(() => "");
+
   try {
-    const result = await sendMessage(user.id, fullText, "telegram", targetAgent);
+    const result = await sendMessage(user.id, fullText, "telegram", targetAgent, chatContext || undefined);
     await sendTelegramMessage(chatId, result.reply.content, approvalButtons(result.route), "HTML");
+    // Update session goal and maybe trigger summarization after a successful reply
+    await updateSessionAfterResponse(chatIdStr, user.id, fullText).catch(() => {});
   } catch (err) {
     console.error(`[telegram webhook] reply failed:`, (err as Error).message);
     // Best-effort fallback — send plain error note so Osman knows something broke
