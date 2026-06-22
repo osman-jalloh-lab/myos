@@ -1282,18 +1282,22 @@ export async function routeMessage(userId: string, text: string, channel?: strin
 
   const buildProjectPlan = (name: string, route: string): Array<{ title: string; assignedAgent: string }> => [
     { title: `Inspect repository and plan ${name} architecture`, assignedAgent: "prometheus" },
-    { title: `Create ${route} route and homepage`, assignedAgent: "prometheus" },
-    { title: `Build ${route} listing/data view`, assignedAgent: "prometheus" },
-    { title: `Build ${route}/[slug] detail page`, assignedAgent: "prometheus" },
-    { title: "Add navigation links and polish UI", assignedAgent: "prometheus" },
-    { title: "Run TypeScript check, lint, and production build", assignedAgent: "prometheus" },
+    { title: `Create ${route} route and main page`, assignedAgent: "prometheus" },
+    { title: `Build ${route} catalog/listing view`, assignedAgent: "prometheus" },
+    { title: `Build ${route}/[slug] detail/product page`, assignedAgent: "prometheus" },
+    { title: `Build ${route}/compare comparison view`, assignedAgent: "prometheus" },
+    { title: "Wire navigation, header, and layout", assignedAgent: "prometheus" },
+    { title: "Run TypeScript typecheck", assignedAgent: "prometheus" },
+    { title: "Run ESLint", assignedAgent: "prometheus" },
+    { title: "Run production build", assignedAgent: "prometheus" },
   ];
 
-  // ── bare approval / rejection (no ID provided) ───────────────────────────────
-  // "approve", "yes", "go ahead", "looks good", "ship it" — all map to the most
-  // recent pending approval without requiring Osman to copy-paste an ID.
-  // This is the fix for "what are you approving?" — Hermes always knows.
-  const BARE_APPROVE_RE = /^(approve|yes|confirmed?|go ahead|do it|proceed|looks good|ok|okay|sounds good|ship it|let'?s go|start it|start|continue|begin|run it)\.?!?$/i;
+  // ── bare approval (no ID provided) ───────────────────────────────────────────
+  // "approve", "yes", "go ahead", "looks good" — resolves the latest pending
+  // approval automatically. "continue", "start", "begin" are intentionally
+  // excluded — they mean "resume working" not "approve something", and are
+  // handled by the RESUME_PATTERN below.
+  const BARE_APPROVE_RE = /^(approve|yes|confirmed?|go ahead|do it|looks good|ok|okay|sounds good|ship it|let'?s go|run it)\.?!?$/i;
   if (BARE_APPROVE_RE.test(trimmed)) {
     const pending = await getLatestPendingApproval(userId);
     if (pending) {
@@ -1302,7 +1306,7 @@ export async function routeMessage(userId: string, text: string, channel?: strin
         const note = action.executionNote ?? `Approved — proceeding.`;
         return { reply: formatReply(note, channel), approvalAction: { id: action.id, actionType: action.actionType, status: action.status } };
       } catch {
-        // already resolved or error — fall through to LLM
+        // already resolved or error — fall through
       }
     }
   }
@@ -1319,6 +1323,43 @@ export async function routeMessage(userId: string, text: string, channel?: strin
         // fall through
       }
     }
+  }
+
+  // ── post-approval continuity — "continue", "what's next", "status" ───────────
+  // After a plan is approved the user often checks in with short commands.
+  // These must never return "no pending approvals" — they return project state.
+  const RESUME_RE = /^(continue|keep going|what'?s next|next step|next|what are you (doing|working on)|what'?s happening|still working|working on it|notify me when done|let me know when (done|finished)|when (are you|will you be) (done|finished)|what'?s the plan|where are we|what'?s left)\.?!?\??$/i;
+  if (RESUME_RE.test(trimmed)) {
+    const ctxProjectId = extractProjectIdFromContext(chatContext);
+    if (ctxProjectId) {
+      try {
+        const { getProjectTasks: fetchTasks } = await import("@/lib/memory-context");
+        const tasks = await fetchTasks(ctxProjectId);
+        if (tasks.length > 0) {
+          const projectNameMatch = chatContext?.match(/^ACTIVE PROJECT:\s*([^\[]+)/m);
+          const projectName = projectNameMatch?.[1]?.trim() ?? "active project";
+          const statusOrder: Record<string, number> = { in_progress: 0, pending: 1, done: 2 };
+          const sorted = [...tasks].sort((a, b) => (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3));
+          const taskLines = sorted.map((t, i) => {
+            const icon = t.status === "done" ? "✓" : t.status === "in_progress" ? "►" : `${i + 1}.`;
+            return `${icon} ${t.title}`;
+          }).join("\n");
+          const done = tasks.filter((t) => t.status === "done").length;
+          const inProg = tasks.filter((t) => t.status === "in_progress").length;
+          const pending = tasks.filter((t) => t.status === "pending").length;
+          const summary = inProg > 0
+            ? `${inProg} task(s) in progress, ${pending} queued.`
+            : pending > 0
+            ? `${done} done. Next up: ${tasks.find((t) => t.status === "pending")?.title ?? "pending tasks"}.`
+            : `All ${done} tasks complete.`;
+          const replyText = isTelegram
+            ? `<b>${projectName}</b>\n\n${taskLines}\n\n${summary}`
+            : `${projectName} — ${done}/${tasks.length} done.\n${taskLines}\n\n${summary}`;
+          return { reply: formatReply(replyText, channel) };
+        }
+      } catch { /* fall through to LLM */ }
+    }
+    // No active project context — let the LLM handle it naturally
   }
 
   const approvalVerb = trimmed.match(/^(approve|reject)\s+([a-zA-Z0-9-]+)/i);

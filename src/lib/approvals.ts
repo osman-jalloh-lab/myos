@@ -248,6 +248,8 @@ async function executeIfPossible(row: {
       steps?: string[];
       repositorySlug?: string;
     };
+
+    // Phase 1: queue the repo inspection task
     const { createEngineeringTask } = await import("@/lib/engineeringTasks");
     await createEngineeringTask({
       userId: row.userId,
@@ -257,10 +259,23 @@ async function executeIfPossible(row: {
       riskLevel: "low",
       approvalRequired: false,
     });
-    // Mark the project as building now that it's approved
+
     if (payload.projectId) {
-      const { updateProjectStatus } = await import("@/lib/memory-context");
-      await updateProjectStatus(payload.projectId, "building").catch(() => {});
+      const { updateProjectStatus, getProjectTasks, createProjectTasksFromPlan } = await import("@/lib/memory-context");
+
+      // Safety net: if tasks were never created (e.g. user found a non-standard
+      // path to approval), create them now from the stored plan steps.
+      if (payload.steps?.length) {
+        const existing = await getProjectTasks(payload.projectId).catch(() => []);
+        if (existing.length === 0) {
+          const planSteps = payload.steps.map((title) => ({ title, assignedAgent: "prometheus" }));
+          await createProjectTasksFromPlan(payload.projectId, row.userId, planSteps).catch(() => {});
+        }
+      }
+
+      // Approval = active. "building" is for mid-execution — "active" means
+      // the plan is approved and work is underway (or queued to start).
+      await updateProjectStatus(payload.projectId, "active").catch(() => {});
     }
   }
 
