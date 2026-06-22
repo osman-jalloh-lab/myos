@@ -10,9 +10,14 @@ import { hasTool } from "./tool-registry";
 
 const TOOL_CATALOG = `
 Tools available in Parawi/MyOS:
-- build_feature: Build, create, or modify a feature in the codebase. Trigger: "build X", "create a route", "add a page", "implement X", "build the website", "continue the X build", "create the /X route", "remove pricing", "edit the homepage", "add a button", "deploy it" — anything that requires writing or editing code.
+- build_app: Build or rebuild the entire app, site, or a major section. Trigger: "build the app", "build the site", "build hermes", "build myos", "rebuild the whole thing", "build the full app"
+- build_page: Build or create a specific page or route. Trigger: "build a page", "build the /X page", "build a simple /X page", "create a /X route", "add a /X page", "make the /X page", "build a simple page called X"
+- continue_build: Continue or resume an in-progress build. Trigger: "continue the build", "continue building", "resume the build", "keep building", "continue where you left off", "pick up the build"
+- modify_feature: Modify, update, or refactor an existing feature or component. Trigger: "modify the X", "update the X feature", "change the X component", "edit the X page", "refactor X", "fix the X section", "remove X from the page"
+- run_validation: Run typecheck, lint, tests, or full validation suite. Trigger: "run validation", "validate the build", "run all checks", "run typecheck and lint", "check everything", "run all tests"
+- build_feature: Build, create, or implement any code feature (fallback for build intents not matched above). Trigger: "implement X", "build X feature", "add a button", "generate the X component", "write X code"
 - repo_inspect: Inspect the Hermes OS repo structure. Trigger: "what's in the repo", "show me the file structure", "what routes exist", "inspect the codebase"
-- run_command: Run a build/typecheck/lint command. Trigger: "run build", "typecheck", "run lint", "npm run build", "check types", "run tests"
+- run_command: Run a single build/typecheck/lint command. Trigger: "run build", "typecheck", "run lint", "npm run build", "check types", "run tests"
 - deploy: Check or trigger Vercel deployment. Trigger: "deploy", "check deployment", "deployment status", "is it deployed", "preview URL"
 - github_repo_review: Inspect any GitHub repo. Trigger: GitHub URL, "what is this repo", "inspect", "scan repo", "look at this project"
 - email_triage: Check/triage inbox for action-needed emails. Trigger: "check my email", "inbox", "any emails", "recruiter emails", "unread", "follow-ups"
@@ -112,12 +117,56 @@ function matchesAny(text: string, patterns: RegExp[]): boolean {
 function planWithRegex(msg: string): { intent: string; extractedUrl: string | null } {
   const lc = msg.toLowerCase();
 
-  // Build feature — highest priority (must come before generic patterns)
+  // build_page — specific page/route creation (highest priority among build intents)
+  if (matchesAny(lc, [
+    /build\s+a?\s*simple\s+\/\S+\s*(page|route)?/,
+    /build\s+(the\s+)?\/\S+\s*(page|route)/,
+    /\b(create|add|make)\s+(a\s+)?(simple\s+)?\/\S+\s*(page|route)/,
+    /\b(build|create|add|make)\s+(a|an|the)?\s*(simple\s+)?(new\s+)?(page|route)\b/,
+  ]))
+    return { intent: "build_page", extractedUrl: null };
+
+  // build_app — full app or major section build
+  if (matchesAny(lc, [
+    /build\s+(the\s+)?(whole\s+)?(app|site|website|hermes|myos|full\s+app)\b/,
+    /rebuild\s+(the\s+)?(app|site|website|everything|whole\s+thing)\b/,
+    /build\s+hermes\b/,
+  ]))
+    return { intent: "build_app", extractedUrl: null };
+
+  // continue_build — resume in-progress work
+  if (matchesAny(lc, [
+    /\bcontinue\s+(the\s+)?(build|building)\b/,
+    /\bresume\s+(the\s+)?(build|building)\b/,
+    /\bkeep\s+building\b/,
+    /\bcontinue\s+where\s+you\s+left\s+off\b/,
+    /\bpick\s+up\s+(the\s+)?build\b/,
+  ]))
+    return { intent: "continue_build", extractedUrl: null };
+
+  // modify_feature — edit/update/refactor existing code
+  if (matchesAny(lc, [
+    /\b(modify|refactor|rewrite|update|edit)\s+(the\s+)?\S+\s*(feature|component|page|section|route)\b/,
+    /\b(remove|delete|strip|hide|disable)\s+(the\s+)?(pricing|header|footer|nav|sidebar|section|component)\b/,
+    /\bfix\s+the\s+\S+\s*(section|component|page)\b/,
+  ]))
+    return { intent: "modify_feature", extractedUrl: null };
+
+  // run_validation — full validation suite
+  if (matchesAny(lc, [
+    /\brun\s+validation\b/,
+    /\bvalidate\s+(the\s+)?build\b/,
+    /\brun\s+all\s+(checks|tests)\b/,
+    /\bcheck\s+everything\b/,
+    /\brun\s+typecheck\s+and\s+lint\b/,
+  ]))
+    return { intent: "run_validation", extractedUrl: null };
+
+  // Build feature — general fallback for remaining build patterns
   if (matchesAny(lc, [
     /\b(build|create|add|implement|write|make|generate)\b.*(page|route|feature|component|view|section|widget|button|form|modal|dashboard|endpoint|api|table|chart|list|card)/,
     /\b(create|add|build)\s+the\s+\/\S+\s+route\b/,
     /\bcontinue\s+the\s+\S+\s+build\b/,
-    /\b(remove|delete|strip|hide|update|refactor|rewrite|modify|edit)\s+(pricing|header|footer|nav|sidebar|section|component|page|route)\b/,
     /build\s+(chrono|watch|market|archive|project|the\s+website|the\s+app|the\s+site)\b/,
     /\b(scaffold|prototype|wire up|set up|spin up)\s+(a|an|the)?\s+(page|route|feature|view|component)\b/,
   ]))
@@ -181,6 +230,60 @@ function buildPlan(
   source: string
 ): ExecutionPlan {
   switch (intent) {
+
+    case "build_page":
+    case "build_app":
+    case "continue_build":
+      return {
+        intent,
+        confidence,
+        steps: [{
+          id: "step_1",
+          tool: "internal.code.buildAndPush",
+          input: { message: msg },
+          risk: "internal_write",
+          requiresApproval: false,
+        }],
+        reasoningSummary: "Generate, commit, and open PR via internal.code.buildAndPush.",
+      };
+
+    case "modify_feature":
+      return {
+        intent,
+        confidence,
+        steps: [{
+          id: "step_1",
+          tool: "internal.code.buildAndPush",
+          input: { message: msg },
+          risk: "internal_write",
+          requiresApproval: false,
+        }],
+        reasoningSummary: "Modify existing feature — generate diff, commit, PR.",
+      };
+
+    case "run_validation":
+      return {
+        intent,
+        confidence,
+        steps: [
+          {
+            id: "step_1",
+            tool: "internal.code.commandRun",
+            input: { message: "run typecheck" },
+            risk: "read",
+            requiresApproval: false,
+          },
+          {
+            id: "step_2",
+            tool: "internal.code.commandRun",
+            input: { message: "run lint", dependsOn: ["step_1"] },
+            risk: "read",
+            requiresApproval: false,
+            dependsOn: ["step_1"],
+          },
+        ],
+        reasoningSummary: "Run typecheck then lint as validation suite.",
+      };
 
     case "build_feature":
       return {

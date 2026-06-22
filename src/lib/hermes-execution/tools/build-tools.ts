@@ -310,6 +310,128 @@ async function llmTypeCheck(files: GeneratedFile[], userId: string): Promise<str
   return result.text.trim();
 }
 
+// ── Shared build+push executor ────────────────────────────────────────────────
+// Used by both internal.code.buildFeature and internal.code.buildAndPush.
+
+async function runBuildAndPush(message: string, ctx: ToolContext) {
+  const token = (ctx.env.GITHUB_TOKEN ?? "").replace(/^﻿/, "").trim();
+
+  if (!token) {
+    return {
+      answer: "GITHUB_TOKEN is required to write to GitHub. Add it to Vercel env vars (repo scope).",
+      artifacts: [] as ExecutionArtifact[],
+    };
+  }
+
+  let repoCtx: RepoContext;
+  try {
+    repoCtx = await getRepoContext(token);
+  } catch (err) {
+    return {
+      answer: `Failed to inspect repo: ${err instanceof Error ? err.message : String(err)}`,
+      artifacts: [] as ExecutionArtifact[],
+    };
+  }
+
+  const samplePage = await fetchRepoFile("src/app/page.tsx", token, repoCtx.defaultBranch);
+
+  let files: GeneratedFile[];
+  try {
+    files = await generateFeatureCode(message, repoCtx, samplePage, ctx.userId);
+  } catch (err) {
+    return {
+      answer: `Code generation failed: ${err instanceof Error ? err.message : String(err)}`,
+      artifacts: [] as ExecutionArtifact[],
+    };
+  }
+
+  if (files.length === 0) {
+    return {
+      answer: "No safe files were generated. The LLM may have tried to touch protected paths (.env, auth, etc.).",
+      artifacts: [] as ExecutionArtifact[],
+    };
+  }
+
+  const typeCheckResult = await llmTypeCheck(files, ctx.userId).catch(() => "Could not run type check");
+
+  const titleSlug = message.replace(/^(build|create|add|make|implement|write|continue|modify|update)\s+/i, "").slice(0, 60).trim();
+  let commitResult: CommitResult;
+  try {
+    commitResult = await commitFilesToBranch(
+      files,
+      {
+        title: titleSlug || "hermes feature build",
+        description: `Feature built by Hermes OS from request: "${message.slice(0, 200)}"`,
+      },
+      token,
+      repoCtx.defaultBranch
+    );
+  } catch (err) {
+    return {
+      answer: `Code generation succeeded but commit failed: ${err instanceof Error ? err.message : String(err)}\n\nGenerated files:\n${files.map((f) => `  - ${f.path}`).join("\n")}`,
+      artifacts: [] as ExecutionArtifact[],
+    };
+  }
+
+  try {
+    const { createEngineeringTask } = await import("@/lib/engineeringTasks");
+    await createEngineeringTask({
+      userId: ctx.userId,
+      title: `feat: ${titleSlug || "hermes feature build"}`,
+      repositorySlug: REPO_SLUG,
+      operationType: "feature_build",
+      riskLevel: "low",
+      approvalRequired: false,
+      approvalStatus: "auto_approved",
+      approvedBy: "hermes-build-tools",
+      approvedAt: new Date(),
+    });
+  } catch {
+    // Non-fatal
+  }
+
+  const typeCheckLine = typeCheckResult.toLowerCase().includes("passed") || !typeCheckResult.toLowerCase().includes("error")
+    ? "TypeScript: PASSED"
+    : `TypeScript: ${typeCheckResult.slice(0, 200)}`;
+
+  const filesBlock = commitResult.filesChanged.map((f) => `  - \`${f}\``).join("\n");
+  const prLine = commitResult.pullRequestUrl ? `\n\n**PR:** ${commitResult.pullRequestUrl}` : "";
+
+  const answer = [
+    `**Build complete.** ${commitResult.filesChanged.length} file(s) created/updated.`,
+    "",
+    `**Files changed:**`,
+    filesBlock,
+    "",
+    `**Branch:** \`${commitResult.branchName}\``,
+    `**Commit:** \`${commitResult.commitSha.slice(0, 8)}\``,
+    typeCheckLine,
+    "Build verification: CI will run on PR open.",
+    prLine,
+  ].join("\n");
+
+  const artifacts: ExecutionArtifact[] = files.map((f) => ({
+    type: "file" as const,
+    title: f.path,
+    content: f.content,
+    url: commitResult.pullRequestUrl ?? undefined,
+    metadata: {
+      branch: commitResult.branchName,
+      commitSha: commitResult.commitSha,
+      pullRequestUrl: commitResult.pullRequestUrl,
+    },
+  }));
+
+  artifacts.push({
+    type: "link" as const,
+    title: commitResult.pullRequestUrl ? "Open Pull Request" : "View Branch",
+    url: commitResult.pullRequestUrl ?? `https://github.com/${REPO_SLUG}/tree/${commitResult.branchName}`,
+    metadata: { filesChanged: commitResult.filesChanged },
+  });
+
+  return { answer, artifacts, _commitResult: commitResult };
+}
+
 // ── Register all build tools ──────────────────────────────────────────────────
 
 export function registerBuildTools(): void {
@@ -375,132 +497,19 @@ export function registerBuildTools(): void {
     risk: "internal_write",
     requiresApproval: false,
     execute: async (input, ctx: ToolContext) => {
-      const message = String(input.message ?? "");
-      const token = (ctx.env.GITHUB_TOKEN ?? "").replace(/^﻿/, "").trim();
+      return runBuildAndPush(String(input.message ?? ""), ctx);
+    },
+  });
 
-      if (!token) {
-        return {
-          answer: "GITHUB_TOKEN is required to write to GitHub. Add it to Vercel env vars (repo scope).",
-          artifacts: [],
-        };
-      }
+  // ── internal.code.buildAndPush ────────────────────────────────────────────
 
-      // 1. Inspect repo
-      let repoCtx: RepoContext;
-      try {
-        repoCtx = await getRepoContext(token);
-      } catch (err) {
-        return {
-          answer: `Failed to inspect repo: ${err instanceof Error ? err.message : String(err)}`,
-          artifacts: [],
-        };
-      }
-
-      // 2. Fetch a sample page for code style reference
-      const samplePage = await fetchRepoFile("src/app/page.tsx", token, repoCtx.defaultBranch);
-
-      // 3. Generate code via LLM
-      let files: GeneratedFile[];
-      try {
-        files = await generateFeatureCode(message, repoCtx, samplePage, ctx.userId);
-      } catch (err) {
-        return {
-          answer: `Code generation failed: ${err instanceof Error ? err.message : String(err)}`,
-          artifacts: [],
-        };
-      }
-
-      if (files.length === 0) {
-        return {
-          answer: "No safe files were generated. The LLM may have tried to touch protected paths (.env, auth, etc.).",
-          artifacts: [],
-        };
-      }
-
-      // 4. Quick LLM type check
-      const typeCheckResult = await llmTypeCheck(files, ctx.userId).catch(() => "Could not run type check");
-
-      // 5. Commit files to branch + open PR
-      const titleSlug = message.replace(/^(build|create|add|make|implement|write)\s+/i, "").slice(0, 60).trim();
-      let commitResult: CommitResult;
-      try {
-        commitResult = await commitFilesToBranch(
-          files,
-          {
-            title: titleSlug || "hermes feature build",
-            description: `Feature built by Hermes OS from request: "${message.slice(0, 200)}"`,
-          },
-          token,
-          repoCtx.defaultBranch
-        );
-      } catch (err) {
-        return {
-          answer: `Code generation succeeded but commit failed: ${err instanceof Error ? err.message : String(err)}\n\nGenerated files:\n${files.map((f) => `  - ${f.path}`).join("\n")}`,
-          artifacts: [],
-        };
-      }
-
-      // 6. Log EngineeringTask for Command Center visibility
-      try {
-        const { createEngineeringTask } = await import("@/lib/engineeringTasks");
-        await createEngineeringTask({
-          userId: ctx.userId,
-          title: `feat: ${titleSlug || "hermes feature build"}`,
-          repositorySlug: REPO_SLUG,
-          operationType: "feature_build",
-          riskLevel: "low",
-          approvalRequired: false,
-          approvalStatus: "auto_approved",
-          approvedBy: "hermes-build-tools",
-          approvedAt: new Date(),
-        });
-      } catch {
-        // Non-fatal — logging failure should never block the result
-      }
-
-      // 7. Build response
-      const typeCheckLine = typeCheckResult.toLowerCase().includes("passed") || !typeCheckResult.toLowerCase().includes("error")
-        ? "TypeScript: PASSED"
-        : `TypeScript: ${typeCheckResult.slice(0, 200)}`;
-
-      const filesBlock = commitResult.filesChanged.map((f) => `  - \`${f}\``).join("\n");
-      const prLine = commitResult.pullRequestUrl ? `\n\n**PR:** ${commitResult.pullRequestUrl}` : "";
-
-      const answer = [
-        `**Build complete.** ${commitResult.filesChanged.length} file(s) created/updated.`,
-        "",
-        `**Files changed:**`,
-        filesBlock,
-        "",
-        `**Branch:** \`${commitResult.branchName}\``,
-        `**Commit:** \`${commitResult.commitSha.slice(0, 8)}\``,
-        typeCheckLine,
-        "Build verification: CI will run on PR open.",
-        prLine,
-      ].join("\n");
-
-      // Preview each file in artifacts
-      const artifacts: ExecutionArtifact[] = files.map((f) => ({
-        type: "file" as const,
-        title: f.path,
-        content: f.content,
-        url: commitResult.pullRequestUrl ?? undefined,
-        metadata: {
-          branch: commitResult.branchName,
-          commitSha: commitResult.commitSha,
-          pullRequestUrl: commitResult.pullRequestUrl,
-        },
-      }));
-
-      artifacts.push({
-        type: "link" as const,
-        title: commitResult.pullRequestUrl ? "Open Pull Request" : "View Branch",
-        url: commitResult.pullRequestUrl
-          ?? `https://github.com/${REPO_SLUG}/tree/${commitResult.branchName}`,
-        metadata: { filesChanged: commitResult.filesChanged },
-      });
-
-      return { answer, artifacts, _commitResult: commitResult };
+  registerTool({
+    name: "internal.code.buildAndPush",
+    description: "Generate code, commit to a feature branch, and open a PR. Primary tool for build_app, build_page, continue_build, and modify_feature intents.",
+    risk: "internal_write",
+    requiresApproval: false,
+    execute: async (input, ctx: ToolContext) => {
+      return runBuildAndPush(String(input.message ?? ""), ctx);
     },
   });
 
