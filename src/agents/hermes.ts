@@ -31,7 +31,17 @@ import { getContextCards, readMemory } from "@/agents/mnemosyne";
 import { createEngineeringTask } from "@/lib/engineeringTasks";
 import { releaseWatch, repoScoutTool, SCOUT_TOPICS } from "@/agents/sophos";
 import { incomeBrief, passiveIncomeScan } from "@/agents/tyche";
-import { OSMAN_CONTEXT } from "@/agents/souls/osman";
+import { OSMAN_CONTEXT, HERMES_SOUL } from "@/agents/souls/hermes";
+import { IRIS_SOUL } from "@/agents/souls/iris";
+import { KAIROS_SOUL } from "@/agents/souls/kairos";
+import { ARGUS_SOUL } from "@/agents/souls/argus";
+import { PLUTUS_SOUL } from "@/agents/souls/plutus";
+import { ATHENA_SOUL } from "@/agents/souls/athena";
+import { MNEMOSYNE_SOUL } from "@/agents/souls/mnemosyne";
+import { SOPHOS_SOUL } from "@/agents/souls/sophos";
+import { TYCHE_SOUL } from "@/agents/souls/tyche";
+import { THEMIS_SOUL } from "@/agents/souls/themis";
+import { PROMETHEUS_SOUL } from "@/agents/souls/prometheus";
 import { getPersonalContext } from "@/lib/personalContext";
 
 const PERSONAL_CONTEXT = getPersonalContext();
@@ -742,7 +752,9 @@ Voice: Crisp and human. You write the way Osman would on a good day: clear, brie
 
 This is a chat interface. Reply in 2-4 sentences. Answer first, elaborate after.
 
-${OSMAN_CONTEXT}`,
+${OSMAN_CONTEXT}
+
+${IRIS_SOUL}`,
     load: async (userId, query) => {
       const t = await triageInbox(userId);
       const top = t.needsAttention.slice(0, 5).map((m) => ({ from: m.from, subject: m.subject, id: m.id, threadId: m.threadId }));
@@ -792,7 +804,9 @@ Voice: Quiet and precise. You speak in dates and lead times. You never say "soon
 
 This is a chat interface. Reply in 2-4 sentences. Answer first, elaborate after.
 
-${OSMAN_CONTEXT}`,
+${OSMAN_CONTEXT}
+
+${KAIROS_SOUL}`,
     load: async (userId) => {
       const now = new Date();
       const weekOut = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -828,7 +842,9 @@ Voice: Severity-led and unflustered. Findings, not fear. You report a critical C
 
 This is a chat interface. Reply in 2-4 sentences. Answer first, elaborate after.
 
-${OSMAN_CONTEXT}`,
+${OSMAN_CONTEXT}
+
+${ARGUS_SOUL}`,
     load: async (userId) => {
       const signals = await synthesize(userId);
       const flags = riskFlag(signals.inbox);
@@ -916,7 +932,9 @@ Voice: Plain numbers, no shame. You state the balance and the gap to plan flatly
 
 This is a chat interface. Reply in 2-4 sentences. Answer first, elaborate after.
 
-${OSMAN_CONTEXT}`,
+${OSMAN_CONTEXT}
+
+${PLUTUS_SOUL}`,
     load: async (userId) => `Finance snapshot: ${JSON.stringify(await plutusReport(userId))}`,
   },
   athena: {
@@ -953,7 +971,9 @@ Voice: Sharp and economical. You write like someone who has read a thousand resu
 
 This is a chat interface. Reply in 2-4 sentences. Answer first, elaborate after.
 
-${OSMAN_CONTEXT}`,
+${OSMAN_CONTEXT}
+
+${ATHENA_SOUL}`,
     load: async (userId) => `Job application tracker: ${JSON.stringify(await appTrackerSummary(userId))}`,
   },
   mnemosyne: {
@@ -983,7 +1003,9 @@ Voice: Exact and unembellished. You report what was decided and when, in Osman's
 
 This is a chat interface. Reply in 2-4 sentences. Answer first, elaborate after.
 
-${OSMAN_CONTEXT}`,
+${OSMAN_CONTEXT}
+
+${MNEMOSYNE_SOUL}`,
     load: async (userId, query) => {
       const [memory, cards] = await Promise.all([readMemory(userId), getContextCards(userId, query)]);
       return `Approved memory facts: ${JSON.stringify(memory.slice(0, 10))}\nRelevant context cards for this question: ${JSON.stringify(cards)}`;
@@ -1009,7 +1031,9 @@ Voice: Precise and opinionated about what is signal versus noise. You name the t
 
 This is a chat interface. Reply in 2-4 sentences. Answer first, elaborate after.
 
-${OSMAN_CONTEXT}`,
+${OSMAN_CONTEXT}
+
+${SOPHOS_SOUL}`,
     load: async (userId, query) => {
       const [notes, repos] = await Promise.all([
         releaseWatch().catch(() => null),
@@ -1054,7 +1078,9 @@ What you do NOT do:
 
 This is a chat interface. Numbers first. Authorization status always stated. Load estimate always included. No em dashes.
 
-${OSMAN_CONTEXT}`,
+${OSMAN_CONTEXT}
+
+${TYCHE_SOUL}`,
     load: async (userId) => {
       const latest = await prisma.agentRun.findFirst({
         where: { agentName: "tyche" },
@@ -1095,7 +1121,9 @@ What you do NOT do:
 
 This is a chat interface. Be precise and brief. Cite the source heading when you have one. No em dashes.
 
-${OSMAN_CONTEXT}`,
+${OSMAN_CONTEXT}
+
+${THEMIS_SOUL}`,
     load: async (_userId, query) => {
       const { retrieveWorkKnowledge, hasWorkKnowledge } = await import("@/lib/workKnowledge");
       if (!hasWorkKnowledge()) {
@@ -1157,7 +1185,9 @@ What you do NOT do:
 
 Voice: Sharp, fast, energizing. You are the one who makes Osman feel like the idea is possible.
 
-${OSMAN_CONTEXT}`,
+${OSMAN_CONTEXT}
+
+${PROMETHEUS_SOUL}`,
     load: async (_userId) => {
       const { getPersonalContext } = await import("@/lib/personalContext");
       const ctx = getPersonalContext();

@@ -156,6 +156,104 @@ async function diffSkills(userId: string, currentSkills: string[]): Promise<NewS
   return { newSkills, totalInRepo: currentSkills.length, lastChecked };
 }
 
+// ── Skill relevance scorer ────────────────────────────────────────────────────
+
+export interface ScoredSkill {
+  name: string;
+  score: number;
+  reasons: string[];
+}
+
+// Keywords that indicate a skill is directly useful to Hermes OS or Osman's workflow.
+// Grouped by domain — any match adds to the relevance score.
+const RELEVANCE_GROUPS: Array<{ label: string; keywords: string[]; points: number }> = [
+  {
+    label: "Hermes OS stack",
+    keywords: ["nextjs", "next", "prisma", "turso", "libsql", "vercel", "typescript", "react", "tailwind"],
+    points: 8,
+  },
+  {
+    label: "Claude/MCP integration",
+    keywords: ["claude", "mcp", "anthropic", "model-context", "llm", "agent", "tool-use"],
+    points: 10,
+  },
+  {
+    label: "Agent orchestration",
+    keywords: ["hermes", "orchestrat", "multi-agent", "agentic", "workflow", "pipeline", "autonomous"],
+    points: 9,
+  },
+  {
+    label: "Telegram/communication",
+    keywords: ["telegram", "webhook", "bot", "notification", "alert", "message"],
+    points: 7,
+  },
+  {
+    label: "Memory/context",
+    keywords: ["memory", "context", "session", "persistent", "recall", "knowledge"],
+    points: 8,
+  },
+  {
+    label: "Email/calendar",
+    keywords: ["email", "gmail", "calendar", "google", "oauth", "inbox"],
+    points: 6,
+  },
+  {
+    label: "Engineering executor",
+    keywords: ["github", "deploy", "branch", "pr", "pull-request", "executor", "engineering"],
+    points: 6,
+  },
+  {
+    label: "Security/GRC",
+    keywords: ["security", "grc", "compliance", "audit", "csrf", "auth", "vulnerability", "nist", "soc"],
+    points: 7,
+  },
+  {
+    label: "Finance/budget",
+    keywords: ["finance", "budget", "expense", "income", "payment", "billing"],
+    points: 5,
+  },
+  {
+    label: "Job/career tools",
+    keywords: ["resume", "ats", "job", "career", "cover", "linkedin", "application"],
+    points: 5,
+  },
+  {
+    label: "Database/backend",
+    keywords: ["database", "sql", "postgres", "api", "backend", "server", "cron"],
+    points: 5,
+  },
+  {
+    label: "Evaluation/testing",
+    keywords: ["eval", "test", "benchmark", "quality", "review", "verify", "regression"],
+    points: 6,
+  },
+];
+
+export function scoreSkill(name: string, description = ""): ScoredSkill {
+  const text = `${name} ${description}`.toLowerCase().replace(/[-_]/g, " ");
+  let score = 0;
+  const reasons: string[] = [];
+
+  for (const group of RELEVANCE_GROUPS) {
+    for (const kw of group.keywords) {
+      if (text.includes(kw)) {
+        score += group.points;
+        reasons.push(group.label);
+        break; // only count each group once per skill
+      }
+    }
+  }
+
+  return { name, score, reasons: [...new Set(reasons)] };
+}
+
+export async function scoreNewSkills(newSkills: string[]): Promise<ScoredSkill[]> {
+  return newSkills
+    .map((s) => scoreSkill(s))
+    .filter((s) => s.score >= 6)
+    .sort((a, b) => b.score - a.score);
+}
+
 // ── GitHub repo search ────────────────────────────────────────────────────────
 
 export interface ScoutedRepo {
