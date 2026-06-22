@@ -16,7 +16,8 @@ export type ApprovalActionType =
   | "log_expense"
   | "log_income"
   | "add_job"
-  | "update_job_status";
+  | "update_job_status"
+  | "engineering_plan";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "executed";
 
@@ -83,6 +84,7 @@ const SCOPE_BLOCKED: Record<ApprovalActionType, string | null> = {
   log_income: null,
   add_job: null,
   update_job_status: null,
+  engineering_plan: null,
 };
 
 async function writeAuditLog(
@@ -135,6 +137,7 @@ function buildExecutionNote(actionType: ApprovalActionType, payloadJson: string)
     if (actionType === "save_memory") return `Remembered: "${String(p.fact).slice(0, 80)}".`;
     if (actionType === "create_task") return `Task created: "${String(p.title).slice(0, 80)}".`;
     if (actionType === "delete_memory") return "Memory deleted.";
+    if (actionType === "engineering_plan") return `Plan approved. Phase 1 (repo inspection) is queued — the executor will run on the next cron cycle. Ask "what's the status" any time.`;
   } catch { /* fall through */ }
   return "Approved and executed.";
 }
@@ -237,6 +240,30 @@ async function executeIfPossible(row: {
     });
   }
 
+  if (actionType === "engineering_plan") {
+    const payload = JSON.parse(row.payload) as {
+      projectName: string;
+      projectId: string | null;
+      route?: string;
+      steps?: string[];
+      repositorySlug?: string;
+    };
+    const { createEngineeringTask } = await import("@/lib/engineeringTasks");
+    await createEngineeringTask({
+      userId: row.userId,
+      title: `Build: ${payload.projectName}`,
+      repositorySlug: payload.repositorySlug ?? "osman-jalloh-lab/parawi",
+      operationType: "read_only_repo_inspection",
+      riskLevel: "low",
+      approvalRequired: false,
+    });
+    // Mark the project as building now that it's approved
+    if (payload.projectId) {
+      const { updateProjectStatus } = await import("@/lib/memory-context");
+      await updateProjectStatus(payload.projectId, "building").catch(() => {});
+    }
+  }
+
   const executed = await prisma.approvalAction.update({
     where: { id: row.id },
     data: { status: "executed" },
@@ -266,6 +293,14 @@ export async function createApproval(
     data: { userId, actionType, payload: payloadJson },
   });
   return toView(row);
+}
+
+export async function getLatestPendingApproval(userId: string): Promise<ApprovalActionView | null> {
+  const row = await prisma.approvalAction.findFirst({
+    where: { userId, status: "pending" },
+    orderBy: { createdAt: "desc" },
+  });
+  return row ? toView(row) : null;
 }
 
 export async function approvalCounts(userId: string): Promise<Record<ApprovalStatus, number>> {

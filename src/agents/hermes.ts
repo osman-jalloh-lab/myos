@@ -10,9 +10,11 @@ import {
   rejectAction,
   createApproval,
   approvalCounts,
+  getLatestPendingApproval,
   type ApprovalActionType,
   type ApprovalStatus,
 } from "@/lib/approvals";
+import { createProjectTasksFromPlan, createProjectTask } from "@/lib/memory-context";
 import { queryTaskState, formatTaskStateReply, realityCheck } from "@/lib/realityCheck";
 import {
   getLatestAgentTask,
@@ -1270,6 +1272,55 @@ export async function routeMessage(userId: string, text: string, channel?: strin
   const isTelegram = channel === "telegram";
   const activeSystemPrompt = isTelegram ? HERMES_TELEGRAM_SYSTEM_PROMPT : HERMES_CHAT_SYSTEM_PROMPT;
   const { cleaned: trimmed, providerOverride } = detectModelOverride(text.trim());
+
+  // ── helpers (inline) ─────────────────────────────────────────────────────────
+  const extractProjectIdFromContext = (ctx: string | undefined): string | null => {
+    if (!ctx) return null;
+    const m = ctx.match(/^PROJECT_ID:\s*([a-zA-Z0-9-]+)/m);
+    return m?.[1] ?? null;
+  };
+
+  const buildProjectPlan = (name: string, route: string): Array<{ title: string; assignedAgent: string }> => [
+    { title: `Inspect repository and plan ${name} architecture`, assignedAgent: "prometheus" },
+    { title: `Create ${route} route and homepage`, assignedAgent: "prometheus" },
+    { title: `Build ${route} listing/data view`, assignedAgent: "prometheus" },
+    { title: `Build ${route}/[slug] detail page`, assignedAgent: "prometheus" },
+    { title: "Add navigation links and polish UI", assignedAgent: "prometheus" },
+    { title: "Run TypeScript check, lint, and production build", assignedAgent: "prometheus" },
+  ];
+
+  // ── bare approval / rejection (no ID provided) ───────────────────────────────
+  // "approve", "yes", "go ahead", "looks good", "ship it" — all map to the most
+  // recent pending approval without requiring Osman to copy-paste an ID.
+  // This is the fix for "what are you approving?" — Hermes always knows.
+  const BARE_APPROVE_RE = /^(approve|yes|confirmed?|go ahead|do it|proceed|looks good|ok|okay|sounds good|ship it|let'?s go|start it|start|continue|begin|run it)\.?!?$/i;
+  if (BARE_APPROVE_RE.test(trimmed)) {
+    const pending = await getLatestPendingApproval(userId);
+    if (pending) {
+      try {
+        const action = await approveAction(userId, pending.id);
+        const note = action.executionNote ?? `Approved — proceeding.`;
+        return { reply: formatReply(note, channel), approvalAction: { id: action.id, actionType: action.actionType, status: action.status } };
+      } catch {
+        // already resolved or error — fall through to LLM
+      }
+    }
+  }
+
+  // ── reject / cancel without ID ────────────────────────────────────────────────
+  const BARE_REJECT_RE = /^(reject|cancel|no|nope|stop|don'?t|nevermind|never mind|scratch that|forget it)\.?!?$/i;
+  if (BARE_REJECT_RE.test(trimmed)) {
+    const pending = await getLatestPendingApproval(userId);
+    if (pending) {
+      try {
+        const action = await rejectAction(userId, pending.id);
+        return { reply: `Cancelled "${action.actionType}" (${action.id.slice(0, 8)}).`, approvalAction: { id: action.id, actionType: action.actionType, status: action.status } };
+      } catch {
+        // fall through
+      }
+    }
+  }
+
   const approvalVerb = trimmed.match(/^(approve|reject)\s+([a-zA-Z0-9-]+)/i);
 
   if (approvalVerb) {
@@ -1326,6 +1377,19 @@ export async function routeMessage(userId: string, text: string, channel?: strin
       evidence: latest ?? (evidenceSource !== "none" ? {} : null),
       source: evidenceSource,
     });
+
+    // Also include active project task state if there is one
+    const ctxProjectId = extractProjectIdFromContext(chatContext);
+    if (ctxProjectId) {
+      try {
+        const { getProjectTasks } = await import("@/lib/memory-context");
+        const projectTasks = await getProjectTasks(ctxProjectId);
+        if (projectTasks.length > 0) {
+          const taskLines = projectTasks.map((t) => `  - [${t.status.toUpperCase()}] ${t.title}${t.nextStep ? ` — next: ${t.nextStep}` : ""}`).join("\n");
+          replyText += `\n\nProject tasks:\n${taskLines}`;
+        }
+      } catch { /* best-effort */ }
+    }
 
     await logHandoff({
       agentName: "hermes",
@@ -1420,10 +1484,10 @@ export async function routeMessage(userId: string, text: string, channel?: strin
     return { reply: `${verb} ${app.companyName} — ${app.jobTitle} as ${app.status}.${followUpNote}` };
   }
 
-  // ── build intent ─────────────────────────────────────────────────────────
-  // Detects "build/create/make X" and queues a repo inspection task so the
-  // engineering executor actually has work to pick up. Without this, Hermes
-  // just talks — the executor queue never gets a row.
+  // ── build intent — plan-first flow ───────────────────────────────────────
+  // Shows the plan and asks for approval BEFORE queuing the engineering task.
+  // On "approve", the engineering_plan action executes and creates the task.
+  // This is the fix for "Hermes just talks and never starts building."
   const BUILD_INTENT_RE = /^(?:build(?:\s+me)?|create(?:\s+me)?|make(?:\s+me)?|develop|start\s+building)\s+(?:a\s+|an\s+|the\s+)?(.{3,120})/i;
   const buildMatch = trimmed.match(BUILD_INTENT_RE);
   if (buildMatch) {
@@ -1433,20 +1497,34 @@ export async function routeMessage(userId: string, text: string, channel?: strin
       .replace(/\s+/g, " ")
       .trim();
     if (rawName.length >= 3) {
-      const taskTitle = `Build: ${rawName.slice(0, 160)}`;
-      const task = await createEngineeringTask({
-        userId,
-        title: taskTitle,
+      const projectName = rawName.replace(/\b\w/g, (c) => c.toUpperCase());
+      const route = `/${rawName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")}`;
+      const projectId = extractProjectIdFromContext(chatContext);
+      const planSteps = buildProjectPlan(rawName, route);
+
+      // Persist plan as ProjectTask records (so status queries work immediately)
+      if (projectId) {
+        await createProjectTasksFromPlan(projectId, userId, planSteps).catch(() => {});
+      }
+
+      // Create the approval action — execution (EngineeringTask creation) fires on "approve"
+      const planAction = await createApproval(userId, "engineering_plan", {
+        projectName: rawName,
+        projectId: projectId ?? null,
+        route,
+        steps: planSteps.map((s) => s.title),
         repositorySlug: "osman-jalloh-lab/parawi",
-        operationType: "read_only_repo_inspection",
-        riskLevel: "low",
-        approvalRequired: false,
       });
-      const shortId = task.id.slice(0, 8);
+
+      const stepsText = planSteps.map((s, i) => `${i + 1}. ${s.title}`).join("\n");
       const replyText = isTelegram
-        ? `Queued: <b>${rawName.slice(0, 80)}</b>\n\nTask ID: <code>${shortId}</code>\n\nPhase 1 (repo inspection) runs on the next cron cycle. Once done, say "status of ${rawName.slice(0, 30)}" and I'll show you what I found and what changes I'm proposing.`
-        : `Queued build task: "${rawName.slice(0, 80)}" (${shortId}). The executor will inspect the repo next cron run. Ask for a status update when ready.`;
-      return { reply: formatReply(replyText, channel) };
+        ? `<b>${projectName}</b>\n\nImplementation plan:\n${stepsText}\n\nApprove to start?`
+        : `Plan for "${projectName}":\n${stepsText}\n\nApprove to start?`;
+
+      return {
+        reply: formatReply(replyText, channel),
+        pendingApprovals: [{ id: planAction.id, actionType: planAction.actionType }],
+      };
     }
   }
 
@@ -1589,6 +1667,16 @@ export async function routeMessage(userId: string, text: string, channel?: strin
       baseSnapshot = `Today (${now.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}): ${evtLine}. Pending approvals: ${counts.pending ?? 0}.`;
     } catch {
       // best-effort; never block the reply
+    }
+  }
+
+  // If there's an active project and the message is an action instruction,
+  // persist it as a ProjectTask (fire-and-forget — never blocks the LLM reply)
+  const followUpProjectId = extractProjectIdFromContext(chatContext);
+  if (followUpProjectId) {
+    const INSTRUCTION_RE = /^(remove|add|change|update|fix|make|set|show|hide|enable|disable|delete|move|rename|refactor|adjust|modify|edit|replace|include|exclude|implement|integrate|connect|style|design|deploy|test|rewrite|simplify|improve|clean)\b/i;
+    if (INSTRUCTION_RE.test(trimmed) && trimmed.length <= 150) {
+      createProjectTask(followUpProjectId, userId, trimmed.slice(0, 120)).catch(() => {});
     }
   }
 

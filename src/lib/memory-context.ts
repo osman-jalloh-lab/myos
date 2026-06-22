@@ -146,13 +146,44 @@ async function getProject(projectId: string): Promise<Project | null> {
   return rowToProject(res.rows[0] as unknown as DbRow);
 }
 
-async function getProjectTasks(projectId: string): Promise<ProjectTask[]> {
+export async function getProjectTasks(projectId: string): Promise<ProjectTask[]> {
   const db = getDb();
   const res = await db.execute({
-    sql: `SELECT * FROM ProjectTask WHERE projectId = ? ORDER BY updatedAt DESC LIMIT 10`,
+    sql: `SELECT * FROM ProjectTask WHERE projectId = ? ORDER BY updatedAt DESC LIMIT 15`,
     args: [projectId],
   });
   return res.rows.map((r) => rowToTask(r as unknown as DbRow));
+}
+
+export async function getActiveProject(chatId: string): Promise<Project | null> {
+  const db = getDb();
+  const sessionRes = await db.execute({ sql: `SELECT activeProjectId FROM AgentSession WHERE chatId = ? LIMIT 1`, args: [chatId] });
+  if (!sessionRes.rows.length) return null;
+  const activeProjectId = str((sessionRes.rows[0] as unknown as DbRow).activeProjectId);
+  if (!activeProjectId) return null;
+  return getProject(activeProjectId);
+}
+
+export async function updateProjectStatus(projectId: string, status: string): Promise<void> {
+  const db = getDb();
+  await db.execute({
+    sql: `UPDATE Project SET status = ?, updatedAt = datetime('now') WHERE id = ?`,
+    args: [status, projectId],
+  });
+}
+
+export async function createProjectTasksFromPlan(
+  projectId: string,
+  userId: string,
+  steps: Array<{ title: string; assignedAgent?: string; description?: string }>
+): Promise<ProjectTask[]> {
+  // Avoid duplicating tasks that already exist for this project
+  const existing = await getProjectTasks(projectId);
+  const existingTitles = new Set(existing.map((t) => t.title.toLowerCase()));
+  const toCreate = steps.filter((s) => !existingTitles.has(s.title.toLowerCase()));
+  return Promise.all(
+    toCreate.map((s) => createProjectTask(projectId, userId, s.title, { assignedAgent: s.assignedAgent, description: s.description }))
+  );
 }
 
 // Detects explicit build intent and extracts a project name from natural language
@@ -205,13 +236,19 @@ async function detectOrCreateProject(userId: string, text: string): Promise<Proj
  * Returns empty string when there is nothing meaningful to inject.
  */
 export async function buildContextBlock(chatId: string, userId: string, newMessage: string): Promise<string> {
-  const [session, recentMessages] = await Promise.all([
+  const [session, recentMessages, pendingApprovals] = await Promise.all([
     getOrCreateSession(chatId, userId),
     prisma.chatMessage.findMany({
       where: { userId, channel: "telegram" },
       orderBy: { createdAt: "desc" },
-      take: 25,
+      take: 30,
       select: { role: true, content: true, createdAt: true },
+    }),
+    prisma.approvalAction.findMany({
+      where: { userId, status: "pending" },
+      orderBy: { createdAt: "desc" },
+      take: 5,
+      select: { id: true, actionType: true, payload: true, createdAt: true },
     }),
   ]);
 
@@ -243,6 +280,7 @@ export async function buildContextBlock(chatId: string, userId: string, newMessa
 
   if (activeProject) {
     lines.push(`ACTIVE PROJECT: ${activeProject.projectName} [${activeProject.status}]`);
+    lines.push(`PROJECT_ID: ${activeProject.id}`);
     if (activeProject.route) lines.push(`Route: ${activeProject.route}`);
     if (activeProject.latestInstruction) {
       lines.push(`Last instruction: ${activeProject.latestInstruction.slice(0, 300)}`);
@@ -252,6 +290,21 @@ export async function buildContextBlock(chatId: string, userId: string, newMessa
       for (const t of tasks) {
         lines.push(`  - [${t.status}] ${t.title}${t.nextStep ? ` (next: ${t.nextStep})` : ""}`);
       }
+    }
+    lines.push("");
+  }
+
+  if (pendingApprovals.length > 0) {
+    lines.push(`PENDING APPROVALS (${pendingApprovals.length}):`);
+    for (const a of pendingApprovals) {
+      let summary = a.actionType;
+      try {
+        const p = JSON.parse(a.payload) as Record<string, unknown>;
+        if (a.actionType === "engineering_plan") summary = `Build plan: ${String(p.projectName ?? "").slice(0, 60)}`;
+        else if (a.actionType === "save_memory") summary = `Remember: "${String(p.fact ?? "").slice(0, 60)}"`;
+        else if (a.actionType === "create_task") summary = `Task: "${String(p.title ?? "").slice(0, 60)}"`;
+      } catch { /* ignore parse errors */ }
+      lines.push(`  - ${summary} (id:${a.id})`);
     }
     lines.push("");
   }
@@ -266,8 +319,8 @@ export async function buildContextBlock(chatId: string, userId: string, newMessa
     lines.push("");
   }
 
-  // Last 15 messages chronologically (the most recent 25 were fetched desc, so reverse)
-  const ordered = recentMessages.reverse().slice(-15);
+  // Last 20 messages chronologically (fetched desc, so reverse)
+  const ordered = recentMessages.reverse().slice(-20);
   if (ordered.length > 1) {
     lines.push("RECENT CONVERSATION:");
     for (const m of ordered) {
