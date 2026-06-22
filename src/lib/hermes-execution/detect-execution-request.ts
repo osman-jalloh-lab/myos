@@ -13,7 +13,17 @@ const CONVERSATIONAL_PATTERNS = [
 // Patterns that strongly suggest an action request (always try execution layer)
 const ACTION_PATTERNS = [
   // Explicit action verbs at the start
-  /^(check|find|search|create|make|add|build|generate|write|draft|inspect|remind|scan|show|run|get|fetch|triage|compose|review|tailor|give me|pull up|look up|look at)\b/i,
+  /^(check|find|search|create|make|add|build|generate|write|draft|inspect|remind|scan|show|run|get|fetch|triage|compose|review|tailor|give me|pull up|look up|look at|implement|scaffold|deploy|continue|remove|delete|refactor|rewrite|update|edit|modify)\b/i,
+  // Build/feature triggers (these are always execution-layer)
+  /\b(build|create|add)\s+(the\s+)?\/\S+\s+(route|page|endpoint)\b/i,
+  /\bcontinue\s+the\s+\S+\s+build\b/i,
+  /build\s+(chrono|watch|market|archive|website|app|site|feature|page|dashboard)\b/i,
+  /\b(remove|strip|hide|enable|disable)\s+(pricing|header|footer|nav|sidebar)\b/i,
+  // Run command triggers
+  /^run\s+(build|test|lint|typecheck|tsc|check)\b/i,
+  /\bnpm\s+run\b/i,
+  // Deploy triggers
+  /\b(deploy|deployment\s+status|is\s+it\s+(live|deployed))\b/i,
   // Tool-specific triggers
   /github\.com\//i,
   // Job tracker sync phrases
@@ -22,7 +32,7 @@ const ACTION_PATTERNS = [
   // brief/schedule/calendar/today are handled better by the normal chat path (CONTEXT_MATCHERS)
   /\b(inbox|email|resume|cv|task|reminder|todo|to-do|job|jobs|income)\b/i,
   // Natural delegation phrases
-  /\b(i want you to|can you|please|go ahead and)\s+(check|find|create|make|draft|generate|build|write|inspect|scan|search|show|get|fetch|pull|look)\b/i,
+  /\b(i want you to|can you|please|go ahead and)\s+(check|find|create|make|draft|generate|build|write|inspect|scan|search|show|get|fetch|pull|look|run|deploy)\b/i,
   // "use X" patterns
   /\buse\s+(claude|groq|gpt|local|ollama)\b/i,
 ];

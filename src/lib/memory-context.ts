@@ -239,7 +239,7 @@ export async function buildContextBlock(chatId: string, userId: string, newMessa
   const [session, recentMessages, pendingApprovals] = await Promise.all([
     getOrCreateSession(chatId, userId),
     prisma.chatMessage.findMany({
-      where: { userId, channel: "telegram" },
+      where: { userId },
       orderBy: { createdAt: "desc" },
       take: 30,
       select: { role: true, content: true, createdAt: true },
@@ -344,11 +344,11 @@ export async function updateSessionAfterResponse(chatId: string, userId: string,
 // ── Auto-summarization (every 20 Telegram messages) ───────────────────────────
 
 async function maybeSummarize(chatId: string, userId: string): Promise<void> {
-  const count = await prisma.chatMessage.count({ where: { userId, channel: "telegram" } });
+  const count = await prisma.chatMessage.count({ where: { userId } });
   if (count < 20 || count % 20 !== 0) return;
 
   const recent = await prisma.chatMessage.findMany({
-    where: { userId, channel: "telegram" },
+    where: { userId },
     orderBy: { createdAt: "desc" },
     take: 20,
     select: { role: true, content: true },
@@ -392,6 +392,15 @@ export async function createProjectTask(
     assignedAgent: options?.assignedAgent ?? null,
     nextStep: options?.nextStep ?? null,
   };
+}
+
+export async function listProjects(userId: string): Promise<Project[]> {
+  const db = getDb();
+  const res = await db.execute({
+    sql: `SELECT * FROM Project WHERE userId = ? ORDER BY updatedAt DESC LIMIT 20`,
+    args: [userId],
+  });
+  return res.rows.map((r) => rowToProject(r as unknown as DbRow));
 }
 
 export async function updateProjectTask(

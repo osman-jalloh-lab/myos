@@ -10,6 +10,10 @@ import { hasTool } from "./tool-registry";
 
 const TOOL_CATALOG = `
 Tools available in Parawi/MyOS:
+- build_feature: Build, create, or modify a feature in the codebase. Trigger: "build X", "create a route", "add a page", "implement X", "build the website", "continue the X build", "create the /X route", "remove pricing", "edit the homepage", "add a button", "deploy it" — anything that requires writing or editing code.
+- repo_inspect: Inspect the Hermes OS repo structure. Trigger: "what's in the repo", "show me the file structure", "what routes exist", "inspect the codebase"
+- run_command: Run a build/typecheck/lint command. Trigger: "run build", "typecheck", "run lint", "npm run build", "check types", "run tests"
+- deploy: Check or trigger Vercel deployment. Trigger: "deploy", "check deployment", "deployment status", "is it deployed", "preview URL"
 - github_repo_review: Inspect any GitHub repo. Trigger: GitHub URL, "what is this repo", "inspect", "scan repo", "look at this project"
 - email_triage: Check/triage inbox for action-needed emails. Trigger: "check my email", "inbox", "any emails", "recruiter emails", "unread", "follow-ups"
 - email_draft: Draft an email (held for approval, never auto-sent). Trigger: "draft a reply", "write an email", "compose", "respond to"
@@ -108,6 +112,29 @@ function matchesAny(text: string, patterns: RegExp[]): boolean {
 function planWithRegex(msg: string): { intent: string; extractedUrl: string | null } {
   const lc = msg.toLowerCase();
 
+  // Build feature — highest priority (must come before generic patterns)
+  if (matchesAny(lc, [
+    /\b(build|create|add|implement|write|make|generate)\b.*(page|route|feature|component|view|section|widget|button|form|modal|dashboard|endpoint|api|table|chart|list|card)/,
+    /\b(create|add|build)\s+the\s+\/\S+\s+route\b/,
+    /\bcontinue\s+the\s+\S+\s+build\b/,
+    /\b(remove|delete|strip|hide|update|refactor|rewrite|modify|edit)\s+(pricing|header|footer|nav|sidebar|section|component|page|route)\b/,
+    /build\s+(chrono|watch|market|archive|project|the\s+website|the\s+app|the\s+site)\b/,
+    /\b(scaffold|prototype|wire up|set up|spin up)\s+(a|an|the)?\s+(page|route|feature|view|component)\b/,
+  ]))
+    return { intent: "build_feature", extractedUrl: null };
+
+  // Run command
+  if (matchesAny(lc, [/^run\s+(build|test|lint|typecheck|tsc|check)\b/, /\bnpm\s+run\b/, /\brun\s+npm\b/, /\btypecheck\b/, /\brun\s+lint\b/, /\brun\s+build\b/]))
+    return { intent: "run_command", extractedUrl: null };
+
+  // Deploy / deployment status
+  if (matchesAny(lc, [/\bdeploy\b(?!\s+(to\s+)?github)/, /\bdeployment\s+status\b/, /\bpreview\s+url\b/, /\bis\s+it\s+(live|deployed)\b/]))
+    return { intent: "deploy", extractedUrl: null };
+
+  // Repo inspect
+  if (matchesAny(lc, [/\binspect\s+(the\s+)?(repo|codebase|project)\b/, /\bwhat('s| is)\s+in\s+the\s+repo\b/, /\bshow\s+(me\s+)?the\s+file\s+structure\b/, /\bwhat\s+routes\s+exist\b/]))
+    return { intent: "repo_inspect", extractedUrl: null };
+
   if (matchesAny(lc, [/github\.com/, /\binspect\b.*\brepo\b/, /\breview\b.*\brepo\b/, /\bwhat.*(is|in)\b.*\brepo\b/, /\bgithub\s+repo\b/]))
     return { intent: "github_repo_review", extractedUrl: extractGitHubUrl(msg) ?? null };
 
@@ -154,6 +181,62 @@ function buildPlan(
   source: string
 ): ExecutionPlan {
   switch (intent) {
+
+    case "build_feature":
+      return {
+        intent,
+        confidence,
+        steps: [{
+          id: "step_1",
+          tool: "internal.code.buildFeature",
+          input: { message: msg },
+          risk: "internal_write",
+          requiresApproval: false,
+        }],
+        reasoningSummary: "Generate, commit, and PR a feature via GitHub API.",
+      };
+
+    case "repo_inspect":
+      return {
+        intent,
+        confidence,
+        steps: [{
+          id: "step_1",
+          tool: "internal.repo.inspect",
+          input: { message: msg },
+          risk: "read",
+          requiresApproval: false,
+        }],
+        reasoningSummary: "Inspect Hermes OS repo structure via GitHub API.",
+      };
+
+    case "run_command":
+      return {
+        intent,
+        confidence,
+        steps: [{
+          id: "step_1",
+          tool: "internal.code.commandRun",
+          input: { message: msg },
+          risk: "read",
+          requiresApproval: false,
+        }],
+        reasoningSummary: "Run build/typecheck/lint command.",
+      };
+
+    case "deploy":
+      return {
+        intent,
+        confidence,
+        steps: [{
+          id: "step_1",
+          tool: "internal.deploy.status",
+          input: { message: msg },
+          risk: "read",
+          requiresApproval: false,
+        }],
+        reasoningSummary: "Check or trigger Vercel deployment.",
+      };
 
     case "github_repo_review": {
       const tool = bestTool("mcp.github.inspectRepo", "internal.github.inspectRepo");

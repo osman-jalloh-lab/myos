@@ -220,6 +220,12 @@ export default function HomeClient({
           </div>
 
           <div className="cc-top-meta">
+            <a
+              href="/command-center"
+              style={{ fontSize: 12, fontWeight: 600, color: "#A78BFA", textDecoration: "none", padding: "5px 12px", borderRadius: 8, border: "1px solid rgba(167,139,250,0.25)", background: "rgba(167,139,250,0.08)", letterSpacing: "0.02em" }}
+            >
+              Control Center
+            </a>
             <div className="cc-tg-chip">
               <span className="cc-dot" style={{ background: "var(--cc-success)", boxShadow: "0 0 6px var(--cc-success)" }} />
               Telegram · linked

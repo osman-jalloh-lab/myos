@@ -4,6 +4,7 @@
 
 import { registerTool } from "../tool-registry";
 import type { ToolContext, ExecutionArtifact } from "../types";
+import { registerBuildTools } from "./build-tools";
 
 // ── internal.chat.respond ─────────────────────────────────────────────────────
 
@@ -17,7 +18,7 @@ export function registerInternalTools(): void {
     execute: async (input) => {
       const msg = String(input.message ?? "");
       return {
-        answer: `I received your message but no specific execution tool matched it yet.\n\nCommands I can currently execute:\n  • "Inspect https://github.com/owner/repo" → GitHub repo report\n  • "Check my email for job follow-ups" → email triage\n  • "Create a task to ..." → task creation\n  • "Build me a resume for [role]" → resume draft\n  • "Draft a reply to that recruiter" → email draft (requires approval)\n\nYour message: "${msg.slice(0, 200)}"`,
+        answer: `I received your message but routed it through chat instead of a specific tool.\n\nExecution tools I can invoke:\n  • "Build [feature name]" → generate + commit + PR real code\n  • "Create the /[route] route" → create a new Next.js page\n  • "Run build / run typecheck" → check the build\n  • "Deploy" → check Vercel deployment status\n  • "Inspect the repo" → read the file structure\n  • "Inspect https://github.com/owner/repo" → GitHub repo report\n  • "Check my email for job follow-ups" → email triage\n  • "Create a task to ..." → task creation\n  • "Build me a resume for [role]" → resume draft\n\nYour message: "${msg.slice(0, 200)}"`,
         artifacts: [] as ExecutionArtifact[],
       };
     },
@@ -665,5 +666,8 @@ export function registerInternalTools(): void {
       };
     },
   });
+
+  // Register build tools (repo_inspect, file_write, command_run, git_diff, git_commit_or_pr, vercel_deploy)
+  registerBuildTools();
 
 }
