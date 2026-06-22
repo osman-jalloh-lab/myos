@@ -14,7 +14,8 @@ import {
   type ApprovalActionType,
   type ApprovalStatus,
 } from "@/lib/approvals";
-import { createProjectTasksFromPlan, createProjectTask } from "@/lib/memory-context";
+import { createProjectTasksFromPlan, createProjectTask, getProjectTasks } from "@/lib/memory-context";
+import { parseContextBlock, resolveIntent } from "@/lib/intentResolver";
 import { queryTaskState, formatTaskStateReply, realityCheck } from "@/lib/realityCheck";
 import {
   getLatestAgentTask,
@@ -1274,12 +1275,6 @@ export async function routeMessage(userId: string, text: string, channel?: strin
   const { cleaned: trimmed, providerOverride } = detectModelOverride(text.trim());
 
   // ── helpers (inline) ─────────────────────────────────────────────────────────
-  const extractProjectIdFromContext = (ctx: string | undefined): string | null => {
-    if (!ctx) return null;
-    const m = ctx.match(/^PROJECT_ID:\s*([a-zA-Z0-9-]+)/m);
-    return m?.[1] ?? null;
-  };
-
   const buildProjectPlan = (name: string, route: string): Array<{ title: string; assignedAgent: string }> => [
     { title: `Inspect repository and plan ${name} architecture`, assignedAgent: "prometheus" },
     { title: `Create ${route} route and main page`, assignedAgent: "prometheus" },
@@ -1292,74 +1287,89 @@ export async function routeMessage(userId: string, text: string, channel?: strin
     { title: "Run production build", assignedAgent: "prometheus" },
   ];
 
-  // ── bare approval (no ID provided) ───────────────────────────────────────────
-  // "approve", "yes", "go ahead", "looks good" — resolves the latest pending
-  // approval automatically. "continue", "start", "begin" are intentionally
-  // excluded — they mean "resume working" not "approve something", and are
-  // handled by the RESUME_PATTERN below.
-  const BARE_APPROVE_RE = /^(approve|yes|confirmed?|go ahead|do it|looks good|ok|okay|sounds good|ship it|let'?s go|run it)\.?!?$/i;
-  if (BARE_APPROVE_RE.test(trimmed)) {
+  // ── Intent Resolution Layer ───────────────────────────────────────────────────
+  // Resolves shorthand references using active project/task/approval context
+  // before any message reaches the LLM. Executes when confidence >= 80.
+  // Asks for clarification when confidence < 80 AND message is ambiguous.
+  const parsedCtx = parseContextBlock(chatContext);
+  const intent = resolveIntent(trimmed, parsedCtx);
+
+  if (intent.shouldAsk && intent.clarificationQuestion) {
+    return { reply: formatReply(intent.clarificationQuestion, channel) };
+  }
+
+  // ── approve ───────────────────────────────────────────────────────────────
+  if (intent.type === "approve" && intent.confidence >= 80) {
     const pending = await getLatestPendingApproval(userId);
     if (pending) {
       try {
         const action = await approveAction(userId, pending.id);
-        const note = action.executionNote ?? `Approved — proceeding.`;
-        return { reply: formatReply(note, channel), approvalAction: { id: action.id, actionType: action.actionType, status: action.status } };
-      } catch {
-        // already resolved or error — fall through
-      }
+        return {
+          reply: formatReply(action.executionNote ?? "Approved — proceeding.", channel),
+          approvalAction: { id: action.id, actionType: action.actionType, status: action.status },
+        };
+      } catch { /* already resolved — fall through */ }
     }
   }
 
-  // ── reject / cancel without ID ────────────────────────────────────────────────
-  const BARE_REJECT_RE = /^(reject|cancel|no|nope|stop|don'?t|nevermind|never mind|scratch that|forget it)\.?!?$/i;
-  if (BARE_REJECT_RE.test(trimmed)) {
+  // ── reject ────────────────────────────────────────────────────────────────
+  if (intent.type === "reject" && intent.confidence >= 80) {
     const pending = await getLatestPendingApproval(userId);
     if (pending) {
       try {
         const action = await rejectAction(userId, pending.id);
-        return { reply: `Cancelled "${action.actionType}" (${action.id.slice(0, 8)}).`, approvalAction: { id: action.id, actionType: action.actionType, status: action.status } };
-      } catch {
-        // fall through
-      }
+        return {
+          reply: `Cancelled "${action.actionType}" (${action.id.slice(0, 8)}).`,
+          approvalAction: { id: action.id, actionType: action.actionType, status: action.status },
+        };
+      } catch { /* fall through */ }
     }
   }
 
-  // ── post-approval continuity — "continue", "what's next", "status" ───────────
-  // After a plan is approved the user often checks in with short commands.
-  // These must never return "no pending approvals" — they return project state.
-  const RESUME_RE = /^(continue|keep going|what'?s next|next step|next|what are you (doing|working on)|what'?s happening|still working|working on it|notify me when done|let me know when (done|finished)|when (are you|will you be) (done|finished)|what'?s the plan|where are we|what'?s left)\.?!?\??$/i;
-  if (RESUME_RE.test(trimmed)) {
-    const ctxProjectId = extractProjectIdFromContext(chatContext);
-    if (ctxProjectId) {
-      try {
-        const { getProjectTasks: fetchTasks } = await import("@/lib/memory-context");
-        const tasks = await fetchTasks(ctxProjectId);
-        if (tasks.length > 0) {
-          const projectNameMatch = chatContext?.match(/^ACTIVE PROJECT:\s*([^\[]+)/m);
-          const projectName = projectNameMatch?.[1]?.trim() ?? "active project";
-          const statusOrder: Record<string, number> = { in_progress: 0, pending: 1, done: 2 };
-          const sorted = [...tasks].sort((a, b) => (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3));
-          const taskLines = sorted.map((t, i) => {
-            const icon = t.status === "done" ? "✓" : t.status === "in_progress" ? "►" : `${i + 1}.`;
-            return `${icon} ${t.title}`;
-          }).join("\n");
-          const done = tasks.filter((t) => t.status === "done").length;
-          const inProg = tasks.filter((t) => t.status === "in_progress").length;
-          const pending = tasks.filter((t) => t.status === "pending").length;
-          const summary = inProg > 0
-            ? `${inProg} task(s) in progress, ${pending} queued.`
-            : pending > 0
-            ? `${done} done. Next up: ${tasks.find((t) => t.status === "pending")?.title ?? "pending tasks"}.`
-            : `All ${done} tasks complete.`;
-          const replyText = isTelegram
-            ? `<b>${projectName}</b>\n\n${taskLines}\n\n${summary}`
-            : `${projectName} — ${done}/${tasks.length} done.\n${taskLines}\n\n${summary}`;
-          return { reply: formatReply(replyText, channel) };
-        }
-      } catch { /* fall through to LLM */ }
-    }
-    // No active project context — let the LLM handle it naturally
+  // ── resume / continue (including "continue watch build" keyword matching) ──
+  if ((intent.type === "resume" || intent.type === "status") && intent.confidence >= 80 && intent.projectId) {
+    try {
+      const tasks = await getProjectTasks(intent.projectId);
+      if (tasks.length > 0) {
+        const projectName = intent.projectName ?? "active project";
+        const statusOrder: Record<string, number> = { in_progress: 0, pending: 1, done: 2 };
+        const sorted = [...tasks].sort((a, b) => (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3));
+        const taskLines = sorted.map((t, i) => {
+          const icon = t.status === "done" ? "✓" : t.status === "in_progress" ? "►" : `${i + 1}.`;
+          return `${icon} ${t.title}`;
+        }).join("\n");
+        const done = tasks.filter((t) => t.status === "done").length;
+        const inProg = tasks.filter((t) => t.status === "in_progress").length;
+        const pend = tasks.filter((t) => t.status === "pending").length;
+        const summary = inProg > 0
+          ? `${inProg} task(s) in progress, ${pend} queued.`
+          : pend > 0
+          ? `${done} done. Next: ${tasks.find((t) => t.status === "pending")?.title ?? "pending tasks"}.`
+          : `All ${done} tasks complete.`;
+        const statusTag = parsedCtx.projectStatus ? ` [${parsedCtx.projectStatus}]` : "";
+        const replyText = isTelegram
+          ? `<b>${projectName}</b>${statusTag}\n\n${taskLines}\n\n${summary}`
+          : `${projectName}${statusTag} — ${done}/${tasks.length} done.\n${taskLines}\n\n${summary}`;
+        return { reply: formatReply(replyText, channel) };
+      }
+    } catch { /* fall through */ }
+  }
+
+  // ── subscribe to completion ───────────────────────────────────────────────
+  if (intent.type === "subscribe_completion") {
+    const ref = intent.projectName ? ` for "${intent.projectName}"` : "";
+    return {
+      reply: formatReply(
+        `Got it — I'll notify you when work${ref} is complete. You can also ask "what's the status" any time.`,
+        channel
+      ),
+    };
+  }
+
+  // ── instruction: persist as ProjectTask, then fall through to LLM ────────
+  if (intent.type === "instruction" && intent.projectId) {
+    createProjectTask(intent.projectId, userId, trimmed.slice(0, 120)).catch(() => {});
+    // Fall through — LLM provides the actual reply using project context
   }
 
   const approvalVerb = trimmed.match(/^(approve|reject)\s+([a-zA-Z0-9-]+)/i);
@@ -1420,10 +1430,9 @@ export async function routeMessage(userId: string, text: string, channel?: strin
     });
 
     // Also include active project task state if there is one
-    const ctxProjectId = extractProjectIdFromContext(chatContext);
+    const ctxProjectId = parsedCtx.projectId;
     if (ctxProjectId) {
       try {
-        const { getProjectTasks } = await import("@/lib/memory-context");
         const projectTasks = await getProjectTasks(ctxProjectId);
         if (projectTasks.length > 0) {
           const taskLines = projectTasks.map((t) => `  - [${t.status.toUpperCase()}] ${t.title}${t.nextStep ? ` — next: ${t.nextStep}` : ""}`).join("\n");
@@ -1540,7 +1549,7 @@ export async function routeMessage(userId: string, text: string, channel?: strin
     if (rawName.length >= 3) {
       const projectName = rawName.replace(/\b\w/g, (c) => c.toUpperCase());
       const route = `/${rawName.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")}`;
-      const projectId = extractProjectIdFromContext(chatContext);
+      const projectId = parsedCtx.projectId;
       const planSteps = buildProjectPlan(rawName, route);
 
       // Persist plan as ProjectTask records (so status queries work immediately)
@@ -1713,11 +1722,13 @@ export async function routeMessage(userId: string, text: string, channel?: strin
 
   // If there's an active project and the message is an action instruction,
   // persist it as a ProjectTask (fire-and-forget — never blocks the LLM reply)
-  const followUpProjectId = extractProjectIdFromContext(chatContext);
-  if (followUpProjectId) {
-    const INSTRUCTION_RE = /^(remove|add|change|update|fix|make|set|show|hide|enable|disable|delete|move|rename|refactor|adjust|modify|edit|replace|include|exclude|implement|integrate|connect|style|design|deploy|test|rewrite|simplify|improve|clean)\b/i;
-    if (INSTRUCTION_RE.test(trimmed) && trimmed.length <= 150) {
-      createProjectTask(followUpProjectId, userId, trimmed.slice(0, 120)).catch(() => {});
+  // Instruction persistence is already handled by the intent resolver above
+  // for high-confidence cases. This is the fallback for LLM-routed instructions
+  // that slipped through (intent.type === "passthrough" but still has a verb).
+  if (parsedCtx.projectId && intent.type === "passthrough") {
+    const FALLBACK_VERB_RE = /^(remove|add|change|update|fix|make|set|show|hide|enable|disable|delete|move|rename|refactor|adjust|modify|edit|replace|include|exclude|implement|integrate|connect|style|design|deploy|test|rewrite|simplify|improve|clean)\b/i;
+    if (FALLBACK_VERB_RE.test(trimmed) && trimmed.length <= 150) {
+      createProjectTask(parsedCtx.projectId, userId, trimmed.slice(0, 120)).catch(() => {});
     }
   }
 
