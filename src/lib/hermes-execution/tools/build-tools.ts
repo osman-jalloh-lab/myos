@@ -248,6 +248,8 @@ async function generateFeatureCode(
     "- Keep components focused and minimal",
     "- No placeholder text — write real, usable code",
     "- No em dashes in comments",
+    "- NEVER import packages that are not in the project. Only use: react, next, next/link, next/navigation, next/image, and packages already listed in package.json. Never import @heroicons, lucide-react, framer-motion, or any other UI library unless you can confirm it is installed.",
+    "- Use only plain HTML elements (button, div, h1, p, a, etc.) and Tailwind classes for UI. Never import UI component libraries.",
     "- NEVER write to .env, /api/auth, middleware.ts, or prisma/migrations",
     "",
     "Respond with ONLY a valid JSON object:",
