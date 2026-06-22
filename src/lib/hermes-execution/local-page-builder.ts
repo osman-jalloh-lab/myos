@@ -33,8 +33,10 @@ function pageSource(request: PageRequest): string {
 
 async function run(command: string, args: string[], cwd: string): Promise<{ ok: boolean; output: string }> {
   return new Promise((resolve) => {
-    const executable = process.platform === "win32" && command === "npm" ? "npm.cmd" : command;
-    const child = spawn(executable, args, { cwd, shell: false, env: process.env });
+    const isWindows = process.platform === "win32";
+    const executable = isWindows ? (process.env.ComSpec ?? "cmd.exe") : command;
+    const commandArgs = isWindows ? ["/d", "/s", "/c", command, ...args] : args;
+    const child = spawn(executable, commandArgs, { cwd, shell: false, env: process.env });
     let output = "";
     child.stdout.on("data", (chunk) => { output += String(chunk); });
     child.stderr.on("data", (chunk) => { output += String(chunk); });

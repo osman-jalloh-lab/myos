@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import BuilderOffice from "./BuilderOffice";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,7 @@ interface Build {
   resultSummary: string | null;
   implementationSummary: string | null;
   branchName: string | null;
+  commitSha: string | null;
   pullRequestUrl: string | null;
   deploymentUrl: string | null;
   deployStatus: string | null;
@@ -85,7 +87,7 @@ interface ChatMessage {
   createdAt: string;
 }
 
-type Tab = "overview" | "projects" | "builds" | "logs" | "chat";
+type Tab = "overview" | "agents" | "projects" | "builds" | "logs" | "chat";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -103,7 +105,7 @@ function statusColor(status: string): string {
   switch (status) {
     case "active": case "completed": case "done": case "deployed": return "#34D399";
     case "planning": case "approved": case "queued": return "#60A5FA";
-    case "in_progress": case "building": case "running": return "#A78BFA";
+    case "in_progress": case "building": case "running": case "implementation_running": case "validation_running": return "#A78BFA";
     case "blocked": case "failed": return "#F87171";
     default: return "#94A3B8";
   }
@@ -738,7 +740,7 @@ export default function CommandCenterClient() {
 
       {/* Tabs */}
       <div style={{ padding: "0 32px", borderBottom: "1px solid #28324A", display: "flex", gap: 8, height: 52, alignItems: "center" }}>
-        {(["overview", "projects", "builds", "logs", "chat"] as Tab[]).map((t) => (
+        {(["overview", "agents", "projects", "builds", "logs", "chat"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)} style={pillStyle(tab === t)}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "overview" && pendingCount > 0 && (
@@ -759,6 +761,7 @@ export default function CommandCenterClient() {
             {tab === "overview" && (
               <OverviewPanel projects={projects} approvals={approvals} builds={builds} onApprove={handleApprove} onReject={handleReject} onTabSwitch={setTab} />
             )}
+            {tab === "agents" && <BuilderOffice />}
             {tab === "projects" && <ProjectsPanel projects={projects} />}
             {tab === "builds" && <BuildsPanel builds={builds} />}
             {tab === "logs" && <LogsPanel runs={runs} audit={audit} />}

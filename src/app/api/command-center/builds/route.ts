@@ -21,6 +21,7 @@ export async function GET() {
       resultSummary: true,
       implementationSummary: true,
       branchName: true,
+      commitSha: true,
       pullRequestUrl: true,
       deploymentUrl: true,
       deployStatus: true,
