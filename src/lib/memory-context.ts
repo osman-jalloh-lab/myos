@@ -228,6 +228,27 @@ async function detectOrCreateProject(userId: string, text: string): Promise<Proj
   };
 }
 
+/** Create or reactivate the concrete project behind an execution-layer build. */
+export async function ensureBuildProject(chatId: string, userId: string, route: string, instruction: string): Promise<Project> {
+  const db = getDb();
+  const normalizedRoute = `/${route.replace(/^\/+|\/+$/g, "")}`;
+  const existing = await db.execute({ sql: `SELECT * FROM Project WHERE userId = ? AND route = ? LIMIT 1`, args: [userId, normalizedRoute] });
+  let project: Project;
+  if (existing.rows.length) {
+    project = rowToProject(existing.rows[0] as unknown as DbRow);
+    await db.execute({ sql: `UPDATE Project SET status = 'building', latestInstruction = ?, assignedAgent = 'hermes-execution', updatedAt = datetime('now') WHERE id = ?`, args: [instruction.slice(0, 500), project.id] });
+    project = { ...project, status: "building", latestInstruction: instruction.slice(0, 500), assignedAgent: "hermes-execution" };
+  } else {
+    const id = crypto.randomUUID();
+    const projectName = normalizedRoute.slice(1).split("-").map((part) => part ? part[0].toUpperCase() + part.slice(1) : part).join(" ") || "Hermes Build";
+    await db.execute({ sql: `INSERT INTO Project (id, userId, projectName, route, status, latestInstruction, assignedAgent, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'building', ?, 'hermes-execution', datetime('now'), datetime('now'))`, args: [id, userId, projectName, normalizedRoute, instruction.slice(0, 500)] });
+    project = { id, userId, projectName, route: normalizedRoute, status: "building", latestInstruction: instruction.slice(0, 500), description: null, assignedAgent: "hermes-execution" };
+  }
+  await getOrCreateSession(chatId, userId);
+  await updateSession(chatId, { activeProjectId: project.id, currentTask: instruction.slice(0, 500) });
+  return project;
+}
+
 // ── Context block builder ─────────────────────────────────────────────────────
 
 /**

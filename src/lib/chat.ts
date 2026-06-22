@@ -99,3 +99,12 @@ export async function sendMessage(
 
   return { userMessage: toView(userRow), reply: toView(replyRow), route };
 }
+
+/** Persist an already-executed reply without routing the prompt through Hermes again. */
+export async function persistExecutedMessage(userId: string, text: string, reply: string, channel: ChatChannel = "dashboard"): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView }> {
+  const [userRow, replyRow] = await prisma.$transaction([
+    prisma.chatMessage.create({ data: { userId, role: "user", content: text, channel, targetAgent: null } }),
+    prisma.chatMessage.create({ data: { userId, role: "assistant", content: reply, channel, targetAgent: null } }),
+  ]);
+  return { userMessage: toView(userRow), reply: toView(replyRow) };
+}

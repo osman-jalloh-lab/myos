@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { chatHistory, channelHistory, sendMessage } from "@/lib/chat";
+import { chatHistory, channelHistory, persistExecutedMessage, sendMessage } from "@/lib/chat";
 import { shouldUseExecutionLayer } from "@/lib/hermes-execution/detect-execution-request";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -71,13 +71,13 @@ export async function POST(req: Request) {
       );
       if (execRes.ok) {
         const execData = (await execRes.json()) as { answer?: string; status?: string; artifacts?: unknown[]; toolCalls?: unknown[] };
-        // Also persist the message pair to chat history via normal path (silent, no LLM)
-        const result = await sendMessage(session.user.id, trimmed, "dashboard", null);
+        const answer = execData.answer ?? "Execution completed without a result summary.";
+        const result = await persistExecutedMessage(session.user.id, trimmed, answer, "dashboard");
         return NextResponse.json({
           userMessage: result.userMessage,
           reply: {
             ...result.reply,
-            content: execData.answer ?? result.reply.content,
+            content: answer,
             executionStatus: execData.status,
             artifacts: execData.artifacts ?? [],
             toolCalls: execData.toolCalls ?? [],

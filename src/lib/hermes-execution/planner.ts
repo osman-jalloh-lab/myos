@@ -444,6 +444,12 @@ function buildPlan(
 export async function plan(req: ExecutionRequest): Promise<ExecutionPlan> {
   const msg = req.message;
 
+  // Explicit build language is deterministic and must never be downgraded to chat.
+  const deterministic = planWithRegex(msg);
+  if (["build_page", "build_app", "continue_build", "modify_feature", "build_feature"].includes(deterministic.intent)) {
+    return buildPlan(deterministic.intent, 0.99, msg, deterministic.extractedUrl, req.source);
+  }
+
   // 1. Try LLM-based planning first (fast Groq call, 4s timeout)
   const llmResult = await planWithLLM(msg);
 

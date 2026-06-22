@@ -316,6 +316,12 @@ async function llmTypeCheck(files: GeneratedFile[], userId: string): Promise<str
 // Used by both internal.code.buildFeature and internal.code.buildAndPush.
 
 async function runBuildAndPush(message: string, ctx: ToolContext) {
+  // Safe, isolated App Router pages execute in the checked-out workspace and
+  // validate immediately. Broader builds keep the existing branch/PR path.
+  const { buildLocalPage } = await import("../local-page-builder");
+  const localPage = await buildLocalPage(message, ctx);
+  if (localPage) return localPage;
+
   const token = (ctx.env.GITHUB_TOKEN ?? "").replace(/^﻿/, "").trim();
 
   if (!token) {
