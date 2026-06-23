@@ -38,6 +38,11 @@ async function main() {
       projectName       TEXT NOT NULL,
       description       TEXT,
       route             TEXT,
+      localFolderPath   TEXT,
+      localBuildLog     TEXT,
+      localBuildError   TEXT,
+      localDevUrl       TEXT,
+      localDevPid       INTEGER,
       status            TEXT NOT NULL DEFAULT 'planning',
       latestInstruction TEXT,
       assignedAgent     TEXT,
@@ -45,6 +50,11 @@ async function main() {
       updatedAt         TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localFolderPath TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localBuildLog TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localBuildError TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localDevUrl TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localDevPid INTEGER`).catch(() => undefined);
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_user ON Project(userId, status)`);
   console.log("  Project — ok");
 
