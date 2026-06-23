@@ -18,8 +18,14 @@ interface Project {
   projectName: string;
   description: string | null;
   route: string | null;
+  localFolderPath: string | null;
+  buildLog: string | null;
+  buildError: string | null;
+  localDevUrl: string | null;
+  localDevPid: number | null;
   status: string;
   latestInstruction: string | null;
+  currentTask: string | null;
   assignedAgent: string | null;
   createdAt: string;
   updatedAt: string;
@@ -103,10 +109,11 @@ function timeAgo(iso: string): string {
 
 function statusColor(status: string): string {
   switch (status) {
-    case "active": case "completed": case "done": case "deployed": return "#34D399";
+    case "active": case "completed": case "done": case "deployed": case "Ready to Build": case "Build Passed": case "Dev Server Running": return "#34D399";
     case "planning": case "approved": case "queued": return "#60A5FA";
-    case "in_progress": case "building": case "running": case "implementation_running": case "validation_running": return "#A78BFA";
-    case "blocked": case "failed": return "#F87171";
+    case "in_progress": case "building": case "running": case "implementation_running": case "validation_running": case "Generating": case "Installing": case "Building": return "#A78BFA";
+    case "blocked": case "failed": case "Build Failed": return "#F87171";
+    case "Dev Server Stopped": return "#60A5FA";
     default: return "#94A3B8";
   }
 }
@@ -338,6 +345,9 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
               {p.route && (
                 <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2, fontFamily: "JetBrains Mono, monospace" }}>{p.route}</div>
               )}
+              {p.localFolderPath && (
+                <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2, fontFamily: "JetBrains Mono, monospace", overflowWrap: "anywhere" }}>{p.localFolderPath}</div>
+              )}
             </div>
             <span style={badgeStyle(statusColor(p.status))}>{statusLabel(p.status)}</span>
           </div>
@@ -356,6 +366,25 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
           {p.latestInstruction && (
             <div style={{ fontSize: 12, color: "#94A3B8", marginBottom: 12, borderLeft: "2px solid #28324A", paddingLeft: 12, fontStyle: "italic" }}>
               {p.latestInstruction.slice(0, 200)}
+            </div>
+          )}
+
+          {p.currentTask && (
+            <div style={{ fontSize: 12, color: "#F1F4FB", marginBottom: 12 }}>
+              Current task: {p.currentTask}
+            </div>
+          )}
+
+          {p.localDevUrl && (
+            <a href={p.localDevUrl} target="_blank" rel="noopener" style={{ display: "inline-block", color: "#34D399", fontSize: 12, marginBottom: 12 }}>
+              {p.localDevUrl}
+            </a>
+          )}
+
+          {(p.buildLog || p.buildError) && (
+            <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(40,50,74,0.3)", borderRadius: 8 }}>
+              {p.buildError && <div style={{ fontSize: 12, color: "#F87171", whiteSpace: "pre-wrap", marginBottom: 8 }}>{p.buildError}</div>}
+              {p.buildLog && <pre style={{ margin: 0, maxHeight: 120, overflow: "auto", font: "11px/1.5 JetBrains Mono,monospace", color: "#94A3B8", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{p.buildLog}</pre>}
             </div>
           )}
 

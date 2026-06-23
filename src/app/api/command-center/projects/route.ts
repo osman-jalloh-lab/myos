@@ -47,13 +47,21 @@ export async function GET() {
         };
       });
 
+      const latestTask = tasks[0];
+
       return {
         id: p.id as string,
         projectName: p.projectName as string,
         description: (p.description as string | null) ?? null,
         route: (p.route as string | null) ?? null,
+        localFolderPath: (p.localFolderPath as string | null) ?? null,
+        buildLog: (p.localBuildLog as string | null) ?? null,
+        buildError: (p.localBuildError as string | null) ?? null,
+        localDevUrl: (p.localDevUrl as string | null) ?? null,
+        localDevPid: (p.localDevPid as number | null) ?? null,
         status: (p.status as string) ?? "planning",
         latestInstruction: (p.latestInstruction as string | null) ?? null,
+        currentTask: latestTask?.title ?? null,
         assignedAgent: (p.assignedAgent as string | null) ?? null,
         createdAt: p.createdAt as string,
         updatedAt: p.updatedAt as string,
