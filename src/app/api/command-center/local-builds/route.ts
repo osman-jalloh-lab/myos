@@ -15,7 +15,7 @@ function projectView(project: LocalBuildProject) {
   return {
     ...project,
     route: null,
-    taskCounts: { done: project.status === "Build Passed" || project.status === "Dev Server Running" ? 1 : 0, total: 1 },
+    taskCounts: { done: ["Brief Ready", "Build Passed", "Dev Server Running"].includes(project.status) ? 1 : 0, total: 1 },
   };
 }
 
@@ -27,6 +27,7 @@ function responseFor(project: ReturnType<typeof projectView>, action: string, fa
       `Folder: ${project.localFolderPath}`,
       project.localDevUrl ? `URL: ${project.localDevUrl}` : null,
       `Status: ${project.status}`,
+      project.researchBrief ? "Athena brief: ready" : null,
       project.buildError ? `First error: ${project.buildError}` : null,
     ].filter(Boolean).join("\n"),
     project,
@@ -71,10 +72,11 @@ export async function POST(req: Request) {
     return NextResponse.json({
       status: failed ? "failed" : "completed",
       answer: [
-        `Local Builder v2 ${failed ? "failed" : "generated"} ${project.projectName}.`,
+        `Research-to-Build pipeline ${failed ? "failed" : "generated"} ${project.projectName}.`,
         `Folder: ${project.localFolderPath}`,
         `Status: ${project.status}`,
         `Current task: ${project.currentTask}`,
+        project.researchBrief ? "Athena brief used: yes" : "Athena brief used: no",
         project.buildError ? `First error: ${project.buildError}` : "npm install and npm run build passed.",
       ].join("\n"),
       project: view,
@@ -122,10 +124,12 @@ export async function POST(req: Request) {
   return NextResponse.json({
     status: "completed",
     answer: [
-      `Local Builder v1 prepared ${project.projectName}.`,
+      `Athena researched and Local Builder prepared ${project.projectName}.`,
       `Folder: ${project.localFolderPath}`,
       `Status: ${project.status}`,
       `Current task: ${project.currentTask}`,
+      "",
+      "Athena research brief is ready.",
       "",
       "Ready for Generate app.",
     ].join("\n"),
@@ -141,6 +145,15 @@ export async function POST(req: Request) {
       },
     ],
     artifacts: [
+      {
+        type: "research_brief",
+        title: `Athena research brief for ${project.projectName}`,
+        content: project.researchBrief ?? undefined,
+        metadata: {
+          projectId: project.id,
+          status: project.status,
+        },
+      },
       {
         type: "task",
         title: project.currentTask,

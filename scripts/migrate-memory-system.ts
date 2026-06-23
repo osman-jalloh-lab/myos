@@ -43,6 +43,7 @@ async function main() {
       localBuildError   TEXT,
       localDevUrl       TEXT,
       localDevPid       INTEGER,
+      localResearchBrief TEXT,
       status            TEXT NOT NULL DEFAULT 'planning',
       latestInstruction TEXT,
       assignedAgent     TEXT,
@@ -55,6 +56,7 @@ async function main() {
   await db.execute(`ALTER TABLE Project ADD COLUMN localBuildError TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localDevUrl TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localDevPid INTEGER`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localResearchBrief TEXT`).catch(() => undefined);
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_user ON Project(userId, status)`);
   console.log("  Project — ok");
 

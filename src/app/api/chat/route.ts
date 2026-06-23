@@ -18,6 +18,7 @@ import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
  * (CLAUDE.md rule 3).
  */
 export async function GET(req: Request) {
+  try {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -32,6 +33,10 @@ export async function GET(req: Request) {
   const agent = params.get("agent");
   const messages = await chatHistory(session.user.id, 50, agent || null);
   return NextResponse.json({ messages });
+  } catch (error) {
+    console.error("[/api/chat] GET failed", error);
+    return NextResponse.json({ error: "Chat history is temporarily unavailable." }, { status: 500 });
+  }
 }
 
 export async function POST(req: Request) {
@@ -90,6 +95,11 @@ export async function POST(req: Request) {
     }
   }
 
-  const result = await sendMessage(session.user.id, trimmed, "dashboard", body.agentName?.trim() || null);
-  return NextResponse.json({ userMessage: result.userMessage, reply: result.reply });
+  try {
+    const result = await sendMessage(session.user.id, trimmed, "dashboard", body.agentName?.trim() || null);
+    return NextResponse.json({ userMessage: result.userMessage, reply: result.reply });
+  } catch (error) {
+    console.error("[/api/chat] POST failed", error);
+    return NextResponse.json({ error: "Hermes could not process that message. Check the server log for details." }, { status: 500 });
+  }
 }

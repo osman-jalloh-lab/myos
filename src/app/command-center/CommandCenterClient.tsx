@@ -23,6 +23,7 @@ interface Project {
   buildError: string | null;
   localDevUrl: string | null;
   localDevPid: number | null;
+  researchBrief: string | null;
   status: string;
   latestInstruction: string | null;
   currentTask: string | null;
@@ -93,7 +94,40 @@ interface ChatMessage {
   createdAt: string;
 }
 
-type Tab = "overview" | "agents" | "projects" | "builds" | "logs" | "chat";
+interface MemoryOfficeData {
+  memories: Array<{ id: string; fact: string; source: string | null; createdAt: string; approvedAt: string | null }>;
+  projectDecisions: Array<{ id: string; projectName: string; status: string; decision: string; updatedAt: string }>;
+  buildLessons: Array<{ id: string; status: string; summary: string; createdAt: string }>;
+  researchBriefs: Array<{ id: string; projectName: string; brief: string; updatedAt: string }>;
+  failedBuildFixes: Array<{ id: string; projectName: string; error: string; log: string; updatedAt: string }>;
+  userPreferences: Array<{ id: string; fact: string; source: string | null; createdAt: string }>;
+  lastUpdated: string;
+}
+
+interface SkillView {
+  name: string;
+  source: string;
+  category: string;
+  description: string;
+  dateAdded: string | null;
+  status: string;
+  testResult: string;
+}
+
+interface SkillCandidate {
+  name: string;
+  source: string;
+  category: string;
+  description: string;
+  whyItHelps: string;
+  riskyFiles: string[];
+  approvalRequired: boolean;
+  status: string;
+  testResult: string;
+  createdAt: string;
+}
+
+type Tab = "overview" | "agents" | "memory" | "skills" | "projects" | "builds" | "logs" | "chat";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -109,9 +143,9 @@ function timeAgo(iso: string): string {
 
 function statusColor(status: string): string {
   switch (status) {
-    case "active": case "completed": case "done": case "deployed": case "Ready to Build": case "Build Passed": case "Dev Server Running": return "#34D399";
+    case "active": case "completed": case "done": case "deployed": case "Ready to Build": case "Brief Ready": case "Build Passed": case "Dev Server Running": return "#34D399";
     case "planning": case "approved": case "queued": return "#60A5FA";
-    case "in_progress": case "building": case "running": case "implementation_running": case "validation_running": case "Generating": case "Installing": case "Building": return "#A78BFA";
+    case "in_progress": case "building": case "running": case "implementation_running": case "validation_running": case "Researching": case "Generating": case "Installing": case "Building": return "#A78BFA";
     case "blocked": case "failed": case "Build Failed": return "#F87171";
     case "Dev Server Stopped": return "#60A5FA";
     default: return "#94A3B8";
@@ -375,6 +409,15 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
             </div>
           )}
 
+          {p.researchBrief && (
+            <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(232,121,249,0.08)", border: "1px solid rgba(232,121,249,0.22)", borderRadius: 8 }}>
+              <div style={{ fontSize: 11, color: "#E879F9", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
+                Athena research brief
+              </div>
+              <pre style={{ margin: 0, maxHeight: 180, overflow: "auto", font: "11px/1.5 JetBrains Mono,monospace", color: "#D8DEEB", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{p.researchBrief}</pre>
+            </div>
+          )}
+
           {p.localDevUrl && (
             <a href={p.localDevUrl} target="_blank" rel="noopener" style={{ display: "inline-block", color: "#34D399", fontSize: 12, marginBottom: 12 }}>
               {p.localDevUrl}
@@ -422,6 +465,128 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function MemoryOfficePanel({ data, onCreateTestMemory }: { data: MemoryOfficeData | null; onCreateTestMemory: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const create = async () => {
+    setBusy(true);
+    try {
+      await onCreateTestMemory();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const memoryCount = data?.memories.length ?? 0;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#2DD4BF", letterSpacing: "0.08em", textTransform: "uppercase" }}>Iris / Memory Office</div>
+            <h2 style={{ fontSize: 24, margin: "6px 0 4px", fontFamily: "Fraunces, serif" }}>What Hermes Is Learning</h2>
+            <div style={{ fontSize: 12, color: "#94A3B8" }}>Last updated: {data?.lastUpdated ? timeAgo(data.lastUpdated) : "not loaded"}</div>
+          </div>
+          <button onClick={() => void create()} disabled={busy} style={{ padding: "9px 12px", borderRadius: 8, background: "rgba(45,212,191,0.12)", border: "1px solid rgba(45,212,191,0.35)", color: "#2DD4BF", fontWeight: 700, cursor: busy ? "not-allowed" : "pointer" }}>
+            {busy ? "Creating..." : "Create test memory"}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
+        <MemoryList title="Recent Memories Saved" empty="No memories saved yet" items={(data?.memories ?? []).map((m) => ({ key: m.id, head: m.fact, meta: `${m.source ?? "memory"} / ${timeAgo(m.createdAt)}` }))} />
+        <MemoryList title="Project Decisions" empty="No project decisions yet" items={(data?.projectDecisions ?? []).map((p) => ({ key: p.id, head: p.projectName, body: p.decision, meta: `${p.status} / ${p.updatedAt ? timeAgo(p.updatedAt) : "recent"}` }))} />
+        <MemoryList title="Build Lessons Learned" empty="No build lessons yet" items={(data?.buildLessons ?? []).slice(0, 8).map((b) => ({ key: b.id, head: b.summary || "Builder run", meta: `${b.status} / ${b.createdAt ? timeAgo(b.createdAt) : "recent"}` }))} />
+        <MemoryList title="Research Briefs" empty="No research briefs yet" items={(data?.researchBriefs ?? []).map((b) => ({ key: b.id, head: b.projectName, body: b.brief.slice(0, 260), meta: b.updatedAt ? timeAgo(b.updatedAt) : "recent" }))} />
+        <MemoryList title="Failed Build Fixes" empty="No failed build fixes yet" items={(data?.failedBuildFixes ?? []).map((f) => ({ key: f.id, head: f.projectName, body: f.error || f.log.slice(0, 240), meta: f.updatedAt ? timeAgo(f.updatedAt) : "recent" }))} />
+        <MemoryList title="User Preferences" empty="No user preferences saved yet" items={(data?.userPreferences ?? []).map((m) => ({ key: m.id, head: m.fact, meta: `${m.source ?? "memory"} / ${timeAgo(m.createdAt)}` }))} />
+      </div>
+
+      {memoryCount === 0 && (
+        <div style={{ ...cardStyle, color: "#4B5563", textAlign: "center" }}>No memories saved yet</div>
+      )}
+    </div>
+  );
+}
+
+function MemoryList({ title, empty, items }: { title: string; empty: string; items: Array<{ key: string; head: string; body?: string; meta?: string }> }) {
+  return (
+    <div style={cardStyle}>
+      <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 12 }}>{title}</div>
+      {items.length === 0 ? <div style={{ color: "#4B5563", fontSize: 13 }}>{empty}</div> : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {items.map((item) => (
+            <div key={item.key} style={{ padding: "10px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid rgba(40,50,74,0.7)", borderRadius: 8 }}>
+              <div style={{ color: "#F1F4FB", fontSize: 13, fontWeight: 650 }}>{item.head}</div>
+              {item.body && <div style={{ color: "#94A3B8", fontSize: 12, marginTop: 5, whiteSpace: "pre-wrap" }}>{item.body}</div>}
+              {item.meta && <div style={{ color: "#4B5563", fontSize: 11, marginTop: 6 }}>{item.meta}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SkillsPanel({ skills, candidate, onScout }: { skills: SkillView[]; candidate: SkillCandidate | null; onScout: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const scout = async () => {
+    setBusy(true);
+    try {
+      await onScout();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#38BDF8", letterSpacing: "0.08em", textTransform: "uppercase" }}>Sophos / Skills</div>
+            <h2 style={{ fontSize: 24, margin: "6px 0 4px", fontFamily: "Fraunces, serif" }}>Skill Registry</h2>
+            <div style={{ fontSize: 12, color: "#94A3B8" }}>{skills.length} installed skill folders indexed from `.agents/skills` and `HermesProject/skills`.</div>
+          </div>
+          <button onClick={() => void scout()} disabled={busy} style={{ padding: "9px 12px", borderRadius: 8, background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.35)", color: "#38BDF8", fontWeight: 700, cursor: busy ? "not-allowed" : "pointer" }}>
+            {busy ? "Scouting..." : "Scout one useful skill"}
+          </button>
+        </div>
+      </div>
+
+      {candidate && (
+        <div style={{ ...cardStyle, borderColor: "rgba(56,189,248,0.35)" }}>
+          <div style={{ color: "#38BDF8", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Candidate Recommendation</div>
+          <strong style={{ color: "#F1F4FB" }}>{candidate.name}</strong>
+          <p style={{ color: "#94A3B8", fontSize: 13 }}>{candidate.description}</p>
+          <p style={{ color: "#D8DEEB", fontSize: 13 }}>{candidate.whyItHelps}</p>
+          <div style={{ color: "#FBBF24", fontSize: 12 }}>Approval required before install. No unknown scripts were run.</div>
+          <ul style={{ color: "#94A3B8", fontSize: 12, marginBottom: 0 }}>
+            {candidate.riskyFiles.map((risk) => <li key={risk}>{risk}</li>)}
+          </ul>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
+        {skills.map((skill) => (
+          <div key={`${skill.source}-${skill.name}`} style={cardStyle}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+              <strong style={{ color: "#F1F4FB" }}>{skill.name}</strong>
+              <span style={badgeStyle(skill.status === "installed" ? "#34D399" : "#FBBF24")}>{skill.status}</span>
+            </div>
+            <div style={{ color: "#94A3B8", fontSize: 12, marginBottom: 8 }}>{skill.description}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, color: "#4B5563", fontSize: 11 }}>
+              <span>{skill.source}</span>
+              <span>{skill.category}</span>
+              <span>{skill.dateAdded ? timeAgo(skill.dateAdded) : "date unknown"}</span>
+              <span>{skill.testResult}</span>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -699,17 +864,22 @@ export default function CommandCenterClient() {
   const [runs, setRuns] = useState<AgentRun[]>([]);
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [memoryOffice, setMemoryOffice] = useState<MemoryOfficeData | null>(null);
+  const [skills, setSkills] = useState<SkillView[]>([]);
+  const [skillCandidate, setSkillCandidate] = useState<SkillCandidate | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, tgChatRes] = await Promise.allSettled([
+      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, tgChatRes, memoryRes, skillsRes] = await Promise.allSettled([
         fetch("/api/command-center/projects").then((r) => r.json() as Promise<{ projects: Project[] }>),
         fetch("/api/command-center/builds").then((r) => r.json() as Promise<{ builds: Build[] }>),
         fetch("/api/approvals").then((r) => r.json() as Promise<{ actions: ApprovalAction[] }>),
         fetch("/api/command-center/logs").then((r) => r.json() as Promise<{ runs: AgentRun[]; audit: AuditEntry[] }>),
         fetch("/api/chat").then((r) => r.json() as Promise<{ messages: ChatMessage[] }>),
         fetch("/api/chat?channel=telegram").then((r) => r.json() as Promise<{ messages: ChatMessage[] }>),
+        fetch("/api/command-center/memory-office").then((r) => r.json() as Promise<MemoryOfficeData>),
+        fetch("/api/command-center/skills").then((r) => r.json() as Promise<{ skills: SkillView[] }>),
       ]);
 
       if (projRes.status === "fulfilled") setProjects(projRes.value.projects ?? []);
@@ -719,6 +889,8 @@ export default function CommandCenterClient() {
         setRuns(logsRes.value.runs ?? []);
         setAudit(logsRes.value.audit ?? []);
       }
+      if (memoryRes.status === "fulfilled" && !("error" in memoryRes.value)) setMemoryOffice(memoryRes.value);
+      if (skillsRes.status === "fulfilled") setSkills(skillsRes.value.skills ?? []);
 
       const webMsgs = chatRes.status === "fulfilled" ? (chatRes.value.messages ?? []).map((m) => ({ ...m, channel: "dashboard" })) : [];
       const tgMsgs = tgChatRes.status === "fulfilled" ? (tgChatRes.value.messages ?? []).map((m) => ({ ...m, channel: "telegram" })) : [];
@@ -747,6 +919,28 @@ export default function CommandCenterClient() {
 
   const pendingCount = approvals.filter((a) => a.status === "pending").length;
 
+  const createTestMemory = async () => {
+    await fetch("/api/command-center/memory-office", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "createTestMemory" }),
+    });
+    await fetchAll();
+  };
+
+  const scoutOneSkill = async () => {
+    const res = await fetch("/api/command-center/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "scout" }),
+    });
+    if (res.ok) {
+      const data = await res.json() as { candidate: SkillCandidate };
+      setSkillCandidate(data.candidate);
+    }
+    await fetchAll();
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "var(--cc-bg-page, #0E1424)", color: "var(--cc-fg-primary, #F1F4FB)", fontFamily: "Hanken Grotesk, sans-serif" }}>
       {/* Header */}
@@ -769,7 +963,7 @@ export default function CommandCenterClient() {
 
       {/* Tabs */}
       <div style={{ padding: "0 32px", borderBottom: "1px solid #28324A", display: "flex", gap: 8, height: 52, alignItems: "center" }}>
-        {(["overview", "agents", "projects", "builds", "logs", "chat"] as Tab[]).map((t) => (
+        {(["overview", "agents", "memory", "skills", "projects", "builds", "logs", "chat"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)} style={pillStyle(tab === t)}>
             {t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "overview" && pendingCount > 0 && (
@@ -791,6 +985,8 @@ export default function CommandCenterClient() {
               <OverviewPanel projects={projects} approvals={approvals} builds={builds} onApprove={handleApprove} onReject={handleReject} onTabSwitch={setTab} />
             )}
             {tab === "agents" && <BuilderOffice />}
+            {tab === "memory" && <MemoryOfficePanel data={memoryOffice} onCreateTestMemory={createTestMemory} />}
+            {tab === "skills" && <SkillsPanel skills={skills} candidate={skillCandidate} onScout={scoutOneSkill} />}
             {tab === "projects" && <ProjectsPanel projects={projects} />}
             {tab === "builds" && <BuildsPanel builds={builds} />}
             {tab === "logs" && <LogsPanel runs={runs} audit={audit} />}

@@ -15,6 +15,7 @@ type Project = {
   buildError?: string | null;
   localDevUrl?: string | null;
   localDevPid?: number | null;
+  researchBrief?: string | null;
   taskCounts: { done: number; total: number };
 };
 type ExecutionResult = {
@@ -31,7 +32,7 @@ type RootInfo = { root: string; exists: boolean; projectCount: number; warning: 
 const card: React.CSSProperties = { background: "rgba(26,35,54,.85)", border: "1px solid #28324A", borderRadius: 16, padding: "20px 24px", backdropFilter: "blur(12px)" };
 
 function badge(status: string): React.CSSProperties {
-  const color = ["completed", "done", "deployed", "Ready to Build", "Build Passed", "Dev Server Running", "ready_to_build"].includes(status) ? "#34D399" : ["failed", "blocked", "Build Failed"].includes(status) ? "#F87171" : ["ready", "Dev Server Stopped"].includes(status) ? "#60A5FA" : "#A78BFA";
+  const color = ["completed", "done", "deployed", "Ready to Build", "Brief Ready", "Build Passed", "Dev Server Running", "ready_to_build"].includes(status) ? "#34D399" : ["failed", "blocked", "Build Failed"].includes(status) ? "#F87171" : ["ready", "Dev Server Stopped"].includes(status) ? "#60A5FA" : "#A78BFA";
   return { display: "inline-block", color, background: `${color}18`, border: `1px solid ${color}45`, borderRadius: 999, padding: "3px 9px", fontSize: 11, fontWeight: 700 };
 }
 
@@ -164,7 +165,7 @@ export default function BuilderOffice() {
           <div>
             <div style={{ color: "#38BDF8", fontSize: 11, fontWeight: 700, letterSpacing: ".14em", textTransform: "uppercase" }}>Agents / Builder</div>
             <h2 style={{ color: "#F1F4FB", font: "700 24px Fraunces,serif", margin: "5px 0 4px" }}>Builder Office</h2>
-            <p style={{ color: "#94A3B8", fontSize: 13, margin: 0 }}>Local Builder prepares the folder, then generates and validates a starter Next.js app.</p>
+            <p style={{ color: "#94A3B8", fontSize: 13, margin: 0 }}>Athena researches the request, then Local Builder prepares, generates, and validates the app.</p>
           </div>
           <span style={badge(displayStatus)}>{displayStatus.replace(/_/g, " ")}</span>
         </div>
@@ -192,7 +193,7 @@ export default function BuilderOffice() {
 
         <div style={{ marginTop: 22, flex: 1 }}>
           {!result && !firstError && !executing && <div style={{ color: "#4B5563", border: "1px dashed #28324A", borderRadius: 12, padding: 28, textAlign: "center", fontSize: 13 }}>Local builder output will appear here.</div>}
-          {executing && <div style={{ color: "#A78BFA", border: "1px solid rgba(167,139,250,.3)", borderRadius: 12, padding: 18, fontSize: 13 }}>Hermes is preparing the local project folder and visible project state.</div>}
+          {executing && <div style={{ color: "#A78BFA", border: "1px solid rgba(167,139,250,.3)", borderRadius: 12, padding: 18, fontSize: 13 }}>Hermes is routing the build to Athena, preparing the research brief, and creating the local project state.</div>}
           {generating && <div style={{ color: "#A78BFA", border: "1px solid rgba(167,139,250,.3)", borderRadius: 12, padding: 18, fontSize: 13 }}>Hermes is generating the starter app, installing dependencies, and running the build.</div>}
           {managing && <div style={{ color: "#A78BFA", border: "1px solid rgba(167,139,250,.3)", borderRadius: 12, padding: 18, fontSize: 13 }}>Running local action: {managing}</div>}
           {result?.answer && !executing && <pre style={{ color: "#D8DEEB", background: "rgba(40,50,74,.36)", borderRadius: 10, margin: 0, padding: 14, whiteSpace: "pre-wrap", wordBreak: "break-word", font: "12px/1.6 JetBrains Mono,monospace" }}>{result.answer}</pre>}
@@ -206,7 +207,7 @@ export default function BuilderOffice() {
           {rootInfo ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}>
               <span style={{ overflowWrap: "anywhere" }}><code>{rootInfo.root}</code></span>
-              <span>Folder: <strong style={{ color: rootInfo.exists ? "#34D399" : "#F87171" }}>{rootInfo.exists ? "exists" : "missing"}</strong></span>
+              <span>Folder: <strong style={{ color: rootInfo.exists ? "#34D399" : "#F87171" }}>{rootInfo.exists ? "found" : "missing"}</strong></span>
               <span>Projects found: {rootInfo.projectCount}</span>
               {rootInfo.warning && <span style={{ color: "#F87171" }}>{rootInfo.warning}</span>}
             </div>
@@ -217,6 +218,14 @@ export default function BuilderOffice() {
         <div style={card}>
           <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Project and task</div>
           {project ? <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}><strong style={{ color: "#F1F4FB" }}>{project.projectName}</strong>{project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}{copiedPath && <span style={{ color: "#34D399" }}>Folder path copied.</span>}{project.localDevUrl && <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ color: "#34D399" }}>{project.localDevUrl}</a>}{project.route && <span>{project.route}</span>}{formatDate(project.createdAt) && <span>Created: {formatDate(project.createdAt)}</span>}{project.currentTask && <span>Current task: {project.currentTask}</span>}<span>{project.taskCounts.done}/{project.taskCounts.total} tasks done</span><div><span style={badge(project.status)}>{project.status}</span></div></div> : <div style={{ color: "#4B5563", fontSize: 12 }}>No project state yet.</div>}
+        </div>
+        <div style={card}>
+          <div style={{ color: "#E879F9", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Athena Office</div>
+          {project?.researchBrief ? (
+            <pre style={{ color: "#D8DEEB", whiteSpace: "pre-wrap", wordBreak: "break-word", font: "11px/1.55 JetBrains Mono,monospace", maxHeight: 260, overflow: "auto", margin: 0 }}>{project.researchBrief}</pre>
+          ) : (
+            <div style={{ color: "#4B5563", fontSize: 12 }}>No research brief yet.</div>
+          )}
         </div>
         <div style={card}>
           <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Manage app</div>
@@ -245,7 +254,7 @@ export default function BuilderOffice() {
         </div>
         <div style={card}>
           <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Recent build record</div>
-          {build ? <div style={{ display: "flex", flexDirection: "column", gap: 9, color: "#94A3B8", fontSize: 12 }}><strong style={{ color: "#F1F4FB" }}>{build.title}</strong><div><span style={badge(build.status)}>{build.status.replace(/_/g, " ")}</span></div>{build.branchName && <span>Branch: <code>{build.branchName}</code></span>}{build.commitSha && <span>Commit: <code>{build.commitSha.slice(0, 10)}</code></span>}{build.deploymentUrl ? <a href={build.deploymentUrl} target="_blank" rel="noopener" style={{ color: "#34D399" }}>{build.deploymentUrl}</a> : <span style={{ color: "#4B5563" }}>No deployment for Local Builder v1.</span>}{build.resultSummary && <span style={{ whiteSpace: "pre-wrap" }}>{build.resultSummary}</span>}</div> : <div style={{ color: "#4B5563", fontSize: 12 }}>No code-generation build record yet.</div>}
+          {build ? <div style={{ display: "flex", flexDirection: "column", gap: 9, color: "#94A3B8", fontSize: 12 }}><strong style={{ color: "#F1F4FB" }}>{build.title}</strong><div><span style={badge(build.status)}>{build.status.replace(/_/g, " ")}</span></div>{build.branchName && <span>Branch: <code>{build.branchName}</code></span>}{build.commitSha && <span>Commit: <code>{build.commitSha.slice(0, 10)}</code></span>}{build.deploymentUrl ? <a href={build.deploymentUrl} target="_blank" rel="noopener" style={{ color: "#34D399" }}>{build.deploymentUrl}</a> : <span style={{ color: "#4B5563" }}>No deployment for local builds.</span>}{build.resultSummary && <span style={{ whiteSpace: "pre-wrap" }}>{build.resultSummary}</span>}</div> : <div style={{ color: "#4B5563", fontSize: 12 }}>No code-generation build record yet.</div>}
         </div>
         <div style={card}>
           <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Latest builder log</div>

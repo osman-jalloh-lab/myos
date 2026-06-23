@@ -66,14 +66,24 @@ export default function ChatPanel({ agentName, displayName = "Hermes", accentCol
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text, ...(agentName ? { agentName } : {}) }),
       });
-      const data = await res.json();
-      if (data.userMessage && data.reply) {
-        setMessages((prev) => [...prev.filter((m) => !m.id.startsWith("pending-")), data.userMessage, data.reply]);
+      const data = (await res.json().catch(() => null)) as {
+        userMessage?: ChatMessageView;
+        reply?: ChatMessageView;
+        error?: string;
+      } | null;
+      if (!res.ok || !data || data.error) {
+        throw new Error(data?.error ?? `Chat request failed with ${res.status}`);
       }
-    } catch {
+      if (data.userMessage && data.reply) {
+        const userMessage = data.userMessage;
+        const reply = data.reply;
+        setMessages((prev) => [...prev.filter((m) => !m.id.startsWith("pending-")), userMessage, reply]);
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : `Couldn't reach ${displayName} - check your connection and try again.`;
       setMessages((prev) => [
         ...prev,
-        { id: `err-${Date.now()}`, role: "assistant", content: `Couldn't reach ${displayName} — check your connection and try again.`, channel: "dashboard", targetAgent: agentName ?? null, createdAt: new Date().toISOString() },
+        { id: `err-${Date.now()}`, role: "assistant", content: detail, channel: "dashboard", targetAgent: agentName ?? null, createdAt: new Date().toISOString() },
       ]);
     } finally {
       setSending(false);

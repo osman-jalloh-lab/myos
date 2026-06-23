@@ -59,6 +59,7 @@ export async function GET() {
         buildError: (p.localBuildError as string | null) ?? null,
         localDevUrl: (p.localDevUrl as string | null) ?? null,
         localDevPid: (p.localDevPid as number | null) ?? null,
+        researchBrief: (p.localResearchBrief as string | null) ?? null,
         status: (p.status as string) ?? "planning",
         latestInstruction: (p.latestInstruction as string | null) ?? null,
         currentTask: latestTask?.title ?? null,
