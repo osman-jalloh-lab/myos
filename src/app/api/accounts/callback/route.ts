@@ -29,8 +29,9 @@ function verifyState(state: string): { userId: string; label: string } | null {
  * linked account in GoogleAccount, then redirects back to the dashboard.
  */
 export async function GET(request: Request) {
-  const baseUrl = process.env.NEXTAUTH_URL!;
-  const { searchParams } = new URL(request.url);
+  const requestUrl = new URL(request.url);
+  const baseUrl = requestUrl.origin;
+  const { searchParams } = requestUrl;
   const code = searchParams.get("code");
   const state = searchParams.get("state");
   const error = searchParams.get("error");

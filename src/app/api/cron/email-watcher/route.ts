@@ -60,8 +60,25 @@ export async function GET(req: Request) {
   const users = await prisma.user.findMany({ select: { id: true } });
   const now = new Date();
   const notified: string[] = [];
+  let disconnectedUsers = 0;
 
   for (const user of users) {
+    const gmailAccountCount = await prisma.googleAccount.count({
+      where: { userId: user.id, scopes: { contains: "gmail" }, expiresAt: { gt: now } },
+    });
+    if (gmailAccountCount === 0) {
+      disconnectedUsers += 1;
+      await prisma.agentRun.create({
+        data: {
+          agentName: "email-watcher",
+          inputSummary: "gmail_disconnected",
+          outputSummary: "Email Scout did not run: no connected Google account with Gmail scope. Reconnect Google from Health Center.",
+          status: "failed",
+        },
+      });
+      continue;
+    }
+
     let emails;
     try {
       emails = await fetchInboxMessages(user.id, 20);
@@ -158,6 +175,13 @@ export async function GET(req: Request) {
         console.error(`[email-watcher] Telegram send failed for "${email.subject}":`, err);
       }
     }
+  }
+
+  if (users.length > 0 && disconnectedUsers === users.length) {
+    return Response.json(
+      { ok: false, job: "email-watcher", reason: "No connected Google account with Gmail scope. Reconnect Google from Health Center." },
+      { status: 503 }
+    );
   }
 
   return Response.json({ ok: true, job: "email-watcher", notified });

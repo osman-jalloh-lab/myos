@@ -182,13 +182,15 @@ interface SkillCandidate {
 }
 
 type HealthSeverity = "healthy" | "warning" | "failure";
+type AgentOffice = "hermes" | "athena" | "builder" | "iris" | "fugu";
 
 interface HealthCenterData {
   overall: { status: HealthSeverity; score: number; message: string; lastChecked: string };
-  accounts: Array<{ name: string; connected: boolean; lastSuccessfulSync: string | null; lastError: string | null; reconnectRequired: boolean; warnings: string[]; score: number }>;
+  accounts: Array<{ name: string; connected: boolean; email?: string | null; label?: string | null; gmailScope?: boolean; calendarScope?: boolean; tokenExpiresAt?: string | null; lastSuccessfulSync: string | null; lastError: string | null; reconnectRequired: boolean; warnings: string[]; score: number }>;
   scheduledJobs: Array<{ name: string; key: string; enabled: boolean; lastRun: string | null; nextRun: string | null; lastResult: string | null; runtime: string | null; successCount: number; failureCount: number; status: "Healthy" | "Delayed" | "Failed" | "Never Ran" | "Disabled" }>;
   executors: Array<{ name: string; status: "Online" | "Offline" | "Busy"; lastRun: string | null; lastError: string | null }>;
   notifications: Array<{ name: string; lastSent: string | null; lastFailed: string | null; pendingNotifications: number; status: HealthSeverity }>;
+  apiProviders: Array<{ provider: string; configured: boolean; requiredEnvVars: string[]; source: "local env" | "Vercel/runtime"; lastTested: string | null; status: "working" | "missing" | "invalid" | "error" | "configured_untested"; safeError: string | null }>;
   logs: Array<{ timestamp: string; component: string; status: HealthSeverity; message: string }>;
   actionResult?: { ok: boolean; message: string };
 }
@@ -205,6 +207,16 @@ function timeAgo(iso: string): string {
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}h ago`;
   return `${Math.floor(h / 24)}d ago`;
+}
+
+function relativeTime(iso: string): string {
+  const target = new Date(iso).getTime();
+  const diff = target - Date.now();
+  const abs = Math.abs(diff);
+  const m = Math.floor(abs / 60000);
+  const label = m < 1 ? "now" : m < 60 ? `${m}m` : Math.floor(m / 60) < 24 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`;
+  if (label === "now") return "now";
+  return diff >= 0 ? `in ${label}` : `${label} ago`;
 }
 
 function statusColor(status: string): string {
@@ -246,6 +258,141 @@ const AGENT_COLORS: Record<string, string> = {
   prometheus: "#38BDF8",
 };
 
+function average(values: number[]): number {
+  const usable = values.filter((value) => Number.isFinite(value));
+  if (!usable.length) return 100;
+  return Math.round(usable.reduce((sum, value) => sum + value, 0) / usable.length);
+}
+
+function calculateSystemHealthScore(health: HealthCenterData | null, queue: ExecutionQueueData | null) {
+  const accountScore = health?.accounts.length
+    ? average(health.accounts.map((account) => account.connected && !account.lastError && !account.reconnectRequired ? account.score : Math.min(account.score, 55)))
+    : health ? 60 : 100;
+
+  const scheduledScore = health?.scheduledJobs.length
+    ? average(health.scheduledJobs.map((job) => {
+      if (!job.enabled || job.status === "Disabled") return 85;
+      if (job.status === "Healthy") return 100;
+      if (job.status === "Delayed" || job.status === "Never Ran") return 65;
+      return 25;
+    }))
+    : health ? 60 : 100;
+
+  const executorScore = health?.executors.length
+    ? average(health.executors.map((executor) => {
+      if (executor.status === "Online") return executor.lastError ? 70 : 100;
+      if (executor.status === "Busy") return executor.lastError ? 65 : 90;
+      return 25;
+    }))
+    : health ? 60 : 100;
+
+  const apiProviderScore = health?.apiProviders?.length
+    ? average(health.apiProviders.map((provider) => {
+      if (provider.status === "working") return 100;
+      if (provider.status === "configured_untested") return 80;
+      if (provider.status === "missing") return 45;
+      return 15;
+    }))
+    : health ? 60 : 100;
+
+  const queueCounts = queue?.counts ?? {};
+  const queueTotal = Object.values(queueCounts).reduce((sum, value) => sum + (Number(value) || 0), 0);
+  const queueScore = queueTotal
+    ? Math.max(0, Math.min(100, 100 - ((queueCounts.failed ?? 0) * 15) - ((queueCounts.waiting_approval ?? 0) * 4)))
+    : 100;
+
+  const score = average([accountScore, scheduledScore, executorScore, apiProviderScore, queueScore]);
+  const status: HealthSeverity = score >= 85 ? "healthy" : score >= 65 ? "warning" : "failure";
+
+  return {
+    score,
+    status,
+    parts: [
+      { label: "Accounts", score: accountScore },
+      { label: "Scheduled", score: scheduledScore },
+      { label: "Executors", score: executorScore },
+      { label: "APIs", score: apiProviderScore },
+      { label: "Queue", score: queueScore },
+    ],
+  };
+}
+
+function classifyRunSource(run: AgentRun): string {
+  const text = `${run.agentName} ${run.inputSummary ?? ""} ${run.outputSummary ?? ""}`.toLowerCase();
+  if (text.includes("job")) return "Job Scout";
+  if (text.includes("email") || text.includes("gmail") || text.includes("inbox")) return "Email Scout";
+  if (text.includes("qa")) return "QA";
+  if (text.includes("memory") || text.includes("iris")) return "Memory";
+  if (text.includes("builder") || text.includes("build") || text.includes("prometheus")) return "Builder";
+  return "Agent action";
+}
+
+function buildLiveActivityFeed({
+  runs,
+  builds,
+  projects,
+  approvals,
+  memoryDebug,
+  health,
+}: {
+  runs: AgentRun[];
+  builds: Build[];
+  projects: Project[];
+  approvals: ApprovalAction[];
+  memoryDebug: MemoryContextDebugData | null;
+  health: HealthCenterData | null;
+}) {
+  const items: Array<{ id: string; timestamp: string; source: string; message: string; status?: string }> = [
+    ...runs.slice(0, 20).map((run) => ({
+      id: `run-${run.id}`,
+      timestamp: run.createdAt,
+      source: classifyRunSource(run),
+      message: run.outputSummary ?? run.inputSummary ?? `${run.agentName} run`,
+      status: run.status,
+    })),
+    ...builds.slice(0, 10).map((build) => ({
+      id: `build-${build.id}`,
+      timestamp: build.completedAt ?? build.startedAt ?? build.createdAt,
+      source: "Builder",
+      message: build.resultSummary ?? build.implementationSummary ?? build.title,
+      status: build.status,
+    })),
+    ...projects.filter((project) => project.qaStatus || project.polishReview || project.designReview).slice(0, 10).map((project) => ({
+      id: `project-${project.id}`,
+      timestamp: project.updatedAt,
+      source: project.qaStatus?.startsWith("qa_") ? "QA" : "Builder",
+      message: `${project.projectName}: ${statusLabel(project.qaStatus ?? project.status)}`,
+      status: project.qaStatus ?? project.status,
+    })),
+    ...approvals.filter((approval) => approval.status === "pending").slice(0, 10).map((approval) => ({
+      id: `approval-${approval.id}`,
+      timestamp: approval.createdAt,
+      source: "Approvals",
+      message: approvalLabel(approval),
+      status: approval.status,
+    })),
+    ...(memoryDebug?.recentFailures ?? []).slice(0, 6).map((failure) => ({
+      id: `failure-${failure.tool}-${failure.timestamp}`,
+      timestamp: failure.timestamp,
+      source: "Memory",
+      message: `${failure.tool}: ${failure.reason}`,
+      status: "warning",
+    })),
+    ...(health?.logs ?? []).slice(0, 10).map((log) => ({
+      id: `health-${log.timestamp}-${log.component}`,
+      timestamp: log.timestamp,
+      source: log.component,
+      message: log.message,
+      status: log.status,
+    })),
+  ];
+
+  return items
+    .filter((item) => item.timestamp)
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, 12);
+}
+
 // ── Card & layout primitives ──────────────────────────────────────────────────
 
 const cardStyle: React.CSSProperties = {
@@ -257,9 +404,9 @@ const cardStyle: React.CSSProperties = {
 };
 
 const pillStyle = (active: boolean): React.CSSProperties => ({
-  padding: "6px 16px",
+  padding: "5px 11px",
   borderRadius: 999,
-  fontSize: 13,
+  fontSize: 12,
   fontWeight: 600,
   cursor: "pointer",
   border: active ? "1px solid #A78BFA" : "1px solid #28324A",
@@ -300,180 +447,498 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
 // ── Overview panel ────────────────────────────────────────────────────────────
 
 function OverviewPanel({
-  projects, approvals, builds, queue, onApprove, onReject, onTabSwitch,
+  projects,
+  approvals,
+  builds,
+  queue,
+  runs,
+  health,
+  memoryDebug,
+  skills,
+  chatMessages,
+  onApprove,
+  onReject,
+  onTabSwitch,
+  onOfficeSelect,
 }: {
   projects: Project[];
   approvals: ApprovalAction[];
   builds: Build[];
   queue: ExecutionQueueData | null;
+  runs: AgentRun[];
+  health: HealthCenterData | null;
+  memoryDebug: MemoryContextDebugData | null;
+  skills: SkillView[];
+  chatMessages: ChatMessage[];
   onApprove: (id: string) => Promise<void>;
   onReject: (id: string) => Promise<void>;
   onTabSwitch: (tab: Tab) => void;
+  onOfficeSelect: (office: AgentOffice) => void;
 }) {
-  const active = projects.filter((p) => ["active", "building"].includes(p.status));
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayRuns = runs.filter((r) => new Date(r.createdAt) >= todayStart);
   const pendingApprovals = approvals.filter((a) => a.status === "pending");
-  const activeQueue = (queue?.tasks ?? []).filter((t) => ["queued", "planning", "executing", "waiting_approval"].includes(t.status));
+  const activeTasks = (queue?.tasks ?? []).filter((t) => ["queued", "planning", "executing", "waiting_approval", "qa_pending"].includes(t.status));
+  const jobRunsToday = todayRuns.filter((r) => /job|athena/i.test(`${r.agentName} ${r.inputSummary ?? ""}`));
+  const emailRunsToday = todayRuns.filter((r) => /email|iris|gmail|inbox/i.test(`${r.agentName} ${r.inputSummary ?? ""}`));
+  const skillRunsToday = todayRuns.filter((r) => /skill|sophos/i.test(`${r.agentName} ${r.inputSummary ?? ""}`));
+  const buildPassed = projects.filter((p) => ["qa_passed", "completed", "Dev Server Running"].includes(p.qaStatus ?? p.status)).length + builds.filter((b) => ["completed", "deployed"].includes(b.status)).length;
+  const buildFailed = projects.filter((p) => ["qa_failed", "Build Failed", "failed"].includes(p.qaStatus ?? p.status)).length + builds.filter((b) => ["failed"].includes(b.status)).length;
+  const accountIssues = health?.accounts.filter((a) => !a.connected || a.reconnectRequired || a.lastError).length ?? 0;
+  const schedulerIssues = health?.scheduledJobs.filter((j) => ["Delayed", "Failed", "Never Ran"].includes(j.status)).length ?? 0;
+  const emailHealthy = health?.executors.find((e) => e.name === "Email Intelligence")?.status !== "Offline";
+  const memoryStatus = memoryDebug?.activeIntent ?? "ready";
+  const systemHealth = calculateSystemHealthScore(health, queue);
+  const liveActivity = buildLiveActivityFeed({ runs, builds, projects, approvals, memoryDebug, health });
+
+  const metrics = [
+    { label: "Active tasks", value: activeTasks.length, tone: "#A78BFA", tab: "overview" as Tab },
+    { label: "Queued tasks", value: queue?.counts?.queued ?? 0, tone: "#60A5FA", tab: "overview" as Tab },
+    { label: "Failed tasks", value: queue?.counts?.failed ?? 0, tone: "#F87171", tab: "overview" as Tab },
+    { label: "Completed tasks", value: queue?.counts?.completed ?? 0, tone: "#34D399", tab: "overview" as Tab },
+    { label: "Jobs found today", value: jobRunsToday.length, tone: "#E879F9", tab: "logs" as Tab },
+    { label: "Important emails", value: emailRunsToday.length, tone: "#F472B6", tab: "logs" as Tab },
+    { label: "Skills scouted", value: skillRunsToday.length || skills.length, tone: "#38BDF8", tab: "skills" as Tab },
+    { label: "Builds pass/fail", value: `${buildPassed}/${buildFailed}`, tone: buildFailed > 0 ? "#FBBF24" : "#34D399", tab: "projects" as Tab },
+  ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Metric row */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ ...missionCardStyle, padding: "10px 12px", display: "grid", gridTemplateColumns: "minmax(180px, 1fr) repeat(5, minmax(110px, auto))", gap: 10, alignItems: "center" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ color: "#F1F4FB", fontSize: 16, fontWeight: 850, fontFamily: "Fraunces, serif", lineHeight: 1 }}>Mission Control</div>
+          <div style={{ color: "#647089", fontSize: 10, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{health?.overall.message ?? "Live"} / {memoryStatus}</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(systemHealth.status), boxShadow: `0 0 14px ${statusColor(systemHealth.status)}66` }} />
+          <span style={{ color: "#94A3B8", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>System</span>
+          <strong style={{ color: "#F1F4FB", fontSize: 18, lineHeight: 1, fontFamily: "Fraunces, serif" }}>{systemHealth.score}%</strong>
+        </div>
         {[
-          { label: "Active Projects", value: active.length, color: "#34D399", tab: "projects" as Tab },
-          { label: "Pending Approvals", value: pendingApprovals.length, color: pendingApprovals.length > 0 ? "#FBBF24" : "#94A3B8", tab: "overview" as Tab },
-          { label: "Active Queue", value: activeQueue.length, color: activeQueue.length > 0 ? "#A78BFA" : "#94A3B8", tab: "overview" as Tab },
-        ].map((m) => (
-          <button
-            key={m.label}
-            onClick={() => m.tab !== "overview" && onTabSwitch(m.tab)}
-            style={{
-              ...cardStyle,
-              textAlign: "left",
-              cursor: m.tab !== "overview" ? "pointer" : "default",
-              padding: "20px 24px",
-            }}
-          >
-            <div style={{ fontSize: 32, fontWeight: 700, color: m.color, fontFamily: "Fraunces, serif" }}>
-              {m.value}
-            </div>
-            <div style={{ fontSize: 13, color: "#94A3B8", marginTop: 4 }}>{m.label}</div>
+          { label: "Accounts", value: accountIssues ? `${accountIssues} issue` : "healthy", color: accountIssues ? "#FBBF24" : "#34D399" },
+          { label: "Scheduler", value: schedulerIssues ? `${schedulerIssues} issue` : "healthy", color: schedulerIssues ? "#FBBF24" : "#34D399" },
+          { label: "Email", value: emailHealthy ? "ready" : "offline", color: emailHealthy ? "#34D399" : "#F87171" },
+          { label: "Build", value: `${buildPassed}/${buildFailed}`, color: buildFailed ? "#FBBF24" : "#34D399" },
+        ].map((item) => (
+          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 7, justifyContent: "flex-end" }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: item.color, boxShadow: `0 0 12px ${item.color}66` }} />
+            <span style={{ color: "#94A3B8", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{item.label}</span>
+            <strong style={{ color: "#F1F4FB", fontSize: 11 }}>{item.value}</strong>
+          </div>
+        ))}
+      </div>
+
+      <MissionHealthBar health={health} queue={queue} memoryDebug={memoryDebug} />
+
+      <SystemHealthScorePanel health={systemHealth} />
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
+        {metrics.map((metric) => (
+          <button key={metric.label} onClick={() => onTabSwitch(metric.tab)} style={{ ...missionCardStyle, textAlign: "left", cursor: "pointer", minHeight: 70, padding: "11px 12px" }}>
+            <div style={{ color: metric.tone, fontSize: 21, fontWeight: 850, fontFamily: "Fraunces, serif", lineHeight: 1 }}>{metric.value}</div>
+            <div style={{ color: "#94A3B8", fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 8 }}>{metric.label}</div>
           </button>
         ))}
       </div>
 
-      <div style={cardStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#94A3B8", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            Execution Queue
-          </div>
-          {queue?.lastUpdated && <span style={{ color: "#4B5563", fontSize: 11 }}>Updated {timeAgo(queue.lastUpdated)}</span>}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 10, alignItems: "start" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <AgentCommandPanel runs={runs} health={health} projects={projects} memoryDebug={memoryDebug} onTabSwitch={onTabSwitch} onOfficeSelect={onOfficeSelect} />
+          <MissionQueuePanel queue={queue} approvals={pendingApprovals} onApprove={onApprove} onReject={onReject} />
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(0, 1fr))", gap: 8, marginBottom: 14 }}>
-          {(["queued", "planning", "executing", "qa_pending", "qa_passed", "waiting_approval", "completed", "failed"] as const).map((status) => (
-            <div key={status} style={{ padding: "8px 10px", border: "1px solid #28324A", borderRadius: 8, background: "rgba(40,50,74,0.28)" }}>
-              <div style={{ color: statusColor(status), fontSize: 17, fontWeight: 800 }}>{queue?.counts?.[status] ?? 0}</div>
-              <div style={{ color: "#94A3B8", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{statusLabel(status)}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <LiveActivityFeed items={liveActivity} />
+          <ActivitySection runs={runs} builds={builds} projects={projects} skills={skills} />
+          <CompactHermesConsole initialMessages={chatMessages.filter((m) => m.channel !== "telegram").slice(-8)} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const missionCardStyle: React.CSSProperties = {
+  background: "linear-gradient(180deg, rgba(27,36,55,0.92), rgba(15,22,38,0.88))",
+  border: "1px solid rgba(93,111,143,0.28)",
+  borderRadius: 10,
+  boxShadow: "0 12px 30px rgba(0,0,0,0.18)",
+  backdropFilter: "blur(14px)",
+  padding: "12px 14px",
+};
+
+function IndicatorChip({ label, status, detail, onClick }: { label: string; status: string; detail: string; onClick?: () => void }) {
+  const color = statusColor(status);
+  return (
+    <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, padding: "7px 9px", borderRadius: 9, border: "1px solid rgba(93,111,143,0.24)", background: "rgba(8,13,24,0.44)", cursor: onClick ? "pointer" : "default", color: "#D8DEEB" }}>
+      <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, boxShadow: `0 0 16px ${color}66`, flexShrink: 0 }} />
+      <span style={{ minWidth: 0, display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+        <span style={{ color: "#F1F4FB", fontSize: 11, fontWeight: 800, lineHeight: 1 }}>{label}</span>
+        <span style={{ color: "#94A3B8", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 150 }}>{detail}</span>
+      </span>
+    </button>
+  );
+}
+
+function MissionHealthBar({ health, queue, memoryDebug }: { health: HealthCenterData | null; queue: ExecutionQueueData | null; memoryDebug: MemoryContextDebugData | null }) {
+  const accountsDisconnected = health?.accounts.filter((a) => !a.connected || a.reconnectRequired || a.lastError).length ?? 0;
+  const delayedJobs = health?.scheduledJobs.filter((j) => ["Delayed", "Failed", "Never Ran"].includes(j.status)).length ?? 0;
+  const executorIssues = health?.executors.filter((e) => e.status === "Offline" || e.lastError).length ?? 0;
+  const notificationIssues = health?.notifications.filter((n) => n.status !== "healthy" || n.lastFailed).length ?? 0;
+  const queueFailures = queue?.counts?.failed ?? 0;
+  const memoryIssues = (memoryDebug?.recentFailures.length ?? 0) + (memoryDebug?.toolHealth.filter((t) => t.status === "unavailable").length ?? 0);
+
+  return (
+    <div style={{ ...missionCardStyle, padding: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 6 }}>
+      <IndicatorChip label="Accounts" status={accountsDisconnected ? "warning" : "healthy"} detail={accountsDisconnected ? `${accountsDisconnected} need attention` : "connected"} />
+      <IndicatorChip label="Scheduled jobs" status={delayedJobs ? "warning" : "healthy"} detail={delayedJobs ? `${delayedJobs} delayed` : "on schedule"} />
+      <IndicatorChip label="Executors" status={executorIssues ? "failure" : health?.overall.status ?? "healthy"} detail={executorIssues ? `${executorIssues} issue` : "available"} />
+      <IndicatorChip label="Memory context" status={memoryIssues ? "warning" : "healthy"} detail={memoryDebug?.activeIntent ?? "ready"} />
+      <IndicatorChip label="Notifications" status={notificationIssues ? "warning" : "healthy"} detail={notificationIssues ? `${notificationIssues} warning` : "healthy"} />
+      <IndicatorChip label="Queue" status={queueFailures ? "failure" : (queue?.counts?.executing ?? 0) > 0 ? "Busy" : "healthy"} detail={`${queue?.counts?.executing ?? 0} running / ${queueFailures} failed`} />
+    </div>
+  );
+}
+
+function SystemHealthScorePanel({ health }: { health: ReturnType<typeof calculateSystemHealthScore> }) {
+  return (
+    <div style={{ ...missionCardStyle, padding: "9px 10px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "120px repeat(5, minmax(0, 1fr))", gap: 8, alignItems: "center" }}>
+        <div>
+          <div style={{ color: statusColor(health.status), fontSize: 24, lineHeight: 1, fontWeight: 900, fontFamily: "Fraunces, serif" }}>{health.score}%</div>
+          <div style={{ color: "#94A3B8", fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 4 }}>System health</div>
+        </div>
+        {health.parts.map((part) => {
+          const color = part.score >= 85 ? "#34D399" : part.score >= 65 ? "#FBBF24" : "#F87171";
+          return (
+            <div key={part.label} style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#D8DEEB", fontSize: 11, fontWeight: 800 }}>
+                <span>{part.label}</span>
+                <span style={{ color }}>{part.score}%</span>
+              </div>
+              <div style={{ height: 5, borderRadius: 999, background: "#1B253A", overflow: "hidden", marginTop: 6 }}>
+                <div style={{ width: `${part.score}%`, height: "100%", borderRadius: 999, background: color }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function LiveActivityFeed({ items }: { items: Array<{ id: string; timestamp: string; source: string; message: string; status?: string }> }) {
+  return (
+    <div style={missionCardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 8 }}>
+        <div style={{ color: "#F1F4FB", fontSize: 15, fontWeight: 850, fontFamily: "Fraunces, serif" }}>Live Activity</div>
+        <div style={{ color: "#647089", fontSize: 11 }}>{items.length ? `${items.length} recent events` : "No events yet"}</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 258, overflow: "auto", paddingRight: 4 }}>
+        {items.map((item) => (
+          <div key={item.id} style={{ display: "grid", gridTemplateColumns: "72px 94px minmax(0, 1fr)", gap: 8, alignItems: "center", padding: "7px 8px", borderRadius: 8, border: "1px solid rgba(93,111,143,0.2)", background: "rgba(8,13,24,0.35)" }}>
+            <span style={{ color: "#647089", fontSize: 10 }}>{timeAgo(item.timestamp)}</span>
+            <span style={{ color: statusColor(item.status ?? item.source), fontSize: 10, fontWeight: 850, letterSpacing: "0.04em", textTransform: "uppercase", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.source}</span>
+            <span style={{ color: "#D8DEEB", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.message}</span>
+          </div>
+        ))}
+        {!items.length && <div style={{ color: "#647089", fontSize: 12 }}>Recent events from scouts, builder, QA, memory, approvals, and agents will appear here.</div>}
+      </div>
+    </div>
+  );
+}
+
+function AgentCommandPanel({ runs, health, projects, memoryDebug, onTabSwitch, onOfficeSelect }: { runs: AgentRun[]; health: HealthCenterData | null; projects: Project[]; memoryDebug: MemoryContextDebugData | null; onTabSwitch: (tab: Tab) => void; onOfficeSelect: (office: AgentOffice) => void }) {
+  const agentKeys = ["Hermes", "Builder", "Athena", "Iris", "Mercury", "Fugu", "Kairos"];
+  const activeBuild = projects.find((p) => ["building", "active", "qa_pending", "qa_running"].includes(p.status) || ["qa_pending", "qa_running"].includes(p.qaStatus ?? ""));
+
+  const agentInfo = agentKeys.map((name) => {
+    const run = runs.find((r) => new RegExp(name === "Builder" ? "builder|prometheus|local" : name, "i").test(`${r.agentName} ${r.inputSummary ?? ""}`));
+    const executor = health?.executors.find((e) => new RegExp(name === "Builder" ? "builder|local" : name, "i").test(e.name));
+    const lastError = executor?.lastError ?? (run?.status === "failed" ? run.outputSummary : null);
+    const currentTask =
+      name === "Hermes" ? memoryDebug?.activeIntent ?? "routing" :
+      name === "Builder" ? activeBuild?.projectName ?? "idle" :
+      run?.inputSummary?.slice(0, 80) ?? "idle";
+    return {
+      name,
+      status: executor?.status ?? (lastError ? "Offline" : "Online"),
+      currentTask,
+      lastRun: executor?.lastRun ?? run?.createdAt ?? null,
+      lastError,
+      office: ({ Hermes: "hermes", Athena: "athena", Builder: "builder", Iris: "iris", Fugu: "fugu" } as Partial<Record<string, AgentOffice>>)[name],
+      tab: ({ Hermes: true, Athena: true, Builder: true, Iris: true, Fugu: true } as Record<string, boolean>)[name] ? "agents" as Tab : "logs" as Tab,
+    };
+  });
+
+  return (
+    <div style={missionCardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div>
+          <div style={{ color: "#F1F4FB", fontSize: 15, fontWeight: 850, fontFamily: "Fraunces, serif" }}>Agent Deck</div>
+        </div>
+        <button onClick={() => onTabSwitch("agents")} style={{ padding: "6px 9px", borderRadius: 8, border: "1px solid rgba(167,139,250,0.35)", background: "rgba(167,139,250,0.12)", color: "#C4B5FD", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>Open Offices</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(108px, 1fr))", gap: 7 }}>
+        {agentInfo.map((agent) => (
+          <button key={agent.name} onClick={() => { if (agent.office) onOfficeSelect(agent.office); onTabSwitch(agent.tab); }} style={{ minHeight: 108, borderRadius: 9, border: `1px solid ${statusColor(agent.status)}35`, background: "rgba(8,13,24,0.44)", padding: 9, textAlign: "left", cursor: "pointer", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                <strong style={{ color: "#F1F4FB", fontSize: 12 }}>{agent.name}</strong>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(agent.status), flexShrink: 0 }} />
+              </div>
+              <div style={{ color: "#94A3B8", fontSize: 10, marginTop: 7, lineHeight: 1.3, maxHeight: 28, overflow: "hidden" }}>{agent.currentTask}</div>
+            </div>
+            <div>
+              <div style={{ color: agent.lastError ? "#F87171" : "#647089", fontSize: 10, minHeight: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{agent.lastError ?? "no errors"}</div>
+              <div style={{ color: "#647089", fontSize: 10, marginTop: 3 }}>{agent.lastRun ? timeAgo(agent.lastRun) : "never ran"}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MissionQueuePanel({ queue, approvals, onApprove, onReject }: { queue: ExecutionQueueData | null; approvals: ApprovalAction[]; onApprove: (id: string) => Promise<void>; onReject: (id: string) => Promise<void> }) {
+  const queueStatuses = ["queued", "planning", "executing", "waiting_approval", "completed", "failed"] as const;
+  return (
+    <div style={missionCardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 8 }}>
+        <div style={{ color: "#F1F4FB", fontSize: 15, fontWeight: 850, fontFamily: "Fraunces, serif" }}>Execution Queue</div>
+        {queue?.lastUpdated && <span style={{ color: "#647089", fontSize: 11 }}>Updated {timeAgo(queue.lastUpdated)}</span>}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(92px, 1fr))", gap: 6, marginBottom: 8 }}>
+        {queueStatuses.map((status) => (
+          <div key={status} style={{ borderRadius: 9, border: "1px solid rgba(93,111,143,0.24)", background: "rgba(8,13,24,0.36)", padding: "8px 9px" }}>
+            <div style={{ color: statusColor(status), fontSize: 18, fontWeight: 900, lineHeight: 1 }}>{queue?.counts?.[status] ?? 0}</div>
+            <div style={{ color: "#94A3B8", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.05em", marginTop: 6 }}>{statusLabel(status)}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 10 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {(queue?.tasks ?? []).slice(0, 5).map((task) => (
+            <div key={task.id} style={{ padding: "8px 10px", borderRadius: 9, border: "1px solid rgba(93,111,143,0.2)", background: "rgba(15,22,38,0.6)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={badgeStyle(statusColor(task.status))}>{statusLabel(task.status)}</span>
+                <span style={{ color: "#F1F4FB", fontSize: 13, fontWeight: 700, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</span>
+                <span style={{ color: "#647089", fontSize: 11 }}>{task.assignedExecutor}</span>
+              </div>
+              {(task.result || task.logs.at(-1)) && <div style={{ color: "#94A3B8", fontSize: 10, marginTop: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.result ?? task.logs.at(-1)}</div>}
             </div>
           ))}
+          {!(queue?.tasks ?? []).length && <div style={{ color: "#647089", fontSize: 13 }}>No execution queue records yet.</div>}
         </div>
-        {queue?.tasks?.length ? (
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(220px, .6fr)", gap: 14 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {queue.tasks.slice(0, 6).map((task) => (
-                <div key={task.id} style={{ padding: "9px 10px", background: "rgba(40,50,74,0.35)", borderRadius: 8 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={badgeStyle(statusColor(task.status))}>{statusLabel(task.status)}</span>
-                    <span style={{ flex: 1, color: "#F1F4FB", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</span>
-                    <span style={{ color: "#94A3B8", fontSize: 11 }}>{task.assignedExecutor}</span>
-                    <span style={{ color: "#4B5563", fontSize: 11 }}>{timeAgo(task.updatedAt)}</span>
-                  </div>
-                  {(task.result || task.logs.at(-1)) && (
-                    <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {task.result ?? task.logs.at(-1)}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {(queue.executorHealth ?? []).slice(0, 5).map((executor) => (
-                <div key={executor.executor} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#94A3B8", fontSize: 12 }}>
-                  <span style={{ color: "#D8DEEB", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{executor.executor}</span>
-                  <span>{executor.active} active / {executor.failed} failed</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div style={{ color: "#4B5563", fontSize: 13 }}>No execution queue records yet.</div>
-        )}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        {/* Pending Approvals */}
-        <div style={cardStyle}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#94A3B8", marginBottom: 16, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            Pending Approvals
-          </div>
-          {pendingApprovals.length === 0 ? (
-            <div style={{ color: "#4B5563", fontSize: 13 }}>No pending approvals</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {pendingApprovals.slice(0, 5).map((a) => (
-                <div key={a.id} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <div style={{ fontSize: 13, color: "#F1F4FB" }}>{approvalLabel(a)}</div>
-                  <div style={{ fontSize: 11, color: "#94A3B8" }}>{timeAgo(a.createdAt)}</div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      onClick={() => onApprove(a.id)}
-                      style={{ flex: 1, padding: "6px 0", borderRadius: 8, background: "rgba(52,211,153,0.15)", border: "1px solid rgba(52,211,153,0.4)", color: "#34D399", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
-                    >
-                      Approve
-                    </button>
-                    <button
-                      onClick={() => onReject(a.id)}
-                      style={{ flex: 1, padding: "6px 0", borderRadius: 8, background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#F87171", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
-                    >
-                      Reject
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Active Projects Summary */}
-        <div style={cardStyle}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#94A3B8", marginBottom: 16, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            Active Projects
-          </div>
-          {active.length === 0 ? (
-            <div style={{ color: "#4B5563", fontSize: 13 }}>No active projects</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {active.slice(0, 3).map((p) => (
-                <div key={p.id}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                    <span style={{ fontSize: 14, color: "#F1F4FB", fontWeight: 500 }}>{p.projectName}</span>
-                    <span style={badgeStyle(statusColor(p.status))}>{statusLabel(p.status)}</span>
-                  </div>
-                  <ProgressBar done={p.taskCounts.done} total={p.taskCounts.total} />
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Recent Builds */}
-      {builds.length > 0 && (
-        <div style={cardStyle}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: "#94A3B8", marginBottom: 16, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-            Recent Builds
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {builds.slice(0, 4).map((b) => (
-              <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 12px", background: "rgba(40,50,74,0.4)", borderRadius: 10 }}>
-                <span style={badgeStyle(statusColor(b.status))}>{statusLabel(b.status)}</span>
-                <span style={{ flex: 1, fontSize: 13, color: "#F1F4FB", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{b.title}</span>
-                {b.pullRequestUrl && (
-                  <a href={b.pullRequestUrl} target="_blank" rel="noopener" style={{ fontSize: 11, color: "#60A5FA", textDecoration: "none" }}>PR</a>
-                )}
-                {b.deploymentUrl && (
-                  <a href={b.deploymentUrl} target="_blank" rel="noopener" style={{ fontSize: 11, color: "#34D399", textDecoration: "none" }}>Live</a>
-                )}
-                <span style={{ fontSize: 11, color: "#94A3B8" }}>{timeAgo(b.createdAt)}</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>Waiting Approval</div>
+          {approvals.slice(0, 3).map((approval) => (
+            <div key={approval.id} style={{ padding: 8, borderRadius: 9, border: "1px solid rgba(251,191,36,0.25)", background: "rgba(251,191,36,0.07)" }}>
+              <div style={{ color: "#F1F4FB", fontSize: 12, fontWeight: 700, marginBottom: 8 }}>{approvalLabel(approval)}</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => onApprove(approval.id)} style={{ flex: 1, padding: "6px 0", borderRadius: 8, background: "rgba(52,211,153,0.15)", border: "1px solid rgba(52,211,153,0.38)", color: "#34D399", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>Approve</button>
+                <button onClick={() => onReject(approval.id)} style={{ flex: 1, padding: "6px 0", borderRadius: 8, background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.3)", color: "#F87171", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>Reject</button>
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
+          {approvals.length === 0 && <div style={{ color: "#647089", fontSize: 12 }}>No pending approvals.</div>}
         </div>
-      )}
+      </div>
+    </div>
+  );
+}
+
+function ActivitySection({ runs, builds, projects, skills }: { runs: AgentRun[]; builds: Build[]; projects: Project[]; skills: SkillView[] }) {
+  const completedRuns = runs.filter((r) => r.status === "completed").length;
+  const failedRuns = runs.filter((r) => r.status === "failed").length;
+  const buildSuccess = builds.length + projects.length > 0 ? Math.round((projects.filter((p) => !/failed/i.test(p.status) && !/failed/i.test(p.qaStatus ?? "")).length + builds.filter((b) => b.status !== "failed").length) / Math.max(1, projects.length + builds.length) * 100) : 0;
+  const blocks = [
+    { label: "Task completion trend", value: `${completedRuns}/${completedRuns + failedRuns}`, detail: "recent agent runs", color: "#34D399" },
+    { label: "Job scout activity", value: runs.filter((r) => /job|athena/i.test(`${r.agentName} ${r.inputSummary ?? ""}`)).length, detail: "tracked signals", color: "#E879F9" },
+    { label: "Email attention activity", value: runs.filter((r) => /email|iris|gmail/i.test(`${r.agentName} ${r.inputSummary ?? ""}`)).length, detail: "recent scans", color: "#F472B6" },
+    { label: "Build success rate", value: `${buildSuccess}%`, detail: "projects and builds", color: buildSuccess >= 70 ? "#34D399" : "#FBBF24" },
+    { label: "Skill scout activity", value: skills.length, detail: "installed skills", color: "#38BDF8" },
+  ];
+
+  return (
+    <div style={missionCardStyle}>
+      <div style={{ color: "#F1F4FB", fontSize: 15, fontWeight: 850, fontFamily: "Fraunces, serif", marginBottom: 8 }}>Analytics</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 7 }}>
+        {blocks.map((block) => (
+          <div key={block.label} style={{ padding: 9, borderRadius: 9, background: "rgba(8,13,24,0.4)", border: "1px solid rgba(93,111,143,0.2)" }}>
+            <div style={{ color: block.color, fontSize: 18, fontWeight: 900, fontFamily: "Fraunces, serif", lineHeight: 1 }}>{block.value}</div>
+            <div style={{ color: "#D8DEEB", fontSize: 10, fontWeight: 800, marginTop: 6 }}>{block.label}</div>
+            <div style={{ height: 4, background: "#1B253A", borderRadius: 999, marginTop: 7, overflow: "hidden" }}>
+              <div style={{ width: typeof block.value === "string" && block.value.endsWith("%") ? block.value : `${Math.min(100, Number(block.value) * 12 || 18)}%`, height: "100%", background: block.color, borderRadius: 999 }} />
+            </div>
+            <div style={{ color: "#647089", fontSize: 9, marginTop: 5 }}>{block.detail}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CompactHermesConsole({ initialMessages }: { initialMessages: ChatMessage[] }) {
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [input, setInput] = useState("");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    setMessages(initialMessages);
+  }, [initialMessages]);
+
+  const send = async () => {
+    if (!input.trim() || sending) return;
+    const text = input.trim();
+    setInput("");
+    setSending(true);
+    setMessages((prev) => [...prev, { id: `tmp-${Date.now()}`, role: "user", content: text, channel: "dashboard", createdAt: new Date().toISOString() }]);
+    try {
+      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
+      const data = await res.json().catch(() => null) as { reply?: { content?: string } } | null;
+      if (res.ok && data?.reply?.content) {
+        setMessages((prev) => [...prev, { id: `reply-${Date.now()}`, role: "assistant", content: data.reply!.content!, channel: "dashboard", createdAt: new Date().toISOString() }]);
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div style={{ ...missionCardStyle, padding: 11 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 7 }}>
+        <div style={{ color: "#F1F4FB", fontSize: 14, fontWeight: 850, fontFamily: "Fraunces, serif" }}>Talk to Hermes</div>
+      </div>
+      <div style={{ height: 112, overflow: "auto", display: "flex", flexDirection: "column", gap: 6, paddingRight: 4 }}>
+        {messages.slice(-6).map((message) => (
+          <div key={message.id} style={{ alignSelf: message.role === "user" ? "flex-end" : "flex-start", maxWidth: "92%", padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(93,111,143,0.2)", background: message.role === "user" ? "rgba(167,139,250,0.14)" : "rgba(8,13,24,0.44)", color: "#D8DEEB", fontSize: 11, lineHeight: 1.35, whiteSpace: "pre-wrap" }}>{message.content}</div>
+        ))}
+        {messages.length === 0 && <div style={{ color: "#647089", fontSize: 12 }}>No dashboard commands yet.</div>}
+      </div>
+      <div style={{ display: "flex", gap: 7, marginTop: 8 }}>
+        <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void send(); }} placeholder="Command Hermes..." style={{ flex: 1, minWidth: 0, background: "rgba(8,13,24,0.62)", border: "1px solid rgba(93,111,143,0.32)", color: "#F1F4FB", borderRadius: 9, padding: "8px 9px", outline: "none", fontSize: 12 }} />
+        <button onClick={() => void send()} disabled={!input.trim() || sending} style={{ padding: "0 11px", borderRadius: 9, border: "1px solid rgba(167,139,250,0.35)", background: "rgba(167,139,250,0.14)", color: "#C4B5FD", fontSize: 12, fontWeight: 850, cursor: !input.trim() || sending ? "not-allowed" : "pointer", opacity: !input.trim() || sending ? 0.55 : 1 }}>{sending ? "..." : "Send"}</button>
+      </div>
     </div>
   );
 }
 
 // ── Projects panel ────────────────────────────────────────────────────────────
+
+function AgentOfficesPanel({
+  selectedOffice,
+  onOfficeSelect,
+  projects,
+  builds,
+  approvals,
+  queue,
+  runs,
+  memoryOffice,
+  memoryDebug,
+}: {
+  selectedOffice: AgentOffice;
+  onOfficeSelect: (office: AgentOffice) => void;
+  projects: Project[];
+  builds: Build[];
+  approvals: ApprovalAction[];
+  queue: ExecutionQueueData | null;
+  runs: AgentRun[];
+  memoryOffice: MemoryOfficeData | null;
+  memoryDebug: MemoryContextDebugData | null;
+}) {
+  const offices: Array<{ key: AgentOffice; label: string; detail: string; color: string }> = [
+    { key: "hermes", label: "Hermes Office", detail: "tasks, plans, approvals, queue", color: "#A78BFA" },
+    { key: "athena", label: "Athena Office", detail: "research briefs, sources, reports", color: "#E879F9" },
+    { key: "builder", label: "Builder Office", detail: "projects, builds, QA", color: "#38BDF8" },
+    { key: "iris", label: "Iris Office", detail: "memory, facts, context", color: "#2DD4BF" },
+    { key: "fugu", label: "Fugu Office", detail: "design reviews, scores, recommendations", color: "#60A5FA" },
+  ];
+
+  const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
+  const activeTasks = (queue?.tasks ?? []).filter((task) => ["queued", "planning", "executing", "waiting_approval", "qa_pending"].includes(task.status));
+  const researchProjects = projects.filter((project) => project.researchBrief);
+  const designProjects = projects.filter((project) => project.designReview || project.polishReview || typeof project.designScore === "number");
+  const qaProjects = projects.filter((project) => project.qaStatus || project.qaChecklist?.length);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 14 }}>
+          <div>
+            <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Agent Offices</div>
+            <h2 style={{ margin: "6px 0 0", fontSize: 24, fontFamily: "Fraunces, serif" }}>Operational Drilldown</h2>
+          </div>
+          <span style={{ color: "#647089", fontSize: 12 }}>Cards in Agent Deck open these offices.</span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8 }}>
+          {offices.map((office) => (
+            <button
+              key={office.key}
+              onClick={() => onOfficeSelect(office.key)}
+              style={{
+                textAlign: "left",
+                padding: "10px 11px",
+                borderRadius: 9,
+                border: selectedOffice === office.key ? `1px solid ${office.color}` : "1px solid rgba(93,111,143,0.25)",
+                background: selectedOffice === office.key ? `${office.color}18` : "rgba(8,13,24,0.38)",
+                color: "#F1F4FB",
+                cursor: "pointer",
+              }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 850 }}>{office.label}</div>
+              <div style={{ marginTop: 4, color: "#94A3B8", fontSize: 11 }}>{office.detail}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {selectedOffice === "hermes" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
+          <MemoryList title="Tasks" empty="No active tasks" items={activeTasks.map((task) => ({ key: task.id, head: task.title, body: task.description, meta: `${statusLabel(task.status)} / ${task.assignedExecutor} / ${timeAgo(task.updatedAt)}` }))} />
+          <MemoryList title="Plans" empty="No recent plans" items={builds.slice(0, 8).map((build) => ({ key: build.id, head: build.title, body: build.resultSummary ?? build.implementationSummary ?? undefined, meta: `${statusLabel(build.status)} / ${timeAgo(build.createdAt)}` }))} />
+          <MemoryList title="Approvals" empty="No pending approvals" items={pendingApprovals.map((approval) => ({ key: approval.id, head: approvalLabel(approval), meta: timeAgo(approval.createdAt) }))} />
+          <MemoryList title="Queue" empty="Queue is empty" items={(queue?.tasks ?? []).slice(0, 10).map((task) => ({ key: task.id, head: task.title, body: task.logs.at(-1) ?? task.result ?? undefined, meta: `${statusLabel(task.status)} / ${task.priority}` }))} />
+        </div>
+      )}
+
+      {selectedOffice === "athena" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
+          <MemoryList title="Research Briefs" empty="No research briefs yet" items={researchProjects.map((project) => ({ key: project.id, head: project.projectName, body: project.researchBrief?.slice(0, 520), meta: timeAgo(project.updatedAt) }))} />
+          <MemoryList title="Sources" empty="No source summaries recorded" items={runs.filter((run) => /source|research|athena/i.test(`${run.agentName} ${run.inputSummary ?? ""}`)).slice(0, 10).map((run) => ({ key: run.id, head: run.inputSummary ?? run.agentName, body: run.outputSummary ?? undefined, meta: `${run.agentName} / ${timeAgo(run.createdAt)}` }))} />
+          <MemoryList title="Reports" empty="No reports recorded" items={runs.filter((run) => /athena|research|report/i.test(`${run.agentName} ${run.outputSummary ?? ""}`)).slice(0, 10).map((run) => ({ key: run.id, head: run.inputSummary ?? "Research report", body: run.outputSummary ?? undefined, meta: timeAgo(run.createdAt) }))} />
+        </div>
+      )}
+
+      {selectedOffice === "builder" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+            <MemoryList title="Projects" empty="No builder projects" items={projects.slice(0, 8).map((project) => ({ key: project.id, head: project.projectName, body: project.currentTask ?? project.latestInstruction ?? undefined, meta: `${statusLabel(project.status)} / ${timeAgo(project.updatedAt)}` }))} />
+            <MemoryList title="Builds" empty="No builds yet" items={builds.slice(0, 8).map((build) => ({ key: build.id, head: build.title, body: build.resultSummary ?? build.sanitizedError ?? undefined, meta: statusLabel(build.status) }))} />
+            <MemoryList title="QA" empty="No QA checklists yet" items={qaProjects.slice(0, 8).map((project) => ({ key: project.id, head: project.projectName, body: project.qaChecklist?.map((item) => `${item.label}: ${item.status}`).join("\n"), meta: statusLabel(project.qaStatus ?? "qa_pending") }))} />
+          </div>
+          <BuilderOffice />
+        </div>
+      )}
+
+      {selectedOffice === "iris" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
+          <MemoryList title="Memory" empty="No memories saved" items={(memoryOffice?.memories ?? []).map((memory) => ({ key: memory.id, head: memory.fact, meta: `${memory.source ?? "memory"} / ${timeAgo(memory.createdAt)}` }))} />
+          <MemoryList title="Facts" empty="No user preferences saved" items={(memoryOffice?.userPreferences ?? []).map((memory) => ({ key: memory.id, head: memory.fact, meta: `${memory.source ?? "preference"} / ${timeAgo(memory.createdAt)}` }))} />
+          <MemoryList title="Context" empty="No context loaded" items={[{ key: "context", head: memoryDebug?.activeIntent ?? "No active intent", body: JSON.stringify(memoryDebug?.rememberedEntities ?? {}, null, 2), meta: memoryDebug?.lastUpdated ? timeAgo(memoryDebug.lastUpdated) : undefined }]} />
+          <MemoryList title="Recent Failures" empty="No recent failures" items={(memoryDebug?.recentFailures ?? []).map((failure) => ({ key: `${failure.tool}-${failure.timestamp}`, head: failure.tool, body: failure.reason, meta: timeAgo(failure.timestamp) }))} />
+        </div>
+      )}
+
+      {selectedOffice === "fugu" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
+          <MemoryList title="Design Reviews" empty="No Fugu reviews yet" items={designProjects.map((project) => ({ key: project.id, head: project.projectName, body: project.designReview ?? project.polishReview ?? undefined, meta: typeof project.designScore === "number" ? `${project.designScore}/10` : statusLabel(project.qaStatus ?? project.status) }))} />
+          <MemoryList title="Scores" empty="No scores recorded" items={designProjects.filter((project) => typeof project.designScore === "number").map((project) => ({ key: project.id, head: `${project.projectName}: ${project.designScore}/10`, body: project.polishReview ?? undefined, meta: timeAgo(project.updatedAt) }))} />
+          <MemoryList title="Recommendations" empty="No recommendations yet" items={designProjects.map((project) => ({ key: `${project.id}-rec`, head: project.projectName, body: project.designReview?.slice(0, 520) ?? project.polishReview?.slice(0, 520) ?? "Run Fugu Design Review from Builder Office.", meta: "Builder guidance only" }))} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ProjectsPanel({ projects }: { projects: Project[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -956,7 +1421,7 @@ function HealthCenterPanel({
 }: {
   data: HealthCenterData | null;
   busyAction: string | null;
-  onAction: (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout") => Promise<void>;
+  onAction: (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout" | "testApiKeys") => Promise<void>;
 }) {
   if (!data) return <div style={{ ...cardStyle, textAlign: "center", color: "#4B5563", padding: 48 }}>Health Center is loading.</div>;
 
@@ -965,6 +1430,7 @@ function HealthCenterPanel({
     ["runEmailScout", "Run Email Scout Now"],
     ["runSkillScout", "Run Skill Scout Now"],
     ["checkAllConnections", "Check All Connections"],
+    ["testApiKeys", "Test API Keys"],
     ["refreshHealth", "Refresh Health"],
   ] as const;
 
@@ -995,6 +1461,41 @@ function HealthCenterPanel({
         </div>
       )}
 
+      <div style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
+          <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>API Providers</div>
+          <div style={{ color: "#4B5563", fontSize: 11 }}>No secrets are returned to the browser.</div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(150px,1fr) 86px 120px 100px minmax(150px,1.2fr)", gap: 8, color: "#647089", fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", padding: "0 2px 8px" }}>
+          <span>Provider</span>
+          <span>Configured</span>
+          <span>Source</span>
+          <span>Status</span>
+          <span>Last tested / message</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {(data.apiProviders ?? []).map((provider) => {
+            const color = provider.status === "working" ? "#34D399" : provider.status === "configured_untested" ? "#60A5FA" : provider.status === "missing" ? "#FBBF24" : "#F87171";
+            return (
+              <div key={provider.provider} style={{ display: "grid", gridTemplateColumns: "minmax(150px,1fr) 86px 120px 100px minmax(150px,1.2fr)", gap: 8, alignItems: "center", padding: "10px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid #28324A", borderRadius: 8 }}>
+                <div>
+                  <div style={{ color: "#F1F4FB", fontSize: 13, fontWeight: 700 }}>{provider.provider}</div>
+                  {provider.requiredEnvVars.length > 0 && <div style={{ color: "#647089", fontSize: 10, marginTop: 3 }}>{provider.requiredEnvVars.join(", ")}</div>}
+                </div>
+                <span style={{ color: provider.configured ? "#34D399" : "#FBBF24", fontSize: 12, fontWeight: 800 }}>{provider.configured ? "yes" : "no"}</span>
+                <span style={{ color: "#94A3B8", fontSize: 11 }}>{provider.source}</span>
+                <span style={badgeStyle(color)}>{statusLabel(provider.status)}</span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: "#94A3B8", fontSize: 11 }}>{provider.lastTested ? timeAgo(provider.lastTested) : "not tested"}</div>
+                  {provider.safeError && <div style={{ color: provider.status === "missing" ? "#FBBF24" : provider.status === "configured_untested" ? "#60A5FA" : "#F87171", fontSize: 11, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{provider.safeError}</div>}
+                </div>
+              </div>
+            );
+          })}
+          {!(data.apiProviders ?? []).length && <div style={{ color: "#4B5563", fontSize: 13 }}>API provider health has not been loaded yet.</div>}
+        </div>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 20 }}>
         <div style={cardStyle}>
           <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 14 }}>Connected Accounts</div>
@@ -1004,16 +1505,27 @@ function HealthCenterPanel({
               return (
                 <div key={account.name} style={{ padding: "11px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid #28324A", borderRadius: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                    <strong style={{ color: "#F1F4FB", fontSize: 13 }}>{account.name}</strong>
+                    <div>
+                      <strong style={{ color: "#F1F4FB", fontSize: 13 }}>{account.email ?? account.name}</strong>
+                      <div style={{ color: "#647089", fontSize: 10, marginTop: 2 }}>{account.email ? `${account.name}${account.label ? ` / ${account.label}` : ""}` : "No account linked"}</div>
+                    </div>
                     <span style={badgeStyle(color)}>{account.connected ? "Connected" : "Disconnected"}</span>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8, color: "#94A3B8", fontSize: 11 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, marginTop: 8, color: "#94A3B8", fontSize: 11 }}>
+                    <span>Gmail Scope: <strong style={{ color: account.gmailScope ? "#34D399" : "#FBBF24" }}>{account.gmailScope ? "yes" : "no"}</strong></span>
+                    <span>Calendar Scope: <strong style={{ color: account.calendarScope ? "#34D399" : "#FBBF24" }}>{account.calendarScope ? "yes" : "no"}</strong></span>
+                    <span>Token Expires: {account.tokenExpiresAt ? relativeTime(account.tokenExpiresAt) : "unknown"}</span>
                     <span>Last Sync: {account.lastSuccessfulSync ? timeAgo(account.lastSuccessfulSync) : "Never"}</span>
-                    <span>Reconnect: {account.reconnectRequired ? "yes" : "no"}</span>
+                    <span>Reconnect Required: {account.reconnectRequired ? "yes" : "no"}</span>
                     <span>Score: {account.score}/100</span>
-                    <span style={{ color: account.lastError ? "#F87171" : "#94A3B8" }}>Last Error: {account.lastError ?? "none"}</span>
+                    <span style={{ color: account.lastError ? "#F87171" : "#94A3B8", gridColumn: "1 / -1" }}>Last Error: {account.lastError ?? "none"}</span>
                   </div>
                   {account.warnings.length > 0 && <div style={{ color: "#FBBF24", fontSize: 11, marginTop: 7 }}>{account.warnings.join(", ")}</div>}
+                  {account.reconnectRequired && (
+                    <a href={`/api/accounts/link?label=${encodeURIComponent(account.label ?? "Other")}`} style={{ display: "inline-block", marginTop: 9, color: "#60A5FA", fontSize: 11, fontWeight: 800, textDecoration: "none" }}>
+                      Reconnect Google account
+                    </a>
+                  )}
                 </div>
               );
             })}
@@ -1270,6 +1782,7 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
 
 export default function CommandCenterClient() {
   const [tab, setTab] = useState<Tab>("overview");
+  const [selectedOffice, setSelectedOffice] = useState<AgentOffice>("hermes");
   const [projects, setProjects] = useState<Project[]>([]);
   const [builds, setBuilds] = useState<Build[]>([]);
   const [approvals, setApprovals] = useState<ApprovalAction[]>([]);
@@ -1287,13 +1800,12 @@ export default function CommandCenterClient() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, tgChatRes, memoryRes, memoryDebugRes, skillsRes, queueRes, healthRes] = await Promise.allSettled([
+      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, memoryRes, memoryDebugRes, skillsRes, queueRes, healthRes] = await Promise.allSettled([
         fetch("/api/command-center/projects").then((r) => r.json() as Promise<{ projects: Project[] }>),
         fetch("/api/command-center/builds").then((r) => r.json() as Promise<{ builds: Build[] }>),
         fetch("/api/approvals").then((r) => r.json() as Promise<{ actions: ApprovalAction[] }>),
         fetch("/api/command-center/logs").then((r) => r.json() as Promise<{ runs: AgentRun[]; audit: AuditEntry[] }>),
         fetch("/api/chat").then((r) => r.json() as Promise<{ messages: ChatMessage[] }>),
-        fetch("/api/chat?channel=telegram").then((r) => r.json() as Promise<{ messages: ChatMessage[] }>),
         fetch("/api/command-center/memory-office").then((r) => r.json() as Promise<MemoryOfficeData>),
         fetch("/api/command-center/memory-context-debug").then((r) => r.json() as Promise<MemoryContextDebugData>),
         fetch("/api/command-center/skills").then((r) => r.json() as Promise<{ skills: SkillView[] }>),
@@ -1315,9 +1827,7 @@ export default function CommandCenterClient() {
       if (healthRes.status === "fulfilled" && !("error" in healthRes.value)) setHealthCenter(healthRes.value);
 
       const webMsgs = chatRes.status === "fulfilled" ? (chatRes.value.messages ?? []).map((m) => ({ ...m, channel: "dashboard" })) : [];
-      const tgMsgs = tgChatRes.status === "fulfilled" ? (tgChatRes.value.messages ?? []).map((m) => ({ ...m, channel: "telegram" })) : [];
-      const merged = [...webMsgs, ...tgMsgs].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-      setChatMessages(merged);
+      setChatMessages(webMsgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()));
     } finally {
       setLoading(false);
     }
@@ -1340,6 +1850,7 @@ export default function CommandCenterClient() {
   };
 
   const pendingCount = approvals.filter((a) => a.status === "pending").length;
+  const systemHealth = calculateSystemHealthScore(healthCenter, executionQueue);
 
   const createTestMemory = async () => {
     await fetch("/api/command-center/memory-office", {
@@ -1363,7 +1874,7 @@ export default function CommandCenterClient() {
     await fetchAll();
   };
 
-  const runHealthAction = async (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout") => {
+  const runHealthAction = async (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout" | "testApiKeys") => {
     setHealthAction(action);
     try {
       const res = await fetch("/api/command-center/health-center", {
@@ -1382,25 +1893,25 @@ export default function CommandCenterClient() {
   return (
     <div style={{ minHeight: "100vh", background: "var(--cc-bg-page, #0E1424)", color: "var(--cc-fg-primary, #F1F4FB)", fontFamily: "Hanken Grotesk, sans-serif" }}>
       {/* Header */}
-      <div style={{ borderBottom: "1px solid #28324A", padding: "0 32px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60 }}>
+      <div style={{ borderBottom: "1px solid #28324A", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 42 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <a href="/" style={{ fontSize: 12, color: "#94A3B8", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
+          <a href="/" style={{ fontSize: 11, color: "#94A3B8", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
             <span>←</span> Dashboard
           </a>
-          <div style={{ width: 1, height: 20, background: "#28324A" }} />
-          <span style={{ fontSize: 15, fontWeight: 700, fontFamily: "Fraunces, serif", color: "#A78BFA" }}>
-            Agent Control Center
+          <div style={{ width: 1, height: 16, background: "#28324A" }} />
+          <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "Fraunces, serif", color: "#D8DEEB" }}>
+            Mission Control
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#4B5563" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#4B5563" }}>
           {loading && <span>Syncing...</span>}
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(healthCenter?.overall.status ?? "healthy"), animation: "pulse 2s infinite" }} />
-          <span>{healthCenter ? `Health: ${healthCenter.overall.message}` : "Live"}</span>
+          <span>{healthCenter ? `Health: ${systemHealth.score}%` : "Live"}</span>
         </div>
       </div>
 
       {/* Tabs */}
-      <div style={{ padding: "0 32px", borderBottom: "1px solid #28324A", display: "flex", gap: 8, height: 52, alignItems: "center" }}>
+      <div style={{ padding: "0 24px", borderBottom: "1px solid #28324A", display: "flex", gap: 6, minHeight: 38, alignItems: "center", overflowX: "auto" }}>
         {(["overview", "health", "agents", "memory", "skills", "projects", "builds", "logs", "chat"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)} style={pillStyle(tab === t)}>
             {t === "health" ? "Health Center" : t.charAt(0).toUpperCase() + t.slice(1)}
@@ -1419,16 +1930,42 @@ export default function CommandCenterClient() {
       </div>
 
       {/* Content */}
-      <div style={{ padding: "28px 32px", maxWidth: 1100, margin: "0 auto" }}>
+      <div style={{ padding: "12px 24px 28px", maxWidth: tab === "overview" ? 1560 : 1100, margin: "0 auto" }}>
         {loading && projects.length === 0 ? (
           <div style={{ textAlign: "center", color: "#4B5563", padding: 64 }}>Loading...</div>
         ) : (
           <>
             {tab === "overview" && (
-              <OverviewPanel projects={projects} approvals={approvals} builds={builds} queue={executionQueue} onApprove={handleApprove} onReject={handleReject} onTabSwitch={setTab} />
+              <OverviewPanel
+                projects={projects}
+                approvals={approvals}
+                builds={builds}
+                queue={executionQueue}
+                runs={runs}
+                health={healthCenter}
+                memoryDebug={memoryContextDebug}
+                skills={skills}
+                chatMessages={chatMessages}
+                onApprove={handleApprove}
+                onReject={handleReject}
+                onTabSwitch={setTab}
+                onOfficeSelect={setSelectedOffice}
+              />
             )}
             {tab === "health" && <HealthCenterPanel data={healthCenter} busyAction={healthAction} onAction={runHealthAction} />}
-            {tab === "agents" && <BuilderOffice />}
+            {tab === "agents" && (
+              <AgentOfficesPanel
+                selectedOffice={selectedOffice}
+                onOfficeSelect={setSelectedOffice}
+                projects={projects}
+                builds={builds}
+                approvals={approvals}
+                queue={executionQueue}
+                runs={runs}
+                memoryOffice={memoryOffice}
+                memoryDebug={memoryContextDebug}
+              />
+            )}
             {tab === "memory" && <MemoryOfficePanel data={memoryOffice} debug={memoryContextDebug} onCreateTestMemory={createTestMemory} />}
             {tab === "skills" && <SkillsPanel skills={skills} candidate={skillCandidate} onScout={scoutOneSkill} />}
             {tab === "projects" && <ProjectsPanel projects={projects} />}

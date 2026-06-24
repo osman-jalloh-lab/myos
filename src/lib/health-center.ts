@@ -6,6 +6,11 @@ type HealthSeverity = "healthy" | "warning" | "failure";
 export type HealthAccount = {
   name: string;
   connected: boolean;
+  email?: string | null;
+  label?: string | null;
+  gmailScope?: boolean;
+  calendarScope?: boolean;
+  tokenExpiresAt?: string | null;
   lastSuccessfulSync: string | null;
   lastError: string | null;
   reconnectRequired: boolean;
@@ -41,6 +46,18 @@ export type NotificationHealthRow = {
   status: HealthSeverity;
 };
 
+export type ApiProviderStatus = "working" | "missing" | "invalid" | "error" | "configured_untested";
+
+export type ApiProviderHealth = {
+  provider: string;
+  configured: boolean;
+  requiredEnvVars: string[];
+  source: "local env" | "Vercel/runtime";
+  lastTested: string | null;
+  status: ApiProviderStatus;
+  safeError: string | null;
+};
+
 export type HealthLogEntry = {
   timestamp: string;
   component: string;
@@ -59,6 +76,7 @@ export type HealthCenterSnapshot = {
   scheduledJobs: ScheduledJobHealth[];
   executors: ExecutorHealthRow[];
   notifications: NotificationHealthRow[];
+  apiProviders: ApiProviderHealth[];
   logs: HealthLogEntry[];
 };
 
@@ -84,6 +102,18 @@ function hasEnv(name: string): boolean {
   return Boolean(process.env[name]?.trim());
 }
 
+function hasGmailScope(scopes: string | null | undefined): boolean {
+  return /gmail/i.test(scopes ?? "");
+}
+
+function hasCalendarScope(scopes: string | null | undefined): boolean {
+  return /calendar/i.test(scopes ?? "");
+}
+
+function runtimeSource(): ApiProviderHealth["source"] {
+  return process.env.VERCEL ? "Vercel/runtime" : "local env";
+}
+
 function includesAny(value: string | null | undefined, terms: string[]): boolean {
   const haystack = `${value ?? ""}`.toLowerCase();
   return terms.some((term) => haystack.includes(term.toLowerCase()));
@@ -94,6 +124,10 @@ function latestRun(runs: AgentRunRow[], terms: string[]): AgentRunRow | null {
     const text = `${run.agentName} ${run.inputSummary ?? ""} ${run.outputSummary ?? ""}`;
     return includesAny(text, terms);
   }) ?? null;
+}
+
+function latestHealthLog(runs: AgentRunRow[], component: string): AgentRunRow | null {
+  return runs.find((run) => run.agentName === "health-center" && run.inputSummary === `api_provider_test component=${component}`) ?? null;
 }
 
 function countRuns(runs: AgentRunRow[], terms: string[], status: "success" | "failure"): number {
@@ -178,7 +212,131 @@ export async function logHealthSnapshot(snapshot: HealthCenterSnapshot): Promise
       snapshot.notifications.some((notification) => notification.status === "failure") ? "failure" : snapshot.notifications.some((notification) => notification.status === "warning") ? "warning" : "healthy",
       snapshot.notifications.map((notification) => `${notification.name}: ${notification.status}`).join(" | ")
     ),
+    logHealth(
+      "api-providers",
+      snapshot.apiProviders.some((provider) => provider.status === "invalid" || provider.status === "error") ? "failure" : snapshot.apiProviders.some((provider) => provider.status === "missing") ? "warning" : "healthy",
+      snapshot.apiProviders.map((provider) => `${provider.provider}: ${provider.status}`).join(" | ")
+    ),
   ]);
+}
+
+function safeProviderError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? "Unknown error");
+  return message
+    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)=([^\s,;]+)/gi, "$1=[redacted]")
+    .slice(0, 280);
+}
+
+function providerRow(params: {
+  provider: string;
+  env: string[];
+  runs: AgentRunRow[];
+  component: string;
+  status?: ApiProviderStatus;
+  safeError?: string | null;
+  configured?: boolean;
+}): ApiProviderHealth {
+  const configured = params.configured ?? params.env.every(hasEnv);
+  const latest = latestHealthLog(params.runs, params.component);
+  let status = params.status;
+  let safeError = params.safeError ?? null;
+  if (!status && latest?.outputSummary) {
+    const parsed = latest.outputSummary.match(/status=([a-z_]+)/i)?.[1] as ApiProviderStatus | undefined;
+    status = parsed ?? undefined;
+    safeError = latest.outputSummary.match(/message=(.+)$/)?.[1] ?? null;
+  }
+  return {
+    provider: params.provider,
+    configured,
+    requiredEnvVars: params.env,
+    source: runtimeSource(),
+    lastTested: iso(latest?.createdAt),
+    status: status ?? (configured ? "configured_untested" : "missing"),
+    safeError: safeError ?? (configured ? null : `Missing ${params.env.filter((key) => !hasEnv(key)).join(", ")}`),
+  };
+}
+
+function providerComponent(provider: string): string {
+  return provider.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+async function testJsonEndpoint(url: string, init: RequestInit, authErrorLabel = "provider returned authentication error"): Promise<{ status: ApiProviderStatus; safeError: string | null }> {
+  try {
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
+    if (res.status === 401 || res.status === 403) return { status: "invalid", safeError: authErrorLabel };
+    if (!res.ok) return { status: "error", safeError: `Provider returned HTTP ${res.status}.` };
+    return { status: "working", safeError: null };
+  } catch (error) {
+    return { status: "error", safeError: safeProviderError(error) };
+  }
+}
+
+export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], test = false): Promise<ApiProviderHealth[]> {
+  const accounts = await prisma.googleAccount.findMany({ where: { userId } }).catch(() => []);
+  const source = runtimeSource();
+  const rows: ApiProviderHealth[] = [
+    providerRow({ provider: "OpenAI", env: ["OPENAI_API_KEY"], runs, component: providerComponent("OpenAI") }),
+    providerRow({ provider: "Anthropic / Claude", env: ["ANTHROPIC_API_KEY"], runs, component: providerComponent("Anthropic / Claude") }),
+    providerRow({ provider: "Sakana / Fugu", env: ["SAKANA_API_KEY"], runs, component: providerComponent("Sakana / Fugu") }),
+    providerRow({ provider: "Serper Web Search", env: ["SERPER_API_KEY"], runs, component: providerComponent("Serper Web Search") }),
+    providerRow({ provider: "Google APIs", env: ["GOOGLE_MAPS_API_KEY"], runs, component: providerComponent("Google APIs") }),
+    providerRow({ provider: "Gmail", env: [], runs, component: providerComponent("Gmail"), configured: accounts.some((account) => /gmail|mail\.google/i.test(account.scopes)) }),
+    providerRow({ provider: "Calendar", env: [], runs, component: providerComponent("Calendar"), configured: accounts.some((account) => /calendar/i.test(account.scopes)) }),
+    providerRow({ provider: "Telegram", env: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_CHAT_ID"], runs, component: providerComponent("Telegram") }),
+    providerRow({ provider: "GitHub", env: ["GITHUB_TOKEN"], runs, component: providerComponent("GitHub") }),
+    providerRow({ provider: "Vercel", env: ["VERCEL_TOKEN"], runs, component: providerComponent("Vercel") }),
+    providerRow({ provider: "Turso", env: ["TURSO_DATABASE_URL"], runs, component: providerComponent("Turso") }),
+  ].map((row) => ({ ...row, source }));
+
+  if (!test) return rows;
+
+  const tested: ApiProviderHealth[] = [];
+  for (const row of rows) {
+    let result: { status: ApiProviderStatus; safeError: string | null };
+    if (!row.configured) {
+      result = { status: "missing", safeError: `Missing ${row.requiredEnvVars.filter((key) => !hasEnv(key)).join(", ") || "connected account"}` };
+    } else if (row.provider === "OpenAI") {
+      result = await testJsonEndpoint("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } });
+    } else if (row.provider === "Anthropic / Claude") {
+      result = await testJsonEndpoint("https://api.anthropic.com/v1/models", { headers: { "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01" } });
+    } else if (row.provider === "Serper Web Search") {
+      result = await testJsonEndpoint("https://google.serper.dev/search", {
+        method: "POST",
+        headers: { "X-API-KEY": process.env.SERPER_API_KEY ?? "", "Content-Type": "application/json" },
+        body: JSON.stringify({ q: "health check", num: 1 }),
+      });
+    } else if (row.provider === "Telegram") {
+      result = await testJsonEndpoint(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getMe`, {});
+    } else if (row.provider === "GitHub") {
+      result = await testJsonEndpoint("https://api.github.com/user", { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, "User-Agent": "Hermes-Health-Center" } });
+    } else if (row.provider === "Vercel") {
+      result = await testJsonEndpoint("https://api.vercel.com/v2/user", { headers: { Authorization: `Bearer ${process.env.VERCEL_TOKEN}` } });
+    } else if (row.provider === "Turso") {
+      try {
+        await prisma.$queryRawUnsafe("SELECT 1");
+        result = { status: "working", safeError: null };
+      } catch (error) {
+        result = { status: "error", safeError: safeProviderError(error) };
+      }
+    } else {
+      result = { status: "configured_untested", safeError: "Configured but no safe minimal test endpoint is wired yet." };
+    }
+
+    const statusForLog: HealthSeverity = result.status === "working" || result.status === "configured_untested" ? "healthy" : result.status === "missing" ? "warning" : "failure";
+    await prisma.agentRun.create({
+      data: {
+        agentName: "health-center",
+        inputSummary: `api_provider_test component=${providerComponent(row.provider)}`,
+        outputSummary: `status=${result.status} message=${result.safeError ?? "ok"}`,
+        modelProvider: "internal",
+        status: statusForLog,
+      },
+    }).catch(() => undefined);
+
+    tested.push({ ...row, status: result.status, safeError: result.safeError, lastTested: new Date().toISOString() });
+  }
+  return tested;
 }
 
 export async function getHealthCenterSnapshot(userId: string): Promise<HealthCenterSnapshot> {
@@ -192,21 +350,27 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
     prisma.approvalAction.findMany({ where: { userId, status: "pending" }, take: 25 }).catch(() => []),
   ]);
 
-  const accountSlots = ["Gmail Account 1", "Gmail Account 2", "Gmail Account 3"];
   const gmailSync = latestRun(runs, ["gmail_sync_completed", "gmail", "email-watcher"]);
-  const accountRows: HealthAccount[] = accountSlots.map((name, index) => {
-    const account = accounts[index];
-    const expired = account ? account.expiresAt.getTime() <= Date.now() : false;
+  const linkedGoogleRows: HealthAccount[] = accounts.map((account, index) => {
+    const expired = account.expiresAt.getTime() <= Date.now();
+    const gmailScope = hasGmailScope(account.scopes);
+    const calendarScope = hasCalendarScope(account.scopes);
     const warnings = [
-      !account ? "account disconnected" : null,
       expired ? "token expired" : null,
+      !gmailScope ? "gmail scope missing" : null,
+      !calendarScope ? "calendar scope missing" : null,
     ].filter((item): item is string => Boolean(item));
     const row: HealthAccount = {
-      name,
-      connected: Boolean(account) && !expired,
+      name: `Google Account ${index + 1}`,
+      email: account.email,
+      label: account.label,
+      gmailScope,
+      calendarScope,
+      tokenExpiresAt: account.expiresAt.toISOString(),
+      connected: !expired,
       lastSuccessfulSync: gmailSync && !/fail|error/i.test(gmailSync.status) ? iso(gmailSync.createdAt) : null,
-      lastError: expired ? "OAuth token expired" : !account ? "No linked Google account" : null,
-      reconnectRequired: !account || expired,
+      lastError: expired ? "OAuth token expired" : warnings.length ? warnings.join(", ") : null,
+      reconnectRequired: expired || !gmailScope || !calendarScope,
       warnings,
       score: 0,
     };
@@ -214,11 +378,34 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
     return row;
   });
 
+  const accountRows: HealthAccount[] = linkedGoogleRows.length > 0 ? linkedGoogleRows : [{
+    name: "Google Account",
+    email: null,
+    label: null,
+    gmailScope: false,
+    calendarScope: false,
+    tokenExpiresAt: null,
+    connected: false,
+    lastSuccessfulSync: null,
+    lastError: "No linked Google account",
+    reconnectRequired: true,
+    warnings: ["account disconnected"],
+    score: 0,
+  }];
+
   const calendarAccount = accounts.find((account) => /calendar/i.test(account.scopes));
+  const gmailAccounts = accounts.filter((account) => hasGmailScope(account.scopes));
+  const hasUsableGmail = gmailAccounts.some((account) => account.expiresAt.getTime() > Date.now());
+  const hasUsableCalendar = Boolean(calendarAccount && calendarAccount.expiresAt.getTime() > Date.now());
   const calendarExpired = calendarAccount ? calendarAccount.expiresAt.getTime() <= Date.now() : false;
   const calendarRow: HealthAccount = {
     name: "Google Calendar",
-    connected: Boolean(calendarAccount) && !calendarExpired,
+    email: calendarAccount?.email ?? null,
+    label: calendarAccount?.label ?? null,
+    gmailScope: calendarAccount ? hasGmailScope(calendarAccount.scopes) : false,
+    calendarScope: Boolean(calendarAccount),
+    tokenExpiresAt: calendarAccount?.expiresAt.toISOString() ?? null,
+    connected: hasUsableCalendar,
     lastSuccessfulSync: iso(latestRun(runs, ["daily-brief", "calendar", "meeting-reminder"])?.createdAt),
     lastError: calendarExpired ? "OAuth token expired" : !calendarAccount ? "No Google account with calendar scope" : null,
     reconnectRequired: !calendarAccount || calendarExpired,
@@ -295,7 +482,7 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
     { name: "Codex Executor", status: executorStatus(latestRun(runs, ["codex_cli"]), busyExecutors.has("codex_cli"), codexStatus.available), lastRun: iso(latestRun(runs, ["codex_cli"])?.createdAt), lastError: codexStatus.available ? latestRun(runs, ["codex_cli"])?.status === "failed" ? latestRun(runs, ["codex_cli"])?.outputSummary ?? null : null : codexStatus.message },
     { name: "Fugu Critic", status: executorStatus(latestRun(runs, ["fugu"]), false, hasEnv("SAKANA_API_KEY")), lastRun: iso(latestRun(runs, ["fugu"])?.createdAt), lastError: hasEnv("SAKANA_API_KEY") ? null : "SAKANA_API_KEY is not configured" },
     { name: "Job Tracker", status: executorStatus(latestRun(runs, ["job-tracker", "job-scout"]), false, true), lastRun: iso(latestRun(runs, ["job-tracker", "job-scout"])?.createdAt), lastError: latestRun(runs, ["job-tracker", "job-scout"])?.status === "failed" ? latestRun(runs, ["job-tracker", "job-scout"])?.outputSummary ?? null : null },
-    { name: "Email Intelligence", status: executorStatus(latestRun(runs, ["email-watcher", "thread-watcher"]), false, accounts.length > 0), lastRun: iso(latestRun(runs, ["email-watcher", "thread-watcher"])?.createdAt), lastError: accounts.length > 0 ? null : "No Gmail account connected" },
+    { name: "Email Intelligence", status: executorStatus(latestRun(runs, ["email-watcher", "thread-watcher"]), false, hasUsableGmail), lastRun: iso(latestRun(runs, ["email-watcher", "thread-watcher"])?.createdAt), lastError: hasUsableGmail ? null : "No connected Google account with Gmail scope" },
   ];
 
   const notificationRows: NotificationHealthRow[] = [
@@ -311,7 +498,7 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
       lastSent: iso(latestRun(runs, ["draft_email", "email"])?.createdAt),
       lastFailed: iso(latestRun(runs, ["email failed", "gmail not accessible"])?.createdAt),
       pendingNotifications: recentApprovals.filter((approval) => approval.actionType.includes("email")).length,
-      status: accounts.length > 0 ? "healthy" : "warning",
+      status: hasUsableGmail ? "healthy" : "warning",
     },
     {
       name: "Mission Control Alerts",
@@ -321,6 +508,8 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
       status: recentApprovals.length > 0 ? "warning" : "healthy",
     },
   ];
+
+  const apiProviders = await getApiProviderHealth(userId, runs, false);
 
   const healthLogs = runs
     .filter((run) => run.agentName === "health-center")
@@ -361,6 +550,7 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
     scheduledJobs,
     executors: executorRows,
     notifications: notificationRows,
+    apiProviders,
     logs: healthLogs,
   };
 }

@@ -26,7 +26,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { searchParams } = new URL(request.url);
+  const requestUrl = new URL(request.url);
+  const { searchParams } = requestUrl;
   const label = searchParams.get("label") ?? "Other";
   if (!VALID_LABELS.has(label)) {
     return NextResponse.json({ error: "Invalid label" }, { status: 400 });
@@ -36,7 +37,7 @@ export async function GET(request: Request) {
   const payload = `${session.user.id}:${label}:${nonce}`;
   const state = signState(payload);
 
-  const redirectUri = `${process.env.NEXTAUTH_URL}/api/accounts/callback`;
+  const redirectUri = `${requestUrl.origin}/api/accounts/callback`;
 
   const params = new URLSearchParams({
     client_id: process.env.AUTH_GOOGLE_ID!,

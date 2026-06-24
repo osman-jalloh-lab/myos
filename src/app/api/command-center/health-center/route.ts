@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { createHealthLog, getHealthCenterSnapshot, logHealthSnapshot } from "@/lib/health-center";
+import { createHealthLog, getApiProviderHealth, getHealthCenterSnapshot, logHealthSnapshot } from "@/lib/health-center";
 import { GET as runJobScout } from "@/app/api/cron/job-scout/route";
 import { GET as runEmailScout } from "@/app/api/cron/email-watcher/route";
 import { GET as runSkillScout } from "@/app/api/cron/skills-scout/route";
@@ -10,7 +10,8 @@ type HealthAction =
   | "checkAllConnections"
   | "runJobScout"
   | "runEmailScout"
-  | "runSkillScout";
+  | "runSkillScout"
+  | "testApiKeys";
 
 function cronRequest(path: string): Request {
   return new Request(`http://localhost${path}`, {
@@ -76,6 +77,24 @@ export async function POST(req: Request) {
       ...(await getHealthCenterSnapshot(session.user.id)),
       actionResult: result,
     }, { status: result.ok ? 200 : 500 });
+  }
+
+  if (action === "testApiKeys") {
+    const runs = await import("@/lib/db").then(({ prisma }) => prisma.agentRun.findMany({ orderBy: { createdAt: "desc" }, take: 250 }));
+    const apiProviders = await getApiProviderHealth(session.user.id, runs, true);
+    await createHealthLog(
+      "api-providers",
+      apiProviders.some((provider) => provider.status === "invalid" || provider.status === "error") ? "failure" : apiProviders.some((provider) => provider.status === "missing") ? "warning" : "healthy",
+      apiProviders.map((provider) => `${provider.provider}: ${provider.status}`).join(" | ")
+    );
+    return NextResponse.json({
+      ...(await getHealthCenterSnapshot(session.user.id)),
+      apiProviders,
+      actionResult: {
+        ok: true,
+        message: "API key tests completed. Restart npm run dev after local .env.local changes; redeploy after Vercel env changes.",
+      },
+    });
   }
 
   return NextResponse.json({ error: "Unsupported health action" }, { status: 400 });
