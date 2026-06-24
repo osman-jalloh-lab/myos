@@ -2,11 +2,15 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import {
   generateLocalStarterApp,
+  getCodexCliStatus,
   getLocalBuilderRootInfo,
   type LocalBuildProject,
   openLocalProjectFolder,
   prepareLocalBuildProject,
   rebuildLocalStarterApp,
+  runLocalCodexExecutor,
+  runLocalFuguDesignReview,
+  runLocalBuilderQa,
   startLocalDevServer,
   stopLocalDevServer,
 } from "@/lib/local-builder";
@@ -15,7 +19,7 @@ function projectView(project: LocalBuildProject) {
   return {
     ...project,
     route: null,
-    taskCounts: { done: ["Brief Ready", "Build Passed", "Dev Server Running"].includes(project.status) ? 1 : 0, total: 1 },
+    taskCounts: { done: project.status === "completed" ? 1 : 0, total: 1 },
   };
 }
 
@@ -28,6 +32,9 @@ function responseFor(project: ReturnType<typeof projectView>, action: string, fa
       project.localDevUrl ? `URL: ${project.localDevUrl}` : null,
       `Status: ${project.status}`,
       project.researchBrief ? "Athena brief: ready" : null,
+      project.designReview ? `Fugu design review: ready${project.designScore ? ` (${project.designScore}/10)` : ""}` : null,
+      project.polishReview ? "Fugu polish review: ready" : null,
+      project.qaStatus ? `QA: ${project.qaStatus}` : null,
       project.buildError ? `First error: ${project.buildError}` : null,
     ].filter(Boolean).join("\n"),
     project,
@@ -50,7 +57,8 @@ export async function GET() {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  return NextResponse.json({ root: await getLocalBuilderRootInfo() });
+  const [root, codex] = await Promise.all([getLocalBuilderRootInfo(), getCodexCliStatus()]);
+  return NextResponse.json({ root, codex });
 }
 
 export async function POST(req: Request) {
@@ -77,7 +85,10 @@ export async function POST(req: Request) {
         `Status: ${project.status}`,
         `Current task: ${project.currentTask}`,
         project.researchBrief ? "Athena brief used: yes" : "Athena brief used: no",
-        project.buildError ? `First error: ${project.buildError}` : "npm install and npm run build passed.",
+        project.designReview ? "Fugu design review used: yes" : "Fugu design review used: no",
+        project.polishReview ? "Fugu polish review: ready" : "Fugu polish review: pending",
+        project.qaStatus ? `QA status: ${project.qaStatus}` : "QA status: pending",
+        project.buildError ? `First error: ${project.buildError}` : "npm install and npm run build passed. QA checklist is required before completion.",
       ].join("\n"),
       project: view,
       toolCalls: [{ id: "local_build_generate", tool: "internal.localBuilder.generateStarterApp", status: failed ? "failed" : "completed", error: project.buildError ?? undefined, result: project, startedAt: new Date().toISOString(), completedAt: new Date().toISOString() }],
@@ -105,6 +116,22 @@ export async function POST(req: Request) {
     return responseFor(projectView(project), "rebuild", project.status === "Build Failed");
   }
 
+  if (action === "fuguDesignReview") {
+    const project = await runLocalFuguDesignReview(session.user.id, projectId!);
+    return responseFor(projectView(project), "fuguDesignReview");
+  }
+
+  if (action === "runQa") {
+    const project = await runLocalBuilderQa(session.user.id, projectId!);
+    return responseFor(projectView(project), "runQa", project.status === "qa_failed");
+  }
+
+  if (action === "runCodex") {
+    const improvementPrompt = message || "Improve this local app so it feels complete, polished, interactive, and ready to pass the Builder QA checklist.";
+    const project = await runLocalCodexExecutor(session.user.id, projectId!, improvementPrompt);
+    return responseFor(projectView(project), "runCodex", project.status === "failed" || project.status === "qa_failed");
+  }
+
   if (!message) {
     return NextResponse.json({ error: "message is required" }, { status: 400 });
   }
@@ -130,6 +157,7 @@ export async function POST(req: Request) {
       `Current task: ${project.currentTask}`,
       "",
       "Athena research brief is ready.",
+      "Fugu design review is optional. Run Fugu Design Review when the app feels too basic.",
       "",
       "Ready for Generate app.",
     ].join("\n"),
@@ -152,6 +180,16 @@ export async function POST(req: Request) {
         metadata: {
           projectId: project.id,
           status: project.status,
+        },
+      },
+      {
+        type: "design_review",
+        title: `Fugu design review for ${project.projectName}`,
+        content: project.designReview ?? undefined,
+        metadata: {
+          projectId: project.id,
+          status: project.status,
+          designScore: project.designScore,
         },
       },
       {

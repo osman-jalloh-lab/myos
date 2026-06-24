@@ -4,6 +4,11 @@
 
 import { prisma } from "@/lib/db";
 import { getTool } from "./tool-registry";
+import {
+  createExecutionQueueTask,
+  updateExecutionQueueTask,
+  type ExecutionQueueStatus,
+} from "@/lib/execution-queue";
 import type {
   ExecutionPlan,
   ExecutionRequest,
@@ -12,6 +17,8 @@ import type {
   ExecutionArtifact,
   ToolContext,
 } from "./types";
+
+type QueueHandle = { id: string } | null;
 
 // ── blocked actions (always blocked, no approval possible) ───────────────────
 
@@ -42,6 +49,16 @@ export async function execute(
   };
 
   console.log(`[hermes-execution] intent=${plan.intent} steps=${plan.steps.length} user=${req.userId}`);
+  const queueTask = await createQueueTask(req, plan).catch(() => null);
+  await updateQueue(req.userId, queueTask, {
+    status: "planning",
+    log: `Plan created for intent "${plan.intent}" with ${plan.steps.length} step(s).`,
+  });
+  await updateQueue(req.userId, queueTask, {
+    status: "executing",
+    assignedExecutor: plan.steps[0]?.tool ?? "hermes",
+    log: "Execution started.",
+  });
 
   for (const step of plan.steps) {
 
@@ -60,6 +77,12 @@ export async function execute(
       toolCalls.push(call);
       console.log(`[hermes-execution] BLOCKED tool=${step.tool}`);
       await logRun(req.userId, plan.intent, step.tool, "blocked", call.error);
+      await updateQueue(req.userId, queueTask, {
+        status: "failed",
+        assignedExecutor: step.tool,
+        error: call.error,
+        log: `Blocked by safety policy: ${step.tool}.`,
+      });
       return {
         status: "blocked",
         answer: `This action is blocked for safety: "${step.tool}" cannot be executed automatically. Please do it manually.`,
@@ -85,6 +108,12 @@ export async function execute(
       toolCalls.push(call);
       console.error(`[hermes-execution] MISSING tool=${step.tool}`);
       await logRun(req.userId, plan.intent, step.tool, "failed", call.error);
+      await updateQueue(req.userId, queueTask, {
+        status: "failed",
+        assignedExecutor: step.tool,
+        error: call.error,
+        log: `Tool missing: ${step.tool}.`,
+      });
       return {
         status: "failed",
         answer: `Execution stopped: tool "${step.tool}" is not available yet. Check the execution layer setup.`,
@@ -121,6 +150,12 @@ export async function execute(
           call.completedAt = new Date().toISOString();
           if (res.artifacts) artifacts.push(...res.artifacts);
           await logRun(req.userId, plan.intent, step.tool, "approval_required", res.answer);
+          await updateQueue(req.userId, queueTask, {
+            status: "waiting_approval",
+            assignedExecutor: step.tool,
+            result: res.answer ?? "Approval required.",
+            log: `Waiting for approval from ${step.tool}.`,
+          });
           return {
             status: "approval_required",
             answer: res.answer ?? "I can do that, but I need your approval first.",
@@ -138,6 +173,12 @@ export async function execute(
           call.error = err instanceof Error ? err.message : String(err);
           call.completedAt = new Date().toISOString();
           await logRun(req.userId, plan.intent, step.tool, "failed", call.error);
+          await updateQueue(req.userId, queueTask, {
+            status: "failed",
+            assignedExecutor: step.tool,
+            error: call.error,
+            log: `Approval queue failed for ${step.tool}.`,
+          });
           // Do NOT return approval_required here — the tool threw before it could
           // create an ApprovalAction row. Returning approval_required would tell
           // the user "pending approval" when nothing is actually in the queue.
@@ -163,6 +204,11 @@ export async function execute(
     };
     toolCalls.push(call);
     console.log(`[hermes-execution] RUNNING tool=${step.tool} step=${step.id}`);
+    await updateQueue(req.userId, queueTask, {
+      status: "executing",
+      assignedExecutor: step.tool,
+      log: `Running ${step.tool}.`,
+    });
 
     try {
       const inputWithPrev = {
@@ -187,6 +233,11 @@ export async function execute(
       if (res.artifacts) artifacts.push(...res.artifacts);
       console.log(`[hermes-execution] SUCCESS tool=${step.tool}`);
       await logRun(req.userId, plan.intent, step.tool, "completed", (res.answer ?? "").slice(0, 500));
+      await updateQueue(req.userId, queueTask, {
+        status: "executing",
+        assignedExecutor: step.tool,
+        log: `Completed ${step.tool}.`,
+      });
 
     } catch (err) {
       call.status = "failed";
@@ -194,6 +245,12 @@ export async function execute(
       call.completedAt = new Date().toISOString();
       console.error(`[hermes-execution] FAILED tool=${step.tool}`, err);
       await logRun(req.userId, plan.intent, step.tool, "failed", call.error);
+      await updateQueue(req.userId, queueTask, {
+        status: "failed",
+        assignedExecutor: step.tool,
+        error: call.error,
+        log: `Failed at ${step.tool}.`,
+      });
       return {
         status: "failed",
         answer: `Execution failed at step "${step.tool}": ${call.error}`,
@@ -208,6 +265,11 @@ export async function execute(
 
   const lastResult = previousResults[plan.steps[plan.steps.length - 1]?.id ?? ""];
   const lastAnswer = (lastResult as { answer?: string })?.answer ?? "Done.";
+  await updateQueue(req.userId, queueTask, {
+    status: "completed",
+    result: lastAnswer,
+    log: "Execution completed.",
+  });
 
   return {
     status: "completed",
@@ -219,6 +281,34 @@ export async function execute(
 }
 
 // ── logging (reuses existing AgentRun table) ──────────────────────────────────
+
+async function createQueueTask(req: ExecutionRequest, plan: ExecutionPlan): Promise<QueueHandle> {
+  const tools = plan.steps.map((step) => step.tool).join(", ") || "hermes";
+  const task = await createExecutionQueueTask({
+    userId: req.userId,
+    title: plan.intent.replace(/_/g, " "),
+    description: req.message,
+    priority: plan.steps.some((step) => step.risk === "dangerous" || step.requiresApproval) ? "high" : "medium",
+    assignedExecutor: plan.steps[0]?.tool ?? "hermes",
+    initialLog: `Queued from ${req.source}. Tools: ${tools}.`,
+  });
+  return { id: task.id };
+}
+
+async function updateQueue(
+  userId: string,
+  task: QueueHandle,
+  updates: {
+    status?: ExecutionQueueStatus;
+    assignedExecutor?: string;
+    result?: string | null;
+    error?: string | null;
+    log?: string;
+  }
+): Promise<void> {
+  if (!task) return;
+  await updateExecutionQueueTask(userId, task.id, updates).catch(() => undefined);
+}
 
 async function logRun(
   _userId: string,

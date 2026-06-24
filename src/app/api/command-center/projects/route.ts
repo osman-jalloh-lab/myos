@@ -11,6 +11,16 @@ function getDb() {
 
 type DbRow = Record<string, unknown>;
 
+function parseJsonArray(value: unknown): unknown[] | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET() {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -60,6 +70,11 @@ export async function GET() {
         localDevUrl: (p.localDevUrl as string | null) ?? null,
         localDevPid: (p.localDevPid as number | null) ?? null,
         researchBrief: (p.localResearchBrief as string | null) ?? null,
+        designReview: (p.localDesignReview as string | null) ?? null,
+        polishReview: (p.localPolishReview as string | null) ?? null,
+        designScore: (p.designScore as number | null) ?? null,
+        qaStatus: (p.localQaStatus as string | null) ?? null,
+        qaChecklist: parseJsonArray(p.localQaChecklist),
         status: (p.status as string) ?? "planning",
         latestInstruction: (p.latestInstruction as string | null) ?? null,
         currentTask: latestTask?.title ?? null,

@@ -13,6 +13,13 @@ interface ProjectTask {
   nextStep: string | null;
 }
 
+interface QaItem {
+  key: string;
+  label: string;
+  status: "passed" | "failed" | "skipped";
+  detail: string;
+}
+
 interface Project {
   id: string;
   projectName: string;
@@ -24,6 +31,11 @@ interface Project {
   localDevUrl: string | null;
   localDevPid: number | null;
   researchBrief: string | null;
+  designReview: string | null;
+  polishReview: string | null;
+  designScore: number | null;
+  qaStatus: string | null;
+  qaChecklist: QaItem[] | null;
   status: string;
   latestInstruction: string | null;
   currentTask: string | null;
@@ -86,6 +98,35 @@ interface AuditEntry {
   createdAt: string;
 }
 
+interface ExecutionQueueTask {
+  id: string;
+  title: string;
+  description: string;
+  status: "queued" | "planning" | "executing" | "qa_pending" | "qa_passed" | "waiting_approval" | "completed" | "failed";
+  priority: string;
+  assignedExecutor: string;
+  projectId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  result: string | null;
+  logs: string[];
+}
+
+interface ExecutorHealth {
+  executor: string;
+  active: number;
+  failed: number;
+  completed: number;
+  lastUpdated: string;
+}
+
+interface ExecutionQueueData {
+  tasks: ExecutionQueueTask[];
+  counts: Record<string, number>;
+  executorHealth: ExecutorHealth[];
+  lastUpdated: string;
+}
+
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -127,7 +168,19 @@ interface SkillCandidate {
   createdAt: string;
 }
 
-type Tab = "overview" | "agents" | "memory" | "skills" | "projects" | "builds" | "logs" | "chat";
+type HealthSeverity = "healthy" | "warning" | "failure";
+
+interface HealthCenterData {
+  overall: { status: HealthSeverity; score: number; message: string; lastChecked: string };
+  accounts: Array<{ name: string; connected: boolean; lastSuccessfulSync: string | null; lastError: string | null; reconnectRequired: boolean; warnings: string[]; score: number }>;
+  scheduledJobs: Array<{ name: string; key: string; enabled: boolean; lastRun: string | null; nextRun: string | null; lastResult: string | null; runtime: string | null; successCount: number; failureCount: number; status: "Healthy" | "Delayed" | "Failed" | "Never Ran" | "Disabled" }>;
+  executors: Array<{ name: string; status: "Online" | "Offline" | "Busy"; lastRun: string | null; lastError: string | null }>;
+  notifications: Array<{ name: string; lastSent: string | null; lastFailed: string | null; pendingNotifications: number; status: HealthSeverity }>;
+  logs: Array<{ timestamp: string; component: string; status: HealthSeverity; message: string }>;
+  actionResult?: { ok: boolean; message: string };
+}
+
+type Tab = "overview" | "health" | "agents" | "memory" | "skills" | "projects" | "builds" | "logs" | "chat";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -143,10 +196,15 @@ function timeAgo(iso: string): string {
 
 function statusColor(status: string): string {
   switch (status) {
-    case "active": case "completed": case "done": case "deployed": case "Ready to Build": case "Brief Ready": case "Build Passed": case "Dev Server Running": return "#34D399";
-    case "planning": case "approved": case "queued": return "#60A5FA";
-    case "in_progress": case "building": case "running": case "implementation_running": case "validation_running": case "Researching": case "Generating": case "Installing": case "Building": return "#A78BFA";
-    case "blocked": case "failed": case "Build Failed": return "#F87171";
+    case "healthy": case "Healthy": case "Online": return "#34D399";
+    case "warning": case "Delayed": case "Never Ran": return "#FBBF24";
+    case "failure": case "Failed": case "Offline": return "#F87171";
+    case "Busy": return "#A78BFA";
+    case "active": case "completed": case "done": case "deployed": case "qa_passed": case "Ready to Build": case "Brief Ready": case "Dev Server Running": return "#34D399";
+    case "planning": case "approved": case "queued": case "qa_pending": return "#60A5FA";
+    case "in_progress": case "building": case "running": case "executing": case "qa_running": case "implementation_running": case "validation_running": case "Researching": case "Generating": case "Installing": case "Building": return "#A78BFA";
+    case "waiting_approval": return "#FBBF24";
+    case "blocked": case "failed": case "qa_failed": case "Build Failed": return "#F87171";
     case "Dev Server Stopped": return "#60A5FA";
     default: return "#94A3B8";
   }
@@ -229,18 +287,19 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
 // ── Overview panel ────────────────────────────────────────────────────────────
 
 function OverviewPanel({
-  projects, approvals, builds, onApprove, onReject, onTabSwitch,
+  projects, approvals, builds, queue, onApprove, onReject, onTabSwitch,
 }: {
   projects: Project[];
   approvals: ApprovalAction[];
   builds: Build[];
+  queue: ExecutionQueueData | null;
   onApprove: (id: string) => Promise<void>;
   onReject: (id: string) => Promise<void>;
   onTabSwitch: (tab: Tab) => void;
 }) {
   const active = projects.filter((p) => ["active", "building"].includes(p.status));
   const pendingApprovals = approvals.filter((a) => a.status === "pending");
-  const runningBuilds = builds.filter((b) => ["running", "queued"].includes(b.status));
+  const activeQueue = (queue?.tasks ?? []).filter((t) => ["queued", "planning", "executing", "waiting_approval"].includes(t.status));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -249,7 +308,7 @@ function OverviewPanel({
         {[
           { label: "Active Projects", value: active.length, color: "#34D399", tab: "projects" as Tab },
           { label: "Pending Approvals", value: pendingApprovals.length, color: pendingApprovals.length > 0 ? "#FBBF24" : "#94A3B8", tab: "overview" as Tab },
-          { label: "Running Builds", value: runningBuilds.length, color: "#A78BFA", tab: "builds" as Tab },
+          { label: "Active Queue", value: activeQueue.length, color: activeQueue.length > 0 ? "#A78BFA" : "#94A3B8", tab: "overview" as Tab },
         ].map((m) => (
           <button
             key={m.label}
@@ -267,6 +326,54 @@ function OverviewPanel({
             <div style={{ fontSize: 13, color: "#94A3B8", marginTop: 4 }}>{m.label}</div>
           </button>
         ))}
+      </div>
+
+      <div style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "#94A3B8", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+            Execution Queue
+          </div>
+          {queue?.lastUpdated && <span style={{ color: "#4B5563", fontSize: 11 }}>Updated {timeAgo(queue.lastUpdated)}</span>}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(8, minmax(0, 1fr))", gap: 8, marginBottom: 14 }}>
+          {(["queued", "planning", "executing", "qa_pending", "qa_passed", "waiting_approval", "completed", "failed"] as const).map((status) => (
+            <div key={status} style={{ padding: "8px 10px", border: "1px solid #28324A", borderRadius: 8, background: "rgba(40,50,74,0.28)" }}>
+              <div style={{ color: statusColor(status), fontSize: 17, fontWeight: 800 }}>{queue?.counts?.[status] ?? 0}</div>
+              <div style={{ color: "#94A3B8", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{statusLabel(status)}</div>
+            </div>
+          ))}
+        </div>
+        {queue?.tasks?.length ? (
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.4fr) minmax(220px, .6fr)", gap: 14 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {queue.tasks.slice(0, 6).map((task) => (
+                <div key={task.id} style={{ padding: "9px 10px", background: "rgba(40,50,74,0.35)", borderRadius: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={badgeStyle(statusColor(task.status))}>{statusLabel(task.status)}</span>
+                    <span style={{ flex: 1, color: "#F1F4FB", fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.title}</span>
+                    <span style={{ color: "#94A3B8", fontSize: 11 }}>{task.assignedExecutor}</span>
+                    <span style={{ color: "#4B5563", fontSize: 11 }}>{timeAgo(task.updatedAt)}</span>
+                  </div>
+                  {(task.result || task.logs.at(-1)) && (
+                    <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 5, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {task.result ?? task.logs.at(-1)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {(queue.executorHealth ?? []).slice(0, 5).map((executor) => (
+                <div key={executor.executor} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#94A3B8", fontSize: 12 }}>
+                  <span style={{ color: "#D8DEEB", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{executor.executor}</span>
+                  <span>{executor.active} active / {executor.failed} failed</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div style={{ color: "#4B5563", fontSize: 13 }}>No execution queue records yet.</div>
+        )}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
@@ -409,12 +516,56 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
             </div>
           )}
 
+          {(p.qaStatus || p.qaChecklist?.length) && (
+            <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(251,191,36,0.07)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 8 }}>
+                <div style={{ fontSize: 11, color: "#FBBF24", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  Local builder QA
+                </div>
+                {p.qaStatus && <span style={badgeStyle(statusColor(p.qaStatus))}>{statusLabel(p.qaStatus)}</span>}
+              </div>
+              {p.qaChecklist?.length ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 8 }}>
+                  {p.qaChecklist.map((item) => (
+                    <div key={item.key} style={{ display: "grid", gridTemplateColumns: "18px minmax(0,1fr)", gap: 7, color: "#94A3B8", fontSize: 11 }}>
+                      <span style={{ color: qaColor(item.status), fontWeight: 800 }}>{item.status === "passed" ? "✓" : item.status === "failed" ? "!" : "-"}</span>
+                      <span><strong style={{ color: "#D8DEEB" }}>{item.label}</strong><br />{item.detail}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ color: "#94A3B8", fontSize: 12 }}>QA checklist has not been run yet.</div>
+              )}
+            </div>
+          )}
+
           {p.researchBrief && (
             <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(232,121,249,0.08)", border: "1px solid rgba(232,121,249,0.22)", borderRadius: 8 }}>
               <div style={{ fontSize: 11, color: "#E879F9", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
                 Athena research brief
               </div>
               <pre style={{ margin: 0, maxHeight: 180, overflow: "auto", font: "11px/1.5 JetBrains Mono,monospace", color: "#D8DEEB", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{p.researchBrief}</pre>
+            </div>
+          )}
+
+          {p.designReview && (
+            <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.22)", borderRadius: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 8 }}>
+                <div style={{ fontSize: 11, color: "#38BDF8", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                  Fugu design review
+                </div>
+                {typeof p.designScore === "number" && <span style={badgeStyle("#38BDF8")}>{p.designScore}/10</span>}
+              </div>
+              <pre style={{ margin: 0, maxHeight: 180, overflow: "auto", font: "11px/1.5 JetBrains Mono,monospace", color: "#D8DEEB", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{p.designReview}</pre>
+            </div>
+          )}
+
+          {p.polishReview && (
+            <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.22)", borderRadius: 8 }}>
+              <div style={{ fontSize: 11, color: "#34D399", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
+                Fugu polish review
+              </div>
+              <pre style={{ margin: 0, maxHeight: 160, overflow: "auto", font: "11px/1.5 JetBrains Mono,monospace", color: "#D8DEEB", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{p.polishReview}</pre>
             </div>
           )}
 
@@ -467,6 +618,12 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
       ))}
     </div>
   );
+}
+
+function qaColor(status: QaItem["status"]): string {
+  if (status === "passed") return "#34D399";
+  if (status === "failed") return "#F87171";
+  return "#94A3B8";
 }
 
 function MemoryOfficePanel({ data, onCreateTestMemory }: { data: MemoryOfficeData | null; onCreateTestMemory: () => Promise<void> }) {
@@ -683,6 +840,152 @@ function BuildsPanel({ builds }: { builds: Build[] }) {
 
 // ── Logs panel ────────────────────────────────────────────────────────────────
 
+function HealthCenterPanel({
+  data,
+  busyAction,
+  onAction,
+}: {
+  data: HealthCenterData | null;
+  busyAction: string | null;
+  onAction: (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout") => Promise<void>;
+}) {
+  if (!data) return <div style={{ ...cardStyle, textAlign: "center", color: "#4B5563", padding: 48 }}>Health Center is loading.</div>;
+
+  const actionButtons = [
+    ["runJobScout", "Run Job Scout Now"],
+    ["runEmailScout", "Run Email Scout Now"],
+    ["runSkillScout", "Run Skill Scout Now"],
+    ["checkAllConnections", "Check All Connections"],
+    ["refreshHealth", "Refresh Health"],
+  ] as const;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ ...cardStyle, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 18 }}>
+        <div>
+          <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>Health Center</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: statusColor(data.overall.status), display: "inline-block" }} />
+            <strong style={{ color: "#F1F4FB", fontSize: 22, fontFamily: "Fraunces, serif" }}>{data.overall.message}</strong>
+            <span style={badgeStyle(statusColor(data.overall.status))}>{data.overall.score}/100</span>
+          </div>
+          <div style={{ color: "#94A3B8", fontSize: 12, marginTop: 8 }}>Last checked {timeAgo(data.overall.lastChecked)}</div>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "flex-end" }}>
+          {actionButtons.map(([action, label]) => (
+            <button key={action} onClick={() => void onAction(action)} disabled={Boolean(busyAction)} style={{ padding: "8px 11px", borderRadius: 8, border: "1px solid #28324A", background: "rgba(40,50,74,0.5)", color: "#D8DEEB", cursor: busyAction ? "not-allowed" : "pointer", opacity: busyAction ? 0.55 : 1, fontSize: 12, fontWeight: 700 }}>
+              {busyAction === action ? "Running..." : label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {data.actionResult && (
+        <div style={{ ...cardStyle, borderColor: data.actionResult.ok ? "rgba(52,211,153,0.35)" : "rgba(248,113,113,0.35)", color: data.actionResult.ok ? "#34D399" : "#F87171", fontSize: 12 }}>
+          {data.actionResult.message}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 20 }}>
+        <div style={cardStyle}>
+          <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 14 }}>Connected Accounts</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {data.accounts.map((account) => {
+              const color = account.connected && !account.lastError ? "#34D399" : account.reconnectRequired ? "#F87171" : "#FBBF24";
+              return (
+                <div key={account.name} style={{ padding: "11px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid #28324A", borderRadius: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                    <strong style={{ color: "#F1F4FB", fontSize: 13 }}>{account.name}</strong>
+                    <span style={badgeStyle(color)}>{account.connected ? "Connected" : "Disconnected"}</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8, color: "#94A3B8", fontSize: 11 }}>
+                    <span>Last Sync: {account.lastSuccessfulSync ? timeAgo(account.lastSuccessfulSync) : "Never"}</span>
+                    <span>Reconnect: {account.reconnectRequired ? "yes" : "no"}</span>
+                    <span>Score: {account.score}/100</span>
+                    <span style={{ color: account.lastError ? "#F87171" : "#94A3B8" }}>Last Error: {account.lastError ?? "none"}</span>
+                  </div>
+                  {account.warnings.length > 0 && <div style={{ color: "#FBBF24", fontSize: 11, marginTop: 7 }}>{account.warnings.join(", ")}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 14 }}>Scheduled Jobs</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {data.scheduledJobs.map((job) => (
+              <div key={job.key} style={{ padding: "11px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid #28324A", borderRadius: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <strong style={{ color: "#F1F4FB", fontSize: 13 }}>{job.name}</strong>
+                  <span style={badgeStyle(statusColor(job.status))}>{job.status}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8, color: "#94A3B8", fontSize: 11 }}>
+                  <span>{job.enabled ? "Enabled" : "Disabled"}</span>
+                  <span>Runtime: {job.runtime ?? "unknown"}</span>
+                  <span>Last Run: {job.lastRun ? timeAgo(job.lastRun) : "Never"}</span>
+                  <span>Next Run: {job.nextRun ?? "unknown"}</span>
+                  <span>Success: {job.successCount}</span>
+                  <span>Failure: {job.failureCount}</span>
+                </div>
+                <div style={{ color: job.status === "Failed" ? "#F87171" : "#94A3B8", fontSize: 11, marginTop: 7, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{job.lastResult ?? "No result recorded."}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 20 }}>
+        <div style={cardStyle}>
+          <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 14 }}>Executor Health</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {data.executors.map((executor) => (
+              <div key={executor.name} style={{ padding: "11px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid #28324A", borderRadius: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <strong style={{ color: "#F1F4FB", fontSize: 13 }}>{executor.name}</strong>
+                  <span style={badgeStyle(statusColor(executor.status))}>{executor.status}</span>
+                </div>
+                <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 8 }}>Last Run: {executor.lastRun ? timeAgo(executor.lastRun) : "Never"}</div>
+                <div style={{ color: executor.lastError ? "#F87171" : "#94A3B8", fontSize: 11, marginTop: 4 }}>Last Error: {executor.lastError ?? "none"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 14 }}>Notification Health</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {data.notifications.map((notification) => (
+              <div key={notification.name} style={{ padding: "11px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid #28324A", borderRadius: 8 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
+                  <strong style={{ color: "#F1F4FB", fontSize: 13 }}>{notification.name}</strong>
+                  <span style={badgeStyle(statusColor(notification.status))}>{notification.status}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8, color: "#94A3B8", fontSize: 11 }}>
+                  <span>Last Sent: {notification.lastSent ? timeAgo(notification.lastSent) : "Never"}</span>
+                  <span style={{ color: notification.lastFailed ? "#F87171" : "#94A3B8" }}>Last Failed: {notification.lastFailed ? timeAgo(notification.lastFailed) : "none"}</span>
+                  <span>Pending Notifications: {notification.pendingNotifications}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 16, color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>Health Logs</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10, maxHeight: 220, overflow: "auto" }}>
+            {data.logs.length ? data.logs.slice(0, 12).map((log) => (
+              <div key={`${log.timestamp}-${log.component}-${log.message}`} style={{ display: "grid", gridTemplateColumns: "90px 88px minmax(0,1fr)", gap: 8, color: "#94A3B8", fontSize: 11 }}>
+                <span>{timeAgo(log.timestamp)}</span>
+                <span style={{ color: statusColor(log.status) }}>{log.component}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{log.message}</span>
+              </div>
+            )) : <div style={{ color: "#4B5563", fontSize: 12 }}>No health checks logged yet.</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LogsPanel({ runs, audit }: { runs: AgentRun[]; audit: AuditEntry[] }) {
   const merged = [
     ...runs.map((r) => ({ ...r, _type: "run" as const })),
@@ -865,13 +1168,16 @@ export default function CommandCenterClient() {
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [memoryOffice, setMemoryOffice] = useState<MemoryOfficeData | null>(null);
+  const [executionQueue, setExecutionQueue] = useState<ExecutionQueueData | null>(null);
+  const [healthCenter, setHealthCenter] = useState<HealthCenterData | null>(null);
+  const [healthAction, setHealthAction] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillView[]>([]);
   const [skillCandidate, setSkillCandidate] = useState<SkillCandidate | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, tgChatRes, memoryRes, skillsRes] = await Promise.allSettled([
+      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, tgChatRes, memoryRes, skillsRes, queueRes, healthRes] = await Promise.allSettled([
         fetch("/api/command-center/projects").then((r) => r.json() as Promise<{ projects: Project[] }>),
         fetch("/api/command-center/builds").then((r) => r.json() as Promise<{ builds: Build[] }>),
         fetch("/api/approvals").then((r) => r.json() as Promise<{ actions: ApprovalAction[] }>),
@@ -880,6 +1186,8 @@ export default function CommandCenterClient() {
         fetch("/api/chat?channel=telegram").then((r) => r.json() as Promise<{ messages: ChatMessage[] }>),
         fetch("/api/command-center/memory-office").then((r) => r.json() as Promise<MemoryOfficeData>),
         fetch("/api/command-center/skills").then((r) => r.json() as Promise<{ skills: SkillView[] }>),
+        fetch("/api/command-center/execution-queue").then((r) => r.json() as Promise<ExecutionQueueData>),
+        fetch("/api/command-center/health-center").then((r) => r.json() as Promise<HealthCenterData>),
       ]);
 
       if (projRes.status === "fulfilled") setProjects(projRes.value.projects ?? []);
@@ -891,6 +1199,8 @@ export default function CommandCenterClient() {
       }
       if (memoryRes.status === "fulfilled" && !("error" in memoryRes.value)) setMemoryOffice(memoryRes.value);
       if (skillsRes.status === "fulfilled") setSkills(skillsRes.value.skills ?? []);
+      if (queueRes.status === "fulfilled" && !("error" in queueRes.value)) setExecutionQueue(queueRes.value);
+      if (healthRes.status === "fulfilled" && !("error" in healthRes.value)) setHealthCenter(healthRes.value);
 
       const webMsgs = chatRes.status === "fulfilled" ? (chatRes.value.messages ?? []).map((m) => ({ ...m, channel: "dashboard" })) : [];
       const tgMsgs = tgChatRes.status === "fulfilled" ? (tgChatRes.value.messages ?? []).map((m) => ({ ...m, channel: "telegram" })) : [];
@@ -941,6 +1251,22 @@ export default function CommandCenterClient() {
     await fetchAll();
   };
 
+  const runHealthAction = async (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout") => {
+    setHealthAction(action);
+    try {
+      const res = await fetch("/api/command-center/health-center", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json().catch(() => null) as HealthCenterData | null;
+      if (data && !("error" in data)) setHealthCenter(data);
+    } finally {
+      setHealthAction(null);
+      void fetchAll();
+    }
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "var(--cc-bg-page, #0E1424)", color: "var(--cc-fg-primary, #F1F4FB)", fontFamily: "Hanken Grotesk, sans-serif" }}>
       {/* Header */}
@@ -956,19 +1282,24 @@ export default function CommandCenterClient() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#4B5563" }}>
           {loading && <span>Syncing...</span>}
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#34D399", animation: "pulse 2s infinite" }} />
-          <span>Live</span>
+          <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(healthCenter?.overall.status ?? "healthy"), animation: "pulse 2s infinite" }} />
+          <span>{healthCenter ? `Health: ${healthCenter.overall.message}` : "Live"}</span>
         </div>
       </div>
 
       {/* Tabs */}
       <div style={{ padding: "0 32px", borderBottom: "1px solid #28324A", display: "flex", gap: 8, height: 52, alignItems: "center" }}>
-        {(["overview", "agents", "memory", "skills", "projects", "builds", "logs", "chat"] as Tab[]).map((t) => (
+        {(["overview", "health", "agents", "memory", "skills", "projects", "builds", "logs", "chat"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)} style={pillStyle(tab === t)}>
-            {t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "health" ? "Health Center" : t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "overview" && pendingCount > 0 && (
               <span style={{ marginLeft: 6, background: "#FBBF24", color: "#0E1424", borderRadius: 999, padding: "0 5px", fontSize: 10, fontWeight: 800 }}>
                 {pendingCount}
+              </span>
+            )}
+            {t === "health" && healthCenter?.overall.status !== "healthy" && (
+              <span style={{ marginLeft: 6, background: statusColor(healthCenter?.overall.status ?? "warning"), color: "#0E1424", borderRadius: 999, padding: "0 5px", fontSize: 10, fontWeight: 800 }}>
+                {healthCenter?.overall.status === "failure" ? "!" : "?"}
               </span>
             )}
           </button>
@@ -982,8 +1313,9 @@ export default function CommandCenterClient() {
         ) : (
           <>
             {tab === "overview" && (
-              <OverviewPanel projects={projects} approvals={approvals} builds={builds} onApprove={handleApprove} onReject={handleReject} onTabSwitch={setTab} />
+              <OverviewPanel projects={projects} approvals={approvals} builds={builds} queue={executionQueue} onApprove={handleApprove} onReject={handleReject} onTabSwitch={setTab} />
             )}
+            {tab === "health" && <HealthCenterPanel data={healthCenter} busyAction={healthAction} onAction={runHealthAction} />}
             {tab === "agents" && <BuilderOffice />}
             {tab === "memory" && <MemoryOfficePanel data={memoryOffice} onCreateTestMemory={createTestMemory} />}
             {tab === "skills" && <SkillsPanel skills={skills} candidate={skillCandidate} onScout={scoutOneSkill} />}

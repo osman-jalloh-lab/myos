@@ -1,9 +1,11 @@
 import { createClient } from "@libsql/client";
 import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
+import { runFuguDesignCritique } from "@/lib/fugu-design-critic";
+import { createExecutionQueueTask, updateExecutionQueueTask } from "@/lib/execution-queue";
 
 type Db = ReturnType<typeof createClient>;
 
@@ -20,7 +22,19 @@ export type LocalBuildProject = {
   localDevUrl: string | null;
   localDevPid: number | null;
   researchBrief: string | null;
+  designReview: string | null;
+  polishReview: string | null;
+  designScore: number | null;
+  qaStatus: string | null;
+  qaChecklist: LocalBuilderQaItem[] | null;
   files?: string[];
+};
+
+export type LocalBuilderQaItem = {
+  key: string;
+  label: string;
+  status: "passed" | "failed" | "skipped";
+  detail: string;
 };
 
 export type LocalBuilderRootInfo = {
@@ -30,8 +44,27 @@ export type LocalBuilderRootInfo = {
   warning: string | null;
 };
 
+export type CodexCliStatus = {
+  installed: boolean;
+  available: boolean;
+  version: string | null;
+  message: string;
+};
+
+type CommandResult = {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  output: string;
+  command: string;
+  exitCode: number | null;
+};
+
 const LOCAL_BUILDER_AGENT = "hermes-local-builder";
 const ATHENA_RESEARCH_AGENT = "athena";
+const FUGU_DESIGN_AGENT = "fugu";
+const CODEX_CLI_EXECUTOR = "codex_cli";
+const DEFAULT_CODEX_CLI_MODEL = "gpt-5.4";
 const devServers = new Map<string, { child: ReturnType<typeof spawn>; url: string; pid: number | null }>();
 
 function getDb() {
@@ -117,6 +150,11 @@ async function ensureLocalBuilderColumns(db: Db): Promise<void> {
   await db.execute(`ALTER TABLE Project ADD COLUMN localDevUrl TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localDevPid INTEGER`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localResearchBrief TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localDesignReview TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localPolishReview TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN designScore INTEGER`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localQaStatus TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localQaChecklist TEXT`).catch(() => undefined);
 }
 
 function rowString(value: unknown): string {
@@ -131,6 +169,28 @@ function quotedAfter(message: string, label: string): string | null {
 
 function cleanDisplayText(value: string): string {
   return value.replace(/[<>{}]/g, "").trim();
+}
+
+function rowNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseQaChecklist(value: unknown): LocalBuilderQaItem[] | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter((item): item is LocalBuilderQaItem => {
+      if (!item || typeof item !== "object") return false;
+      const record = item as Record<string, unknown>;
+      return typeof record.key === "string"
+        && typeof record.label === "string"
+        && ["passed", "failed", "skipped"].includes(String(record.status))
+        && typeof record.detail === "string";
+    });
+  } catch {
+    return null;
+  }
 }
 
 function packageName(projectName: string): string {
@@ -239,7 +299,175 @@ async function jobTrackerTemplateFiles(projectName: string): Promise<Record<stri
   return output;
 }
 
-async function appFiles(projectName: string, message: string, researchBrief?: string | null): Promise<Record<string, string>> {
+function luxuryWatchPageTsx(safeName: string, heading: string, button: string): string {
+  return `"use client";
+
+import { useMemo, useState } from "react";
+
+const brandName = ${JSON.stringify(safeName)};
+const heroHeading = ${JSON.stringify(heading)};
+const primaryAction = ${JSON.stringify(button)};
+const watches = [
+  { id: 1, name: "Aurelian Sector", type: "Dress", price: 12800, year: 1968, size: "36 mm", material: "Yellow gold", condition: "Excellent", city: "Geneva", trust: "Authenticated", movement: "Manual" },
+  { id: 2, name: "Mariner 300", type: "Diver", price: 9400, year: 1982, size: "40 mm", material: "Steel", condition: "Very good", city: "Austin", trust: "Escrow ready", movement: "Automatic" },
+  { id: 3, name: "Atelier Moonphase", type: "Independent", price: 22100, year: 2021, size: "39 mm", material: "Rose gold", condition: "Unworn", city: "New York", trust: "Maker papers", movement: "Automatic" },
+];
+
+export default function Home() {
+  const [type, setType] = useState("All");
+  const [saved, setSaved] = useState<number[]>([]);
+  const [compare, setCompare] = useState<number[]>([]);
+  const [selected, setSelected] = useState(watches[0]);
+  const [checkout, setCheckout] = useState("Concierge idle");
+  const visible = useMemo(() => type === "All" ? watches : watches.filter((watch) => watch.type === type), [type]);
+  const toggle = (list: number[], id: number) => list.includes(id) ? list.filter((item) => item !== id) : [...list, id];
+
+  return (
+    <main className="page">
+      <section className="hero" aria-label={\`\${brandName} marketplace\`}>
+        <div className="heroCopy">
+          <p className="eyebrow">{brandName}</p>
+          <h1>{heroHeading}</h1>
+          <p className="lede">A refined marketplace concept for authenticated timepieces, private sourcing, and collector-grade discovery.</p>
+          <div className="heroActions">
+            <a href="#market">{primaryAction}</a>
+            <button type="button" onClick={() => setCheckout("Private sourcing request drafted")}>Request sourcing</button>
+          </div>
+        </div>
+        <div className="watchStage" aria-hidden="true">
+          <div className="watchFace"><span /></div>
+        </div>
+      </section>
+
+      <section className="trust" aria-label="Marketplace trust signals">
+        <span>Authenticated listings</span>
+        <span>Escrow-ready sellers</span>
+        <span>Original generated-safe staging</span>
+      </section>
+
+      <section id="market" className="market" aria-label="Watch marketplace">
+        <div className="marketHeader">
+          <div>
+            <p className="eyebrow">Collector desk</p>
+            <h2>Curated inventory with real decision tools</h2>
+          </div>
+          <div className="filters" aria-label="Collection filters">
+            {["All", "Dress", "Diver", "Independent"].map((item) => (
+              <button key={item} type="button" className={type === item ? "active" : ""} onClick={() => setType(item)}>{item}</button>
+            ))}
+          </div>
+        </div>
+
+        <div className="workspace">
+          <div className="catalog">
+            {visible.map((watch) => (
+              <article key={watch.id}>
+                <button type="button" className="imageButton" onClick={() => setSelected(watch)} aria-label={\`Open details for \${watch.name}\`}><span /></button>
+                <div className="cardTop"><h3>{watch.name}</h3><strong>{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(watch.price)}</strong></div>
+                <p>{watch.year} / {watch.condition} / {watch.size} / {watch.city}</p>
+                <div className="cardActions">
+                  <button type="button" onClick={() => setSelected(watch)}>Details</button>
+                  <button type="button" onClick={() => setSaved((items) => toggle(items, watch.id))}>{saved.includes(watch.id) ? "Saved" : "Save"}</button>
+                  <button type="button" onClick={() => setCompare((items) => toggle(items, watch.id))}>{compare.includes(watch.id) ? "Comparing" : "Compare"}</button>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <aside className="detail" aria-label="Selected watch detail">
+            <p className="eyebrow">Detail view</p>
+            <h2>{selected.name}</h2>
+            <dl>
+              <div><dt>Authentication</dt><dd>{selected.trust}</dd></div>
+              <div><dt>Movement</dt><dd>{selected.movement}</dd></div>
+              <div><dt>Material</dt><dd>{selected.material}</dd></div>
+              <div><dt>Case</dt><dd>{selected.size}</dd></div>
+            </dl>
+            <button type="button" onClick={() => setCheckout(\`Inquiry opened for \${selected.name}\`)}>Start secure inquiry</button>
+            <p className="status">{checkout}</p>
+            <div className="compareBox">Saved: {saved.length} / Compare: {compare.length}</div>
+          </aside>
+        </div>
+      </section>
+    </main>
+  );
+}
+`;
+}
+
+function luxuryWatchCss(): string {
+  return `:root {
+  color-scheme: dark;
+  background: #101312;
+  color: #f8f4ea;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; }
+
+button {
+  width: fit-content;
+  border: 1px solid #d9b76c;
+  border-radius: 8px;
+  padding: 14px 22px;
+  background: #d9b76c;
+  color: #12110f;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.page { min-height: 100vh; background: linear-gradient(145deg, #101312 0%, #1b2320 48%, #4b3d2a 100%); }
+.hero { min-height: 82vh; display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 420px); align-items: center; gap: 48px; width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 64px 0 38px; }
+.heroCopy { display: grid; gap: 20px; }
+.eyebrow { margin: 0; color: #d9b76c; font-size: 13px; font-weight: 800; letter-spacing: 0.14em; text-transform: uppercase; }
+h1 { max-width: 780px; margin: 0; color: #fff8e8; font-family: Georgia, 'Times New Roman', serif; font-size: clamp(48px, 8vw, 96px); line-height: 0.95; letter-spacing: 0; }
+.lede { max-width: 620px; margin: 0; color: #d7d1c3; font-size: 18px; line-height: 1.7; }
+.watchStage { aspect-ratio: 1; border: 1px solid rgba(217, 183, 108, 0.32); border-radius: 8px; display: grid; place-items: center; background: radial-gradient(circle at 50% 45%, rgba(217, 183, 108, 0.26), transparent 34%), linear-gradient(160deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02)); }
+.watchFace { width: 62%; aspect-ratio: 1; border-radius: 50%; border: 14px solid #d9b76c; display: grid; place-items: center; background: radial-gradient(circle, #20251f 0 58%, #0f1311 59% 100%); box-shadow: 0 28px 80px rgba(0,0,0,0.44); }
+.watchFace span { width: 42%; height: 2px; background: #fff8e8; transform: rotate(-35deg); transform-origin: right center; }
+.trust { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: rgba(217, 183, 108, 0.25); color: #f8f4ea; }
+.trust span { background: rgba(16, 19, 18, 0.86); padding: 18px 24px; text-align: center; font-size: 13px; font-weight: 800; text-transform: uppercase; }
+.heroActions, .filters, .cardActions { display: flex; flex-wrap: wrap; gap: 10px; }
+.heroActions a { display: inline-flex; align-items: center; border: 1px solid #d9b76c; border-radius: 8px; padding: 14px 22px; background: #d9b76c; color: #12110f; font-size: 15px; font-weight: 800; text-decoration: none; }
+.heroActions button, .filters button, .cardActions button { background: rgba(248, 244, 234, 0.07); color: #fff8e8; }
+.filters .active { background: #d9b76c; color: #12110f; }
+.market { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 56px 0 80px; }
+.marketHeader { display: flex; justify-content: space-between; align-items: end; gap: 24px; margin-bottom: 18px; }
+.marketHeader h2 { max-width: 620px; margin: 18px 0 8px; color: #fff8e8; font-family: Georgia, 'Times New Roman', serif; font-size: 25px; letter-spacing: 0; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); gap: 18px; align-items: start; }
+.catalog { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+article { min-height: 230px; border: 1px solid rgba(217, 183, 108, 0.22); border-radius: 8px; padding: 22px; background: rgba(248, 244, 234, 0.06); }
+.imageButton { width: 100%; aspect-ratio: 1.25; display: grid; place-items: center; padding: 0; background: radial-gradient(circle at 50% 48%, rgba(217,183,108,.25), transparent 32%), #151917; }
+.imageButton span { width: 74px; aspect-ratio: 1; border-radius: 50%; border: 8px solid #d9b76c; background: #0f1311; }
+.cardTop { display: grid; gap: 8px; margin-top: 16px; }
+h3 { margin: 0; color: #fff8e8; font-family: Georgia, Times New Roman, serif; font-size: 21px; }
+.cardTop strong { color: #d9b76c; }
+article p { margin: 0; color: #c5beb0; line-height: 1.55; }
+.cardActions { margin-top: 16px; }
+.cardActions button, .filters button { padding: 9px 12px; font-size: 12px; }
+.detail { position: sticky; top: 18px; border: 1px solid rgba(217, 183, 108, 0.28); border-radius: 8px; padding: 22px; background: rgba(16, 19, 18, 0.78); }
+.detail h2 { margin: 18px 0 8px; color: #fff8e8; font-family: Georgia, 'Times New Roman', serif; font-size: 25px; letter-spacing: 0; }
+dl { display: grid; gap: 10px; margin: 18px 0; }
+dl div { display: flex; justify-content: space-between; gap: 14px; border-bottom: 1px solid rgba(217, 183, 108, 0.16); padding-bottom: 8px; }
+dt { color: #c5beb0; }
+dd { margin: 0; color: #fff8e8; text-align: right; }
+.status, .compareBox { margin-top: 14px; color: #d9b76c; font-weight: 800; }
+
+@media (max-width: 960px) {
+  .workspace, .catalog { grid-template-columns: 1fr; }
+  .detail { position: static; }
+}
+
+@media (max-width: 820px) {
+  .hero, .trust { grid-template-columns: 1fr; }
+  .watchStage { max-width: 420px; width: 100%; margin: 0 auto; }
+}
+`;
+}
+
+async function appFiles(projectName: string, message: string, researchBrief?: string | null, designReview?: string | null): Promise<Record<string, string>> {
   const heading = cleanDisplayText(
     quotedAfter(message, "heading(?:\\s+(?:that\\s+)?(?:says|reads))?") ??
     quotedAfter(message, "landing page(?:\\s+that\\s+says)?") ??
@@ -252,15 +480,16 @@ async function appFiles(projectName: string, message: string, researchBrief?: st
   );
   const safeName = cleanDisplayText(projectName);
   const briefText = researchBrief?.trim() || "No Athena research brief was attached.";
-  const isLuxuryWatch = /\b(watch|watches|chrono|timepiece|horology)\b/i.test(`${projectName} ${message} ${briefText}`);
-  const isJobTracker = /\b(job|application|applicant|interview|resume|tracker|jobflow)\b/i.test(`${projectName} ${message} ${briefText}`);
+  const reviewText = designReview?.trim() || "No Fugu design review was attached.";
+  const isLuxuryWatch = /\b(watch|watches|chrono|timepiece|horology)\b/i.test(`${projectName} ${message} ${briefText} ${reviewText}`);
+  const isJobTracker = /\b(job|application|applicant|interview|resume|tracker|jobflow)\b/i.test(`${projectName} ${message} ${briefText} ${reviewText}`);
 
   if (isJobTracker) {
     const template = await jobTrackerTemplateFiles(projectName);
     if (template) return template;
   }
 
-  return {
+  const files: Record<string, string> = {
     "package.json": `${JSON.stringify({
       name: packageName(projectName),
       version: "0.1.0",
@@ -281,8 +510,8 @@ async function appFiles(projectName: string, message: string, researchBrief?: st
         typescript: "^5.6.0",
       },
     }, null, 2)}\n`,
-    "README.md": `# ${safeName}\n\nGenerated by Hermes Local Builder using an internal Athena research brief.\n\n## Athena Research Brief\n\n${briefText}\n\n## Commands\n\n\`\`\`bash\nnpm install\nnpm run build\nnpm run dev\n\`\`\`\n`,
-    "BUILDER_PLAN.md": `# ${safeName} Builder Plan\n\n## Product Brief\n\n${briefText}\n\n## Design Brief\n\nOriginal visual direction only. Do not copy brand layouts, product photography, or copyrighted assets.\n\n## Feature Plan\n\nInclude real sections, clickable controls, stateful interactions, empty states, and responsive behavior appropriate to the prompt.\n\n## Build Plan\n\nGenerate a working Next.js app with visible product structure and local demo behavior before running install and build.\n\n## QA Checklist\n\n- npm run build passes\n- Main buttons work\n- Navigation works\n- Filters or core controls work\n- Saved/compare or equivalent state works when relevant\n- Mobile layout works\n- App feels like a real product\n- No copied assets\n`,
+    "README.md": `# ${safeName}\n\nGenerated by Hermes Local Builder using an internal Athena research brief and Fugu design review.\n\n## Athena Research Brief\n\n${briefText}\n\n## Fugu Design Review\n\n${reviewText}\n\n## Commands\n\n\`\`\`bash\nnpm install\nnpm run build\nnpm run dev\n\`\`\`\n`,
+    "BUILDER_PLAN.md": `# ${safeName} Builder Plan\n\n## Product Brief\n\n${briefText}\n\n## Fugu Design Review\n\n${reviewText}\n\n## Design Brief\n\nOriginal visual direction only. Do not copy brand layouts, product photography, or copyrighted assets.\n\n## Feature Plan\n\nInclude real sections, clickable controls, stateful interactions, empty states, and responsive behavior appropriate to the prompt.\n\n## Build Plan\n\nGenerate a working Next.js app with visible product structure and local demo behavior before running install and build.\n\n## QA Checklist\n\n- npm run build passes\n- Main buttons work\n- Navigation works\n- Filters or core controls work\n- Saved/compare or equivalent state works when relevant\n- Mobile layout works\n- App feels like a real product\n- No copied assets\n`,
     "next.config.mjs": `const nextConfig = {};\n\nexport default nextConfig;\n`,
     "tsconfig.json": `${JSON.stringify({
       compilerOptions: {
@@ -312,6 +541,13 @@ async function appFiles(projectName: string, message: string, researchBrief?: st
     "src/app/page.tsx": isLuxuryWatch ? `const collections = ["Dress Icons", "Modern Divers", "Independent Makers"];\n\nexport default function Home() {\n  return (\n    <main className="page">\n      <section className="hero" aria-label="${safeName} landing page">\n        <div className="heroCopy">\n          <p className="eyebrow">${safeName}</p>\n          <h1>${heading}</h1>\n          <p className="lede">A refined marketplace concept for authenticated timepieces, private sourcing, and collector-grade discovery.</p>\n          <button type="button">${button}</button>\n        </div>\n        <div className="watchStage" aria-hidden="true">\n          <div className="watchFace"><span /></div>\n        </div>\n      </section>\n\n      <section className="trust" aria-label="Marketplace trust signals">\n        <span>Authenticated listings</span>\n        <span>Concierge sourcing</span>\n        <span>Original editorial guidance</span>\n      </section>\n\n      <section className="collections" aria-label="Featured collections">\n        {collections.map((item) => (\n          <article key={item}>\n            <div className="miniWatch" aria-hidden="true" />\n            <h2>{item}</h2>\n            <p>Curated direction, generated-safe product staging, and original copy for a premium first impression.</p>\n          </article>\n        ))}\n      </section>\n    </main>\n  );\n}\n` : `export default function Home() {\n  return (\n    <main className="page">\n      <section className="hero" aria-label="${safeName} landing page">\n        <p className="eyebrow">${safeName}</p>\n        <h1>${heading}</h1>\n        <p className="lede">Built from an Athena research brief with original copy, responsive layout, and generated-safe visual direction.</p>\n        <button type="button">${button}</button>\n      </section>\n    </main>\n  );\n}\n`,
     "src/app/globals.css": isLuxuryWatch ? `:root {\n  color-scheme: dark;\n  background: #101312;\n  color: #f8f4ea;\n  font-family: Arial, Helvetica, sans-serif;\n}\n\n* {\n  box-sizing: border-box;\n}\n\nbody {\n  margin: 0;\n  min-height: 100vh;\n}\n\nbutton {\n  width: fit-content;\n  border: 1px solid #d9b76c;\n  border-radius: 8px;\n  padding: 14px 22px;\n  background: #d9b76c;\n  color: #12110f;\n  font-size: 15px;\n  font-weight: 800;\n  cursor: pointer;\n}\n\n.page {\n  min-height: 100vh;\n  background: linear-gradient(145deg, #101312 0%, #1b2320 48%, #4b3d2a 100%);\n}\n\n.hero {\n  min-height: 82vh;\n  display: grid;\n  grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);\n  align-items: center;\n  gap: 48px;\n  width: min(1120px, calc(100% - 40px));\n  margin: 0 auto;\n  padding: 64px 0 38px;\n}\n\n.heroCopy {\n  display: grid;\n  gap: 20px;\n}\n\n.eyebrow {\n  margin: 0;\n  color: #d9b76c;\n  font-size: 13px;\n  font-weight: 800;\n  letter-spacing: 0.14em;\n  text-transform: uppercase;\n}\n\nh1 {\n  max-width: 780px;\n  margin: 0;\n  color: #fff8e8;\n  font-family: Georgia, 'Times New Roman', serif;\n  font-size: clamp(48px, 8vw, 96px);\n  line-height: 0.95;\n  letter-spacing: 0;\n}\n\n.lede {\n  max-width: 620px;\n  margin: 0;\n  color: #d7d1c3;\n  font-size: 18px;\n  line-height: 1.7;\n}\n\n.watchStage {\n  aspect-ratio: 1;\n  border: 1px solid rgba(217, 183, 108, 0.32);\n  border-radius: 8px;\n  display: grid;\n  place-items: center;\n  background: radial-gradient(circle at 50% 45%, rgba(217, 183, 108, 0.26), transparent 34%), linear-gradient(160deg, rgba(255,255,255,0.12), rgba(255,255,255,0.02));\n}\n\n.watchFace {\n  width: 62%;\n  aspect-ratio: 1;\n  border-radius: 50%;\n  border: 14px solid #d9b76c;\n  display: grid;\n  place-items: center;\n  background: radial-gradient(circle, #20251f 0 58%, #0f1311 59% 100%);\n  box-shadow: 0 28px 80px rgba(0,0,0,0.44);\n}\n\n.watchFace span {\n  width: 42%;\n  height: 2px;\n  background: #fff8e8;\n  transform: rotate(-35deg);\n  transform-origin: right center;\n}\n\n.trust {\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 1px;\n  background: rgba(217, 183, 108, 0.25);\n  color: #f8f4ea;\n}\n\n.trust span {\n  background: rgba(16, 19, 18, 0.86);\n  padding: 18px 24px;\n  text-align: center;\n  font-size: 13px;\n  font-weight: 800;\n  text-transform: uppercase;\n}\n\n.collections {\n  width: min(1120px, calc(100% - 40px));\n  margin: 0 auto;\n  padding: 44px 0 72px;\n  display: grid;\n  grid-template-columns: repeat(3, 1fr);\n  gap: 16px;\n}\n\narticle {\n  min-height: 230px;\n  border: 1px solid rgba(217, 183, 108, 0.22);\n  border-radius: 8px;\n  padding: 22px;\n  background: rgba(248, 244, 234, 0.06);\n}\n\n.miniWatch {\n  width: 68px;\n  aspect-ratio: 1;\n  border-radius: 50%;\n  border: 7px solid #d9b76c;\n  background: #151917;\n}\n\nh2 {\n  margin: 18px 0 8px;\n  color: #fff8e8;\n  font-family: Georgia, 'Times New Roman', serif;\n  font-size: 25px;\n  letter-spacing: 0;\n}\n\narticle p {\n  margin: 0;\n  color: #c5beb0;\n  line-height: 1.55;\n}\n\n@media (max-width: 820px) {\n  .hero, .collections, .trust {\n    grid-template-columns: 1fr;\n  }\n\n  .watchStage {\n    max-width: 420px;\n    width: 100%;\n    margin: 0 auto;\n  }\n}\n` : `:root {\n  color-scheme: dark;\n  background: #101820;\n  color: #f7fbff;\n  font-family: Arial, Helvetica, sans-serif;\n}\n\n* {\n  box-sizing: border-box;\n}\n\nbody {\n  margin: 0;\n  min-height: 100vh;\n}\n\n.page {\n  min-height: 100vh;\n  display: grid;\n  place-items: center;\n  padding: 32px;\n  background: linear-gradient(135deg, #101820 0%, #1f3a3d 52%, #f2b84b 100%);\n}\n\n.hero {\n  width: min(760px, 100%);\n  display: grid;\n  gap: 22px;\n  text-align: center;\n}\n\n.eyebrow {\n  margin: 0;\n  color: #f2b84b;\n  font-size: 13px;\n  font-weight: 700;\n  letter-spacing: 0.14em;\n  text-transform: uppercase;\n}\n\nh1 {\n  margin: 0;\n  color: #ffffff;\n  font-size: clamp(44px, 9vw, 84px);\n  line-height: 0.95;\n  letter-spacing: 0;\n}\n\n.lede {\n  margin: 0;\n  color: #d8e4ef;\n  font-size: 17px;\n  line-height: 1.6;\n}\n\nbutton {\n  justify-self: center;\n  min-width: 132px;\n  border: 0;\n  border-radius: 8px;\n  padding: 14px 22px;\n  background: #ffffff;\n  color: #101820;\n  font-size: 16px;\n  font-weight: 800;\n  cursor: pointer;\n}\n`,
   };
+
+  if (isLuxuryWatch) {
+    files["src/app/page.tsx"] = luxuryWatchPageTsx(safeName, heading, button);
+    files["src/app/globals.css"] = luxuryWatchCss();
+  }
+
+  return files;
 }
 
 function childProcessEnv(nodeEnv?: "development" | "production" | "test"): NodeJS.ProcessEnv {
@@ -327,28 +563,89 @@ function childProcessEnv(nodeEnv?: "development" | "production" | "test"): NodeJ
   return env as NodeJS.ProcessEnv;
 }
 
-async function run(command: string, args: string[], cwd: string, nodeEnv?: "development" | "production" | "test"): Promise<{ ok: boolean; output: string }> {
+function codexProcessEnv(): NodeJS.ProcessEnv {
+  const allowed = new Set([
+    "APPDATA",
+    "ComSpec",
+    "HOME",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "PATH",
+    "PATHEXT",
+    "ProgramData",
+    "ProgramFiles",
+    "ProgramFiles(x86)",
+    "SystemDrive",
+    "SystemRoot",
+    "TEMP",
+    "TMP",
+    "USERDOMAIN",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+  ]);
+  const env: Record<string, string | undefined> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (allowed.has(key)) env[key] = value;
+  }
+  env.NODE_ENV = "development";
+  return env as NodeJS.ProcessEnv;
+}
+
+function commandForLog(command: string, args: string[]): string {
+  return [command, ...args.map((arg) => /\s/.test(arg) ? JSON.stringify(arg) : arg)].join(" ");
+}
+
+async function runDetailed(
+  command: string,
+  args: string[],
+  cwd: string,
+  options: { nodeEnv?: "development" | "production" | "test"; timeoutMs?: number; env?: NodeJS.ProcessEnv; displayCommand?: string; input?: string } = {}
+): Promise<CommandResult> {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: CommandResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
     const isWindows = process.platform === "win32";
     const executable = isWindows ? (process.env.ComSpec ?? "cmd.exe") : command;
     const commandArgs = isWindows ? ["/d", "/s", "/c", command, ...args] : args;
-    const child = spawn(executable, commandArgs, { cwd, shell: false, env: childProcessEnv(nodeEnv) });
-    let output = "";
+    const child = spawn(executable, commandArgs, {
+      cwd,
+      shell: false,
+      env: options.env ?? childProcessEnv(options.nodeEnv),
+    });
+    let stdout = "";
+    let stderr = "";
+    if (options.input !== undefined) {
+      child.stdin?.write(options.input);
+      child.stdin?.end();
+    }
     const timeout = setTimeout(() => {
       child.kill();
-      resolve({ ok: false, output: `${output}\nCommand timed out.`.trim().slice(-8000) });
-    }, 180_000);
-    child.stdout.on("data", (chunk) => { output += String(chunk); });
-    child.stderr.on("data", (chunk) => { output += String(chunk); });
+      const output = `${stdout}\n${stderr}\nCommand timed out.`.trim().slice(-12000);
+      finish({ ok: false, stdout: stdout.slice(-8000), stderr: `${stderr}\nCommand timed out.`.trim().slice(-8000), output, command: options.displayCommand ?? commandForLog(command, args), exitCode: null });
+    }, options.timeoutMs ?? 180_000);
+    child.stdout.on("data", (chunk) => { stdout += String(chunk); });
+    child.stderr.on("data", (chunk) => { stderr += String(chunk); });
     child.on("error", (error) => {
       clearTimeout(timeout);
-      resolve({ ok: false, output: error.message });
+      finish({ ok: false, stdout: stdout.slice(-8000), stderr: error.message, output: `${stdout}\n${error.message}`.trim().slice(-12000), command: options.displayCommand ?? commandForLog(command, args), exitCode: null });
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
-      resolve({ ok: code === 0, output: output.trim().slice(-8000) });
+      const output = `${stdout}\n${stderr}`.trim().slice(-12000);
+      finish({ ok: code === 0, stdout: stdout.trim().slice(-8000), stderr: stderr.trim().slice(-8000), output, command: options.displayCommand ?? commandForLog(command, args), exitCode: code });
     });
   });
+}
+
+async function run(command: string, args: string[], cwd: string, nodeEnv?: "development" | "production" | "test"): Promise<{ ok: boolean; output: string }> {
+  const result = await runDetailed(command, args, cwd, { nodeEnv });
+  return { ok: result.ok, output: result.output.slice(-8000) };
 }
 
 async function updateProjectBuildState(db: Db, projectId: string, status: string, log: string, error: string | null = null): Promise<void> {
@@ -434,6 +731,244 @@ async function logAthenaResearchRun(db: Db, projectName: string, brief: string):
   }).catch(() => undefined);
 }
 
+async function logFuguRun(db: Db, projectName: string, phase: "design" | "polish", review: string): Promise<void> {
+  await db.execute({
+    sql: `INSERT INTO AgentRun (id, agentName, inputSummary, outputSummary, modelProvider, status, createdAt) VALUES (?, ?, ?, ?, 'sakana', 'completed', datetime('now'))`,
+    args: [crypto.randomUUID(), FUGU_DESIGN_AGENT, `${phase}_review project=${projectName}`, review.slice(0, 2000)],
+  }).catch(() => undefined);
+}
+
+async function summarizeGeneratedPage(folder: string): Promise<string> {
+  const files = [
+    "src/app/page.tsx",
+    "src/app/globals.css",
+    "src/app/layout.tsx",
+    "BUILDER_PLAN.md",
+    "README.md",
+  ];
+  const summaries = await Promise.all(files.map(async (file) => {
+    const content = await readFile(path.join(folder, ...file.split("/")), "utf8").catch(() => "");
+    if (!content.trim()) return "";
+    return `## ${file}\n${content.slice(0, 3500)}`;
+  }));
+  return summaries.filter(Boolean).join("\n\n") || "No generated app files found yet.";
+}
+
+async function readGeneratedAppFiles(folder: string): Promise<{ page: string; css: string; plan: string }> {
+  const [page, css, plan] = await Promise.all([
+    readFile(path.join(folder, "src", "app", "page.tsx"), "utf8").catch(() => ""),
+    readFile(path.join(folder, "src", "app", "globals.css"), "utf8").catch(() => ""),
+    readFile(path.join(folder, "BUILDER_PLAN.md"), "utf8").catch(() => ""),
+  ]);
+  return { page, css, plan };
+}
+
+function isIgnoredProjectPath(relativePath: string): boolean {
+  const normalized = relativePath.replaceAll("\\", "/");
+  return normalized.startsWith("node_modules/")
+    || normalized.startsWith(".next/")
+    || normalized.startsWith(".git/")
+    || normalized === "tsconfig.tsbuildinfo";
+}
+
+function isSecretProjectPath(relativePath: string): boolean {
+  const basename = path.basename(relativePath).toLowerCase();
+  const normalized = relativePath.replaceAll("\\", "/").toLowerCase();
+  return basename === ".env"
+    || basename.startsWith(".env.")
+    || normalized.includes("/.env")
+    || /secret|credential|private-key|id_rsa|token/.test(basename);
+}
+
+async function listProjectFiles(root: string, current = root): Promise<string[]> {
+  const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
+  const files: string[] = [];
+  for (const entry of entries) {
+    const absolute = path.join(current, entry.name);
+    const relative = path.relative(root, absolute);
+    if (isIgnoredProjectPath(relative)) continue;
+    if (entry.isDirectory()) {
+      files.push(...await listProjectFiles(root, absolute));
+    } else if (entry.isFile()) {
+      files.push(relative);
+    }
+  }
+  return files;
+}
+
+async function collectProjectSnapshot(root: string): Promise<Map<string, string>> {
+  const snapshot = new Map<string, string>();
+  const files = await listProjectFiles(root);
+  await Promise.all(files.map(async (file) => {
+    const content = await readFile(path.join(root, file), "utf8").catch(() => "");
+    snapshot.set(file, content);
+  }));
+  return snapshot;
+}
+
+async function changedFilesSince(root: string, before: Map<string, string>): Promise<string[]> {
+  const afterFiles = await listProjectFiles(root);
+  const after = new Set(afterFiles);
+  const changed = new Set<string>();
+  await Promise.all(afterFiles.map(async (file) => {
+    const content = await readFile(path.join(root, file), "utf8").catch(() => "");
+    if (!before.has(file) || before.get(file) !== content) changed.add(file);
+  }));
+  for (const file of before.keys()) {
+    if (!after.has(file)) changed.add(file);
+  }
+  return Array.from(changed).sort();
+}
+
+async function restoreSecretFileChanges(root: string, before: Map<string, string>, changedFiles: string[]): Promise<string[]> {
+  const touchedSecrets = changedFiles.filter(isSecretProjectPath);
+  await Promise.all(touchedSecrets.map(async (file) => {
+    const absolute = path.join(root, file);
+    if (before.has(file)) {
+      await writeFile(absolute, before.get(file) ?? "", "utf8").catch(() => undefined);
+    } else {
+      await unlink(absolute).catch(() => undefined);
+    }
+  }));
+  return touchedSecrets;
+}
+
+export async function getCodexCliStatus(): Promise<CodexCliStatus> {
+  const root = await getLocalProjectsRoot();
+  const result = await runDetailed("codex", ["--version"], root, { timeoutMs: 10_000, env: codexProcessEnv() });
+  const version = result.ok ? result.output.trim().split(/\r?\n/)[0]?.trim() || null : null;
+  return {
+    installed: result.ok,
+    available: result.ok,
+    version,
+    message: result.ok ? "Codex CLI is available for local project execution." : "Codex CLI is missing or unavailable.",
+  };
+}
+
+function qaFailureSummary(project: Record<string, unknown>): string {
+  const checklist = parseQaChecklist(project.localQaChecklist) ?? [];
+  const failed = checklist.filter((item) => item.status === "failed");
+  if (!failed.length) return rowString(project.localBuildError) || "No QA failure checklist is recorded.";
+  return failed.map((item) => `- ${item.label}: ${item.detail}`).join("\n");
+}
+
+function buildCodexImprovementPrompt(params: {
+  projectName: string;
+  userRequest: string;
+  researchBrief: string;
+  designReview: string;
+  polishReview: string;
+  qaFailures: string;
+  pageSummary: string;
+  improvementGoal: string;
+}): string {
+  return [
+    "You are Codex CLI running as the Hermes Local Builder improvement executor.",
+    "",
+    "Hard constraints:",
+    "- Work only in this selected local app folder.",
+    "- Do not modify files outside this folder.",
+    "- Do not read, create, edit, or print .env files, API keys, tokens, credentials, private keys, or secrets.",
+    "- Do not deploy, push, commit, or change production behavior.",
+    "- Improve the existing Next.js app; do not replace it with a generic landing page.",
+    "- Preserve working build scripts and keep the app self-contained.",
+    "",
+    "Original user request:",
+    params.userRequest || "No original request recorded.",
+    "",
+    "Product brief / Athena research brief:",
+    params.researchBrief || "No Athena brief recorded.",
+    "",
+    "Fugu design review:",
+    params.designReview || "No Fugu design review recorded.",
+    "",
+    "Fugu polish review:",
+    params.polishReview || "No Fugu polish review recorded.",
+    "",
+    "QA checklist failure reasons:",
+    params.qaFailures || "No QA failures recorded.",
+    "",
+    "Exact improvement goal:",
+    params.improvementGoal,
+    "",
+    "Current app summary:",
+    params.pageSummary,
+    "",
+    "After editing, run npm run build if practical and fix any build errors. Leave a concise summary in your final response listing files changed and behavior added.",
+  ].join("\n");
+}
+
+function qaItem(key: string, label: string, passed: boolean, detail: string): LocalBuilderQaItem {
+  return { key, label, status: passed ? "passed" : "failed", detail };
+}
+
+function skippedQaItem(key: string, label: string, detail: string): LocalBuilderQaItem {
+  return { key, label, status: "skipped", detail };
+}
+
+async function evaluateLocalBuilderQa(project: Record<string, unknown>, folder: string): Promise<{ status: "qa_passed" | "qa_failed"; checklist: LocalBuilderQaItem[]; summary: string }> {
+  const { page, css, plan } = await readGeneratedAppFiles(folder);
+  const buildLog = rowString(project.localBuildLog);
+  const projectStatus = rowString(project.status);
+  const dependencyInstallExists = await exists(path.join(folder, "node_modules"));
+  const hasBuildPassed = /Building:\s*passed|Rebuild:\s*passed/i.test(buildLog)
+    || ["Build Passed", "qa_pending", "qa_failed", "qa_passed", "completed"].includes(projectStatus);
+  const hasInstallPassed = /Installing:\s*passed/i.test(buildLog)
+    || /Rebuild:\s*passed/i.test(buildLog)
+    || dependencyInstallExists
+    || hasBuildPassed;
+  const hasHomepage = page.trim().length > 0 && /export\s+default\s+function|export\s+default\s+async\s+function/.test(page);
+  const hasNavigation = /href=["'](?!#["'])[^"']+["']/.test(page) || /id=["'][^"']+["']/.test(page) || /router\.push|next\/link|<Link\b/.test(page);
+  const buttonMatches = page.match(/<button\b|role=["']button["']|<a\s+[^>]*href=/g) ?? [];
+  const buttonHandlerMatches = page.match(/onClick=|href=["'](?!#["'])[^"']+["']/g) ?? [];
+  const hasPrimaryButtons = buttonMatches.length > 0 && buttonHandlerMatches.length > 0;
+  const interactionSignals = /useState|onChange=|onSubmit=|onClick=|filter\(|set[A-Z]\w*\(|<form\b|localStorage/.test(page);
+  const appPromisesInteraction = /filter|form|interaction|button|save|compare|search|status|localStorage/i.test(`${page}\n${plan}`);
+  const usesLocalStorage = /localStorage/.test(page);
+  const localStorageSafe = !usesLocalStorage || /typeof\s+window|useEffect|try\s*\{/.test(page);
+  const mobileReviewed = /@media\s*\(|grid-template-columns:\s*1fr|max-width:\s*\d+px|clamp\(/i.test(css);
+  const deadHints = [
+    /href=["']#["']/,
+    /onClick=\{\(\)\s*=>\s*\{\s*\}\}/,
+    /TODO|coming soon|placeholder|lorem ipsum/i,
+  ];
+  const noDeadSections = !deadHints.some((pattern) => pattern.test(`${page}\n${css}`));
+  const designReview = rowString(project.localDesignReview);
+  const polishReview = rowString(project.localPolishReview);
+  const designScore = rowNumber(project.designScore);
+
+  const checklist: LocalBuilderQaItem[] = [
+    qaItem("npm_install_completed", "npm install completed", hasInstallPassed, hasInstallPassed ? "Install step completed successfully." : "Install success was not recorded in the build log."),
+    qaItem("npm_build_passed", "npm run build passed", hasBuildPassed, hasBuildPassed ? "Production build completed successfully." : "Production build success was not recorded."),
+    qaItem("homepage_loads", "homepage loads", hasHomepage, hasHomepage ? "src/app/page.tsx exists and exports a page component." : "No valid homepage component was found."),
+    qaItem("navigation_works", "navigation works", hasNavigation, hasNavigation ? "Navigation anchors, ids, router usage, or Link usage were found." : "No meaningful navigation target was found."),
+    qaItem("primary_buttons_clickable", "primary buttons are clickable", hasPrimaryButtons, hasPrimaryButtons ? `${buttonMatches.length} button/link control(s) with handler or href found.` : "Primary controls are missing or appear inert."),
+    appPromisesInteraction
+      ? qaItem("interactions_work", "filters/forms/interactions work if present", interactionSignals, interactionSignals ? "Stateful controls or form/filter handlers were found." : "The app appears to promise interaction but no handlers/state were found.")
+      : skippedQaItem("interactions_work", "filters/forms/interactions work if present", "No filters/forms/stateful interactions detected."),
+    usesLocalStorage
+      ? qaItem("local_storage_works", "localStorage works if used", localStorageSafe, localStorageSafe ? "localStorage usage appears guarded for client runtime." : "localStorage usage may be unsafe or unguarded.")
+      : skippedQaItem("local_storage_works", "localStorage works if used", "localStorage is not used."),
+    qaItem("mobile_layout_reviewed", "mobile layout reviewed", mobileReviewed, mobileReviewed ? "Responsive CSS cues were found." : "No obvious responsive/mobile CSS was found."),
+    qaItem("no_empty_dead_sections", "no obvious empty/dead sections", noDeadSections, noDeadSections ? "No obvious placeholders, dead hrefs, or empty handlers detected." : "Potential placeholder/dead-section hints were found."),
+    designReview
+      ? qaItem("design_review_score_recorded", "design review score recorded if Fugu is available", typeof designScore === "number", typeof designScore === "number" ? `Design review score recorded: ${designScore}/10.` : "Design review exists but no numeric score was recorded.")
+      : skippedQaItem("design_review_score_recorded", "design review score recorded if Fugu is available", "No Fugu design review is attached."),
+    qaItem("polish_review_completed", "polish review completed", Boolean(polishReview), polishReview ? "Post-build polish review is attached." : "Run Fugu Design Review after generation to record polish guidance."),
+  ];
+
+  const failed = checklist.filter((item) => item.status === "failed");
+  const summary = failed.length
+    ? `QA failed: ${failed.map((item) => item.label).join(", ")}.`
+    : "QA passed: build, interaction, responsive, and polish gates are satisfied.";
+
+  return {
+    status: failed.length ? "qa_failed" : "qa_passed",
+    checklist,
+    summary,
+  };
+}
+
 async function upsertSkillTask(db: Db, projectId: string, userId: string, title: string, description: string, status: "pending" | "done", nextStep: string): Promise<void> {
   const existing = await db.execute({
     sql: `SELECT id FROM ProjectTask WHERE projectId = ? AND title = ? LIMIT 1`,
@@ -452,6 +987,75 @@ async function upsertSkillTask(db: Db, projectId: string, userId: string, title:
     sql: `INSERT INTO ProjectTask (id, projectId, userId, title, description, status, assignedAgent, nextStep, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
     args: [crypto.randomUUID(), projectId, userId, title, description.slice(0, 500), status, LOCAL_BUILDER_AGENT, nextStep],
   });
+}
+
+export async function runLocalFuguDesignReview(userId: string, projectId: string): Promise<LocalBuildProject> {
+  const db = getDb();
+  const project = await findLocalBuildProject(db, userId, projectId);
+  const { projectName, folder, createdAt } = await resolveProjectFolder(project);
+  const pageSummary = await summarizeGeneratedPage(folder);
+  const hasGeneratedPage = pageSummary.includes("## src/app/page.tsx");
+  const target: "design" | "polish" = hasGeneratedPage ? "polish" : "design";
+  const status = rowString(project.status) || "Brief Ready";
+  const currentLog = rowString(project.localBuildLog);
+  const result = await runFuguDesignCritique({
+    projectInfo: [
+      `Project: ${projectName}`,
+      `Status: ${status}`,
+      `Folder: ${folder}`,
+      `Created: ${createdAt}`,
+      `Research brief present: ${rowString(project.localResearchBrief) ? "yes" : "no"}`,
+      `Existing design review present: ${rowString(project.localDesignReview) ? "yes" : "no"}`,
+      `Existing polish review present: ${rowString(project.localPolishReview) ? "yes" : "no"}`,
+    ].join("\n"),
+    pageSummary,
+    buildNotes: currentLog || "No build notes yet.",
+  });
+  const review = result.review;
+  const nextLog = `${currentLog}\nFugu Design Review: ${result.connected ? "completed" : "not connected"}${result.score ? ` (${result.score}/10)` : ""}.\n${review}`.trim();
+
+  if (target === "polish") {
+    await db.execute({
+      sql: `UPDATE Project SET localPolishReview = ?, designScore = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
+      args: [review, result.score, nextLog.slice(-12000), projectId],
+    });
+  } else {
+    await db.execute({
+      sql: `UPDATE Project SET localDesignReview = ?, designScore = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
+      args: [review, result.score, nextLog.slice(-12000), projectId],
+    });
+  }
+
+  await logFuguRun(db, projectName, target, review);
+  await upsertSkillTask(
+    db,
+    projectId,
+    userId,
+    `${target === "polish" ? "Visual polish review" : "Fugu design critique"} for ${projectName}`,
+    "Read-only Fugu critique for Builder guidance. Fugu does not modify code.",
+    result.connected ? "done" : "pending",
+    result.connected ? "Review saved for Builder guidance" : "Add SAKANA_API_KEY to environment"
+  );
+
+  return {
+    id: projectId,
+    projectName,
+    localFolderPath: folder,
+    status,
+    createdAt,
+    currentTask: `Run Fugu Design Review for ${projectName}`,
+    taskId: crypto.randomUUID(),
+    buildLog: nextLog.slice(-12000),
+    buildError: rowString(project.localBuildError) || null,
+    localDevUrl: rowString(project.localDevUrl) || null,
+    localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
+    researchBrief: rowString(project.localResearchBrief) || null,
+    designReview: target === "design" ? review : rowString(project.localDesignReview) || null,
+    polishReview: target === "polish" ? review : rowString(project.localPolishReview) || null,
+    designScore: result.score,
+    qaStatus: rowString(project.localQaStatus) || null,
+    qaChecklist: parseQaChecklist(project.localQaChecklist),
+  };
 }
 
 export async function prepareLocalBuildProject(userId: string, message: string): Promise<LocalBuildProject | null> {
@@ -488,7 +1092,7 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     projectId = rowString(row.id);
     createdAt = rowString(row.createdAt) || now;
     await db.execute({
-      sql: `UPDATE Project SET projectName = ?, status = 'Researching', latestInstruction = ?, assignedAgent = ?, localFolderPath = ?, localBuildLog = ?, localBuildError = NULL, updatedAt = datetime('now') WHERE id = ?`,
+      sql: `UPDATE Project SET projectName = ?, status = 'Researching', latestInstruction = ?, assignedAgent = ?, localFolderPath = ?, localBuildLog = ?, localBuildError = NULL, localPolishReview = NULL, updatedAt = datetime('now') WHERE id = ?`,
       args: [parsed.projectName, message.slice(0, 500), ATHENA_RESEARCH_AGENT, localFolderPath, "Researching: Athena is creating a build brief.\n", projectId],
     });
   } else {
@@ -518,8 +1122,8 @@ export async function prepareLocalBuildProject(userId: string, message: string):
   }
 
   await db.execute({
-    sql: `UPDATE Project SET status = 'Brief Ready', assignedAgent = ?, localResearchBrief = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
-    args: [LOCAL_BUILDER_AGENT, researchBrief, `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief.\n\n${researchBrief}`, projectId],
+    sql: `UPDATE Project SET status = 'Brief Ready', assignedAgent = ?, localResearchBrief = ?, localDesignReview = NULL, designScore = NULL, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
+    args: [LOCAL_BUILDER_AGENT, researchBrief, `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief. Run Fugu Design Review when the app needs critique.\n\n${researchBrief}`, projectId],
   });
 
   await logAthenaResearchRun(db, parsed.projectName, researchBrief);
@@ -529,6 +1133,7 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     ["Design brief", "Define visual direction, typography, spacing, layout, motion, and asset rules."],
     ["Feature plan", "Define catalog, cards, filters, detail views, saved/compare, and checkout or concierge flow."],
     ["Build plan", "Define implementation steps for responsive, stateful, testable UI."],
+    ["Fugu design critique", "Optional read-only review for UX structure, visual direction, missing interactions, realism, and required improvements."],
     ["QA checklist", "Verify build, navigation, buttons, filters, localStorage, responsive layout, and no copied assets."],
     ["Visual polish review", "Confirm the app feels like a real product before completion."],
   ] as const;
@@ -576,11 +1181,16 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     createdAt,
     currentTask,
     taskId,
-    buildLog: `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief.\n\n${researchBrief}`,
+    buildLog: `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief. Run Fugu Design Review when the app needs critique.\n\n${researchBrief}`,
     buildError: null,
     localDevUrl: null,
     localDevPid: null,
     researchBrief,
+    designReview: null,
+    polishReview: null,
+    designScore: null,
+    qaStatus: null,
+    qaChecklist: null,
   };
 }
 
@@ -589,6 +1199,7 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
   const project = await findLocalBuildProject(db, userId, projectId);
   const { projectName, folder: resolvedFolder, createdAt } = await resolveProjectFolder(project);
   const researchBrief = rowString(project.localResearchBrief) || await createAthenaResearchBrief(projectName, message);
+  const designReview = rowString(project.localDesignReview);
   if (!rowString(project.localResearchBrief)) {
     await db.execute({
       sql: `UPDATE Project SET localResearchBrief = ?, updatedAt = datetime('now') WHERE id = ?`,
@@ -615,7 +1226,10 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
   }
 
   let log = `${rowString(project.localBuildLog) || "Ready to Build"}\n`;
-  const files = await appFiles(projectName, message, researchBrief);
+  log += designReview
+    ? `Builder: using saved Fugu design review${rowNumber(project.designScore) ? ` with score ${rowNumber(project.designScore)}/10` : ""}.\n`
+    : "Builder: no Fugu design review attached; generating from the Athena brief.\n";
+  const files = await appFiles(projectName, message, researchBrief, designReview);
   const changedFiles = Object.keys(files);
 
   try {
@@ -642,19 +1256,24 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
     log += `\nBuilding: ${build.ok ? "passed" : "failed"}\n${build.output}\n`;
     if (!build.ok) throw new Error(`npm run build failed\n${build.output}`);
 
-    await updateProjectBuildState(db, projectId, "Build Passed", log);
+    log += "\nQA: build passed; checklist pending.\n";
+    await updateProjectBuildState(db, projectId, "qa_pending", log);
     await db.execute({
-      sql: `UPDATE ProjectTask SET status = 'done', nextStep = 'Build passed', updatedAt = datetime('now') WHERE id = ?`,
+      sql: `UPDATE Project SET localQaStatus = 'qa_pending', localQaChecklist = NULL, updatedAt = datetime('now') WHERE id = ?`,
+      args: [projectId],
+    });
+    await db.execute({
+      sql: `UPDATE ProjectTask SET status = 'in_progress', nextStep = 'Run QA checklist before completion', updatedAt = datetime('now') WHERE id = ?`,
       args: [taskId],
     });
-    await upsertSkillTask(db, projectId, userId, `Visual polish review for ${projectName}`, "Confirm the app feels like a real product before completion.", "done", "Polish review passed with the generated app build");
-    await logLocalBuilderRun(db, "completed", `local_build_generate project=${projectName}`, `Build Passed: ${resolvedFolder}`);
+    await upsertSkillTask(db, projectId, userId, `Visual polish review for ${projectName}`, "Confirm the app feels like a real product before completion.", "pending", "Run Fugu Design Review if the generated app feels too basic");
+    await logLocalBuilderRun(db, "completed", `local_build_generate project=${projectName}`, `Build passed; QA pending: ${resolvedFolder}`);
 
     return {
       id: projectId,
       projectName,
       localFolderPath: resolvedFolder,
-      status: "Build Passed",
+      status: "qa_pending",
       createdAt,
       currentTask: taskTitle,
       taskId,
@@ -663,11 +1282,20 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
       localDevUrl: rowString(project.localDevUrl) || null,
       localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
       researchBrief,
+      designReview: designReview || null,
+      polishReview: rowString(project.localPolishReview) || null,
+      designScore: rowNumber(project.designScore),
+      qaStatus: "qa_pending",
+      qaChecklist: null,
       files: changedFiles,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     await updateProjectBuildState(db, projectId, "Build Failed", log, detail);
+    await db.execute({
+      sql: `UPDATE Project SET localQaStatus = 'qa_failed', updatedAt = datetime('now') WHERE id = ?`,
+      args: [projectId],
+    }).catch(() => undefined);
     await db.execute({
       sql: `UPDATE ProjectTask SET status = 'pending', nextStep = ?, updatedAt = datetime('now') WHERE id = ?`,
       args: [`Fix first build error: ${detail.slice(0, 300)}`, taskId],
@@ -686,9 +1314,253 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
       localDevUrl: rowString(project.localDevUrl) || null,
       localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
       researchBrief,
+      designReview: designReview || null,
+      polishReview: rowString(project.localPolishReview) || null,
+      designScore: rowNumber(project.designScore),
+      qaStatus: "qa_failed",
+      qaChecklist: parseQaChecklist(project.localQaChecklist),
       files: changedFiles,
     };
   }
+}
+
+export async function runLocalBuilderQa(userId: string, projectId: string): Promise<LocalBuildProject> {
+  const db = getDb();
+  const project = await findLocalBuildProject(db, userId, projectId);
+  const { projectName, folder, createdAt } = await resolveProjectFolder(project);
+  let log = `${rowString(project.localBuildLog)}\nQA: checklist started.\n`.trim();
+
+  await db.execute({
+    sql: `UPDATE Project SET status = 'qa_running', localQaStatus = 'qa_running', localBuildLog = ?, localBuildError = NULL, updatedAt = datetime('now') WHERE id = ?`,
+    args: [log.slice(-12000), projectId],
+  });
+
+  const qa = await evaluateLocalBuilderQa(project, folder);
+  log += `\nQA: ${qa.summary}\n`;
+  for (const item of qa.checklist) {
+    log += `- [${item.status}] ${item.label}: ${item.detail}\n`;
+  }
+
+  const passed = qa.status === "qa_passed";
+  const finalStatus = passed ? "completed" : "qa_failed";
+  await db.execute({
+    sql: `UPDATE Project SET status = ?, localQaStatus = ?, localQaChecklist = ?, localBuildLog = ?, localBuildError = ?, updatedAt = datetime('now') WHERE id = ?`,
+    args: [finalStatus, qa.status, JSON.stringify(qa.checklist), log.slice(-12000), passed ? null : qa.summary, projectId],
+  });
+
+  await db.execute({
+    sql: `UPDATE ProjectTask SET status = ?, nextStep = ?, updatedAt = datetime('now') WHERE projectId = ? AND title LIKE ?`,
+    args: [passed ? "done" : "in_progress", passed ? "QA passed; local build completed" : qa.summary.slice(0, 300), projectId, `Generate starter app for ${projectName}`],
+  }).catch(() => undefined);
+
+  await upsertSkillTask(
+    db,
+    projectId,
+    userId,
+    `QA checklist for ${projectName}`,
+    "Verify build, homepage, navigation, buttons, interactions, mobile layout, dead sections, and polish review.",
+    passed ? "done" : "pending",
+    passed ? "Local builder QA passed" : qa.summary
+  );
+  await logLocalBuilderRun(db, passed ? "completed" : "failed", `local_build_qa project=${projectName}`, qa.summary);
+
+  return {
+    id: projectId,
+    projectName,
+    localFolderPath: folder,
+    status: finalStatus,
+    createdAt,
+    currentTask: `QA checklist for ${projectName}`,
+    taskId: crypto.randomUUID(),
+    buildLog: log.slice(-12000),
+    buildError: passed ? null : qa.summary,
+    localDevUrl: rowString(project.localDevUrl) || null,
+    localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
+    researchBrief: rowString(project.localResearchBrief) || null,
+    designReview: rowString(project.localDesignReview) || null,
+    polishReview: rowString(project.localPolishReview) || null,
+    designScore: rowNumber(project.designScore),
+    qaStatus: qa.status,
+    qaChecklist: qa.checklist,
+  };
+}
+
+export async function runLocalCodexExecutor(userId: string, projectId: string, improvementPrompt: string): Promise<LocalBuildProject> {
+  const db = getDb();
+  const project = await findLocalBuildProject(db, userId, projectId);
+  const { projectName, folder, createdAt } = await resolveProjectFolder(project);
+  const root = path.resolve(await getLocalProjectsRoot());
+  const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (folder === root || !folder.startsWith(rootWithSep)) {
+    throw new Error("Codex CLI executor refused to run outside an approved HermesProject app folder.");
+  }
+
+  const codexStatus = await getCodexCliStatus();
+  const queueTask = await createExecutionQueueTask({
+    userId,
+    title: `Improve ${projectName} with Codex CLI`,
+    description: improvementPrompt.slice(0, 2000),
+    priority: "high",
+    assignedExecutor: CODEX_CLI_EXECUTOR,
+    projectId,
+    initialLog: "Queued Codex CLI local app improvement.",
+  });
+
+  let log = `${rowString(project.localBuildLog)}\nCodex CLI: queued executor task ${queueTask.id}.\n`.trim();
+  if (!codexStatus.available) {
+    const message = "Codex CLI is missing or unavailable.";
+    await updateExecutionQueueTask(userId, queueTask.id, { status: "failed", error: message, log: message });
+    await updateProjectBuildState(db, projectId, "failed", log, message);
+    throw new Error(message);
+  }
+
+  await updateExecutionQueueTask(userId, queueTask.id, {
+    status: "executing",
+    log: `Running Codex CLI ${codexStatus.version ?? ""} inside ${folder}.`,
+  });
+  await db.execute({
+    sql: `UPDATE Project SET status = 'executing', assignedAgent = ?, localBuildLog = ?, localBuildError = NULL, updatedAt = datetime('now') WHERE id = ?`,
+    args: [CODEX_CLI_EXECUTOR, log.slice(-12000), projectId],
+  });
+
+  const pageSummary = await summarizeGeneratedPage(folder);
+  const prompt = buildCodexImprovementPrompt({
+    projectName,
+    userRequest: rowString(project.latestInstruction),
+    researchBrief: rowString(project.localResearchBrief),
+    designReview: rowString(project.localDesignReview),
+    polishReview: rowString(project.localPolishReview),
+    qaFailures: qaFailureSummary(project),
+    pageSummary,
+    improvementGoal: improvementPrompt,
+  });
+  const before = await collectProjectSnapshot(folder);
+  const codexModel = process.env.CODEX_CLI_MODEL?.trim() || DEFAULT_CODEX_CLI_MODEL;
+  const codexArgs = [
+    "-m",
+    codexModel,
+    "--ask-for-approval",
+    "never",
+    "exec",
+    "--cd",
+    folder,
+    "--skip-git-repo-check",
+    "--sandbox",
+    "workspace-write",
+    "-",
+  ];
+  const codex = await runDetailed("codex", codexArgs, folder, {
+    timeoutMs: 900_000,
+    env: codexProcessEnv(),
+    input: prompt,
+    displayCommand: `codex -m ${codexModel} --ask-for-approval never exec --cd ${JSON.stringify(folder)} --skip-git-repo-check --sandbox workspace-write <structured-prompt>`,
+  });
+  let changedFiles = await changedFilesSince(folder, before);
+  const secretFiles = await restoreSecretFileChanges(folder, before, changedFiles);
+  if (secretFiles.length) changedFiles = await changedFilesSince(folder, before);
+
+  log += [
+    "",
+    `Codex CLI: ${codex.ok ? "completed" : "failed"}.`,
+    `Command: ${codex.command}`,
+    `Exit code: ${codex.exitCode ?? "none"}`,
+    `Files changed: ${changedFiles.length ? changedFiles.join(", ") : "none"}`,
+    secretFiles.length ? `Secret-file safeguard restored/rejected: ${secretFiles.join(", ")}` : null,
+    codex.stdout ? `stdout:\n${codex.stdout}` : null,
+    codex.stderr ? `stderr:\n${codex.stderr}` : null,
+  ].filter(Boolean).join("\n");
+
+  if (!codex.ok || secretFiles.length) {
+    const detail = secretFiles.length
+      ? `Codex attempted to modify forbidden secret file(s): ${secretFiles.join(", ")}. Changes were restored.`
+      : `Codex CLI failed with exit code ${codex.exitCode ?? "none"}. ${codex.stderr || "See local build log for captured stdout/stderr."}`;
+    await updateExecutionQueueTask(userId, queueTask.id, { status: "failed", error: detail, log: detail });
+    await updateProjectBuildState(db, projectId, "failed", log, detail);
+    await logLocalBuilderRun(db, "failed", `codex_cli project=${projectName}`, detail.slice(0, 2000));
+    return {
+      id: projectId,
+      projectName,
+      localFolderPath: folder,
+      status: "failed",
+      createdAt,
+      currentTask: `Codex CLI improvement for ${projectName}`,
+      taskId: queueTask.id,
+      buildLog: log.slice(-12000),
+      buildError: detail,
+      localDevUrl: rowString(project.localDevUrl) || null,
+      localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
+      researchBrief: rowString(project.localResearchBrief) || null,
+      designReview: rowString(project.localDesignReview) || null,
+      polishReview: rowString(project.localPolishReview) || null,
+      designScore: rowNumber(project.designScore),
+      qaStatus: rowString(project.localQaStatus) || null,
+      qaChecklist: parseQaChecklist(project.localQaChecklist),
+      files: changedFiles,
+    };
+  }
+
+  await updateExecutionQueueTask(userId, queueTask.id, {
+    status: "qa_pending",
+    result: `Codex edited ${changedFiles.length} file(s). Running npm build and QA.`,
+    log: `Codex completed. Changed files: ${changedFiles.join(", ") || "none"}.`,
+  });
+  await updateProjectBuildState(db, projectId, "qa_pending", `${log}\nCodex CLI: build validation started.\n`);
+
+  const build = await runDetailed("npm", ["run", "build"], folder, { nodeEnv: "production", displayCommand: "npm run build" });
+  log += `\n\nCodex build: ${build.ok ? "passed" : "failed"}\nCommand: ${build.command}\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}\n`;
+  if (!build.ok) {
+    const detail = `npm run build failed after Codex CLI.\n${build.output}`;
+    await updateExecutionQueueTask(userId, queueTask.id, { status: "failed", error: detail, log: "Build failed after Codex CLI." });
+    await updateProjectBuildState(db, projectId, "failed", log, detail);
+    await logLocalBuilderRun(db, "failed", `codex_cli project=${projectName}`, detail.slice(0, 2000));
+    return {
+      id: projectId,
+      projectName,
+      localFolderPath: folder,
+      status: "failed",
+      createdAt,
+      currentTask: `Codex CLI improvement for ${projectName}`,
+      taskId: queueTask.id,
+      buildLog: log.slice(-12000),
+      buildError: detail,
+      localDevUrl: rowString(project.localDevUrl) || null,
+      localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
+      researchBrief: rowString(project.localResearchBrief) || null,
+      designReview: rowString(project.localDesignReview) || null,
+      polishReview: rowString(project.localPolishReview) || null,
+      designScore: rowNumber(project.designScore),
+      qaStatus: "qa_failed",
+      qaChecklist: parseQaChecklist(project.localQaChecklist),
+      files: changedFiles,
+    };
+  }
+
+  await db.execute({
+    sql: `UPDATE Project SET status = 'qa_pending', localQaStatus = 'qa_pending', localQaChecklist = NULL, localBuildLog = ?, localBuildError = NULL, updatedAt = datetime('now') WHERE id = ?`,
+    args: [`${log}\nQA: Codex build passed; checklist rerun started.\n`.slice(-12000), projectId],
+  });
+
+  const qaProject = await runLocalBuilderQa(userId, projectId);
+  const passed = qaProject.qaStatus === "qa_passed";
+  await updateExecutionQueueTask(userId, queueTask.id, {
+    status: passed ? "qa_passed" : "failed",
+    result: `Codex changed files: ${changedFiles.join(", ") || "none"}\nBuild: passed\nQA: ${qaProject.qaStatus}`,
+    error: passed ? null : qaProject.buildError,
+    log: `QA rerun finished with ${qaProject.qaStatus}.`,
+  });
+  await logLocalBuilderRun(
+    db,
+    passed ? "completed" : "failed",
+    `codex_cli project=${projectName}`,
+    `Changed files: ${changedFiles.join(", ") || "none"}\nBuild passed\nQA: ${qaProject.qaStatus}`
+  );
+
+  return {
+    ...qaProject,
+    currentTask: `Codex CLI improvement for ${projectName}`,
+    taskId: queueTask.id,
+    files: changedFiles,
+  };
 }
 
 export async function rebuildLocalStarterApp(userId: string, projectId: string): Promise<LocalBuildProject> {
@@ -703,13 +1575,18 @@ export async function rebuildLocalStarterApp(userId: string, projectId: string):
     const build = await run("npm", ["run", "build"], folder, "production");
     log += `\n\nRebuild: ${build.ok ? "passed" : "failed"}\n${build.output}\n`;
     if (!build.ok) throw new Error(`npm run build failed\n${build.output}`);
-    await updateProjectBuildState(db, projectId, "Build Passed", log);
-    await logLocalBuilderRun(db, "completed", `local_build_rebuild project=${projectName}`, `Build Passed: ${folder}`);
+    log += "\nQA: rebuild passed; checklist pending.\n";
+    await updateProjectBuildState(db, projectId, "qa_pending", log);
+    await db.execute({
+      sql: `UPDATE Project SET localQaStatus = 'qa_pending', localQaChecklist = NULL, updatedAt = datetime('now') WHERE id = ?`,
+      args: [projectId],
+    });
+    await logLocalBuilderRun(db, "completed", `local_build_rebuild project=${projectName}`, `Build passed; QA pending: ${folder}`);
     return {
       id: projectId,
       projectName,
       localFolderPath: folder,
-      status: "Build Passed",
+      status: "qa_pending",
       createdAt,
       currentTask: `Rebuild ${projectName}`,
       taskId,
@@ -718,10 +1595,19 @@ export async function rebuildLocalStarterApp(userId: string, projectId: string):
       localDevUrl: rowString(project.localDevUrl) || null,
       localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
       researchBrief: rowString(project.localResearchBrief) || null,
+      designReview: rowString(project.localDesignReview) || null,
+      polishReview: rowString(project.localPolishReview) || null,
+      designScore: rowNumber(project.designScore),
+      qaStatus: "qa_pending",
+      qaChecklist: null,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     await updateProjectBuildState(db, projectId, "Build Failed", log, detail);
+    await db.execute({
+      sql: `UPDATE Project SET localQaStatus = 'qa_failed', updatedAt = datetime('now') WHERE id = ?`,
+      args: [projectId],
+    }).catch(() => undefined);
     await logLocalBuilderRun(db, "failed", `local_build_rebuild project=${projectName}`, detail);
     return {
       id: projectId,
@@ -736,6 +1622,11 @@ export async function rebuildLocalStarterApp(userId: string, projectId: string):
       localDevUrl: rowString(project.localDevUrl) || null,
       localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
       researchBrief: rowString(project.localResearchBrief) || null,
+      designReview: rowString(project.localDesignReview) || null,
+      polishReview: rowString(project.localPolishReview) || null,
+      designScore: rowNumber(project.designScore),
+      qaStatus: "qa_failed",
+      qaChecklist: parseQaChecklist(project.localQaChecklist),
     };
   }
 }
@@ -767,6 +1658,11 @@ export async function openLocalProjectFolder(userId: string, projectId: string):
     localDevUrl: rowString(project.localDevUrl) || null,
     localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
     researchBrief: rowString(project.localResearchBrief) || null,
+    designReview: rowString(project.localDesignReview) || null,
+    polishReview: rowString(project.localPolishReview) || null,
+    designScore: rowNumber(project.designScore),
+    qaStatus: rowString(project.localQaStatus) || null,
+    qaChecklist: parseQaChecklist(project.localQaChecklist),
   };
 }
 
@@ -789,6 +1685,11 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
       localDevUrl: existing.url,
       localDevPid: existing.pid,
       researchBrief: rowString(project.localResearchBrief) || null,
+      designReview: rowString(project.localDesignReview) || null,
+      polishReview: rowString(project.localPolishReview) || null,
+      designScore: rowNumber(project.designScore),
+      qaStatus: rowString(project.localQaStatus) || null,
+      qaChecklist: parseQaChecklist(project.localQaChecklist),
     };
   }
 
@@ -826,6 +1727,11 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
     localDevUrl: url,
     localDevPid: child.pid ?? null,
     researchBrief: rowString(project.localResearchBrief) || null,
+    designReview: rowString(project.localDesignReview) || null,
+    polishReview: rowString(project.localPolishReview) || null,
+    designScore: rowNumber(project.designScore),
+    qaStatus: rowString(project.localQaStatus) || null,
+    qaChecklist: parseQaChecklist(project.localQaChecklist),
   };
 }
 
@@ -853,5 +1759,10 @@ export async function stopLocalDevServer(userId: string, projectId: string): Pro
     localDevUrl: null,
     localDevPid: null,
     researchBrief: rowString(project.localResearchBrief) || null,
+    designReview: rowString(project.localDesignReview) || null,
+    polishReview: rowString(project.localPolishReview) || null,
+    designScore: rowNumber(project.designScore),
+    qaStatus: rowString(project.localQaStatus) || null,
+    qaChecklist: parseQaChecklist(project.localQaChecklist),
   };
 }
