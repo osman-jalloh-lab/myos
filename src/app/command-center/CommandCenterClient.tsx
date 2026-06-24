@@ -145,6 +145,19 @@ interface MemoryOfficeData {
   lastUpdated: string;
 }
 
+interface MemoryContextDebugData {
+  activeSession: { id: string | null; chatId: string | null; userId: string | null; lastUpdated: string | null } | null;
+  activeIntent: string | null;
+  activeTask: string | null;
+  activeProjectId: string | null;
+  rememberedEntities: Record<string, unknown>;
+  toolHealth: Array<{ tool: string; status: string; reason: string | null; lastChecked: string }>;
+  recentFailures: Array<{ tool: string; reason: string; timestamp: string }>;
+  pendingApprovals: Array<{ id: string; actionType: string; createdAt: string }>;
+  last20MessagesLoaded: Array<{ id: string; role: string; content: string; channel: string; targetAgent: string | null; createdAt: string }>;
+  lastUpdated: string;
+}
+
 interface SkillView {
   name: string;
   source: string;
@@ -626,7 +639,15 @@ function qaColor(status: QaItem["status"]): string {
   return "#94A3B8";
 }
 
-function MemoryOfficePanel({ data, onCreateTestMemory }: { data: MemoryOfficeData | null; onCreateTestMemory: () => Promise<void> }) {
+function MemoryOfficePanel({
+  data,
+  debug,
+  onCreateTestMemory,
+}: {
+  data: MemoryOfficeData | null;
+  debug: MemoryContextDebugData | null;
+  onCreateTestMemory: () => Promise<void>;
+}) {
   const [busy, setBusy] = useState(false);
   const create = async () => {
     setBusy(true);
@@ -664,6 +685,94 @@ function MemoryOfficePanel({ data, onCreateTestMemory }: { data: MemoryOfficeDat
 
       {memoryCount === 0 && (
         <div style={{ ...cardStyle, color: "#4B5563", textAlign: "center" }}>No memories saved yet</div>
+      )}
+
+      <MemoryContextDebugPanel data={debug} />
+    </div>
+  );
+}
+
+function MemoryContextDebugPanel({ data }: { data: MemoryContextDebugData | null }) {
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 14 }}>
+        <div>
+          <div style={{ color: "#A78BFA", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            Memory Context Debug
+          </div>
+        </div>
+        <span style={{ color: "#4B5563", fontSize: 11 }}>{data?.lastUpdated ? `Updated ${timeAgo(data.lastUpdated)}` : "Not loaded"}</span>
+      </div>
+
+      {!data ? (
+        <div style={{ color: "#4B5563", fontSize: 13 }}>Context debug data is not loaded yet.</div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
+          <MemoryList
+            title="Active Session"
+            empty="No active session"
+            items={[
+              {
+                key: "session",
+                head: data.activeIntent ?? "No active intent",
+                body: [
+                  data.activeSession?.chatId ? `Session: ${data.activeSession.chatId}` : "Session: none",
+                  data.activeTask ? `Task: ${data.activeTask}` : "Task: none",
+                  data.activeProjectId ? `Project: ${data.activeProjectId}` : "Project: none",
+                ].join("\n"),
+                meta: data.activeSession?.lastUpdated ? timeAgo(data.activeSession.lastUpdated) : undefined,
+              },
+            ]}
+          />
+          <MemoryList
+            title="Remembered Entities"
+            empty="No entities remembered"
+            items={Object.entries(data.rememberedEntities ?? {}).map(([key, value]) => ({
+              key,
+              head: key.replace(/([A-Z])/g, " $1").trim(),
+              body: JSON.stringify(value, null, 2),
+            }))}
+          />
+          <MemoryList
+            title="Tool Health"
+            empty="No tool health recorded"
+            items={data.toolHealth.map((tool) => ({
+              key: tool.tool,
+              head: `${tool.tool}: ${tool.status}`,
+              body: tool.reason ?? "Available",
+              meta: tool.lastChecked ? timeAgo(tool.lastChecked) : undefined,
+            }))}
+          />
+          <MemoryList
+            title="Recent Failures"
+            empty="No recent failures"
+            items={data.recentFailures.map((failure) => ({
+              key: `${failure.tool}-${failure.timestamp}`,
+              head: failure.tool,
+              body: failure.reason,
+              meta: timeAgo(failure.timestamp),
+            }))}
+          />
+          <MemoryList
+            title="Pending Approvals"
+            empty="No pending approvals"
+            items={data.pendingApprovals.map((approval) => ({
+              key: approval.id,
+              head: approval.actionType,
+              meta: timeAgo(approval.createdAt),
+            }))}
+          />
+          <MemoryList
+            title="Last 20 Messages Loaded"
+            empty="No recent messages"
+            items={data.last20MessagesLoaded.map((message) => ({
+              key: message.id,
+              head: `${message.role}${message.targetAgent ? ` / ${message.targetAgent}` : ""}`,
+              body: message.content.slice(0, 260),
+              meta: `${message.channel} / ${timeAgo(message.createdAt)}`,
+            }))}
+          />
+        </div>
       )}
     </div>
   );
@@ -1168,6 +1277,7 @@ export default function CommandCenterClient() {
   const [audit, setAudit] = useState<AuditEntry[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [memoryOffice, setMemoryOffice] = useState<MemoryOfficeData | null>(null);
+  const [memoryContextDebug, setMemoryContextDebug] = useState<MemoryContextDebugData | null>(null);
   const [executionQueue, setExecutionQueue] = useState<ExecutionQueueData | null>(null);
   const [healthCenter, setHealthCenter] = useState<HealthCenterData | null>(null);
   const [healthAction, setHealthAction] = useState<string | null>(null);
@@ -1177,7 +1287,7 @@ export default function CommandCenterClient() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, tgChatRes, memoryRes, skillsRes, queueRes, healthRes] = await Promise.allSettled([
+      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, tgChatRes, memoryRes, memoryDebugRes, skillsRes, queueRes, healthRes] = await Promise.allSettled([
         fetch("/api/command-center/projects").then((r) => r.json() as Promise<{ projects: Project[] }>),
         fetch("/api/command-center/builds").then((r) => r.json() as Promise<{ builds: Build[] }>),
         fetch("/api/approvals").then((r) => r.json() as Promise<{ actions: ApprovalAction[] }>),
@@ -1185,6 +1295,7 @@ export default function CommandCenterClient() {
         fetch("/api/chat").then((r) => r.json() as Promise<{ messages: ChatMessage[] }>),
         fetch("/api/chat?channel=telegram").then((r) => r.json() as Promise<{ messages: ChatMessage[] }>),
         fetch("/api/command-center/memory-office").then((r) => r.json() as Promise<MemoryOfficeData>),
+        fetch("/api/command-center/memory-context-debug").then((r) => r.json() as Promise<MemoryContextDebugData>),
         fetch("/api/command-center/skills").then((r) => r.json() as Promise<{ skills: SkillView[] }>),
         fetch("/api/command-center/execution-queue").then((r) => r.json() as Promise<ExecutionQueueData>),
         fetch("/api/command-center/health-center").then((r) => r.json() as Promise<HealthCenterData>),
@@ -1198,6 +1309,7 @@ export default function CommandCenterClient() {
         setAudit(logsRes.value.audit ?? []);
       }
       if (memoryRes.status === "fulfilled" && !("error" in memoryRes.value)) setMemoryOffice(memoryRes.value);
+      if (memoryDebugRes.status === "fulfilled" && !("error" in memoryDebugRes.value)) setMemoryContextDebug(memoryDebugRes.value);
       if (skillsRes.status === "fulfilled") setSkills(skillsRes.value.skills ?? []);
       if (queueRes.status === "fulfilled" && !("error" in queueRes.value)) setExecutionQueue(queueRes.value);
       if (healthRes.status === "fulfilled" && !("error" in healthRes.value)) setHealthCenter(healthRes.value);
@@ -1317,7 +1429,7 @@ export default function CommandCenterClient() {
             )}
             {tab === "health" && <HealthCenterPanel data={healthCenter} busyAction={healthAction} onAction={runHealthAction} />}
             {tab === "agents" && <BuilderOffice />}
-            {tab === "memory" && <MemoryOfficePanel data={memoryOffice} onCreateTestMemory={createTestMemory} />}
+            {tab === "memory" && <MemoryOfficePanel data={memoryOffice} debug={memoryContextDebug} onCreateTestMemory={createTestMemory} />}
             {tab === "skills" && <SkillsPanel skills={skills} candidate={skillCandidate} onScout={scoutOneSkill} />}
             {tab === "projects" && <ProjectsPanel projects={projects} />}
             {tab === "builds" && <BuildsPanel builds={builds} />}

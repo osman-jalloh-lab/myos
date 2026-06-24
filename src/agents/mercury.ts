@@ -14,6 +14,7 @@
 import { callModel } from "@/lib/modelRouter";
 import { logHandoff } from "@/agents/hermes";
 import { createApproval } from "@/lib/approvals";
+import { persistToolFailure } from "@/lib/context-persistence";
 
 // ── Tool registry ─────────────────────────────────────────────────────────────
 // A tool is "connected" if all its required env keys are present at boot time.
@@ -496,6 +497,7 @@ export async function handleMercuryRequest(
   if (!tool?.connected) {
     const name = tool?.label ?? intent.tool;
     const hint = tool?.notConnectedHint ?? "Add the required API key to your Vercel environment variables.";
+    await persistToolFailure(userId, name, hint).catch(() => undefined);
     return {
       reply: fmt(`${name} is not connected yet. ${hint}`, `<b>${name}</b> is not connected yet.\n\n${hint}`),
       toolUsed: intent.tool,
@@ -545,6 +547,7 @@ export async function handleMercuryRequest(
       outputSummary: `error: ${msg}`,
       status: "failed",
     });
+    await persistToolFailure(userId, tool.label, msg).catch(() => undefined);
     return {
       reply: fmt(
         `${tool.label} lookup failed: ${msg}. Check the API key or try again.`,

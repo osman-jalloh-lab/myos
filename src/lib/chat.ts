@@ -3,6 +3,7 @@ import { routeMessage, routeToAgent, type RouteResult } from "@/agents/hermes";
 import { handleMercuryRequest } from "@/agents/mercury";
 import { autoCaptureUserMemory } from "@/lib/auto-memory";
 import { buildContextBlock, updateSessionAfterResponse } from "@/lib/memory-context";
+import { contextStateFromContextBlock, resolveMessageWithContext } from "@/lib/context-persistence";
 
 export type ChatChannel = "dashboard" | "telegram";
 
@@ -79,28 +80,31 @@ export async function sendMessage(
   targetAgent: string | null = null,
   chatContext?: string
 ): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView; route: RouteResult }> {
+  const contextChatId = `${channel}:shared:${userId}`;
   const userRow = await prisma.chatMessage.create({
     data: { userId, role: "user", content: text, channel, targetAgent },
   });
   await autoCaptureUserMemory(userId, text).catch(() => []);
-  const resolvedContext = chatContext ?? await buildContextBlock(`${channel}:${targetAgent ?? "hermes"}:${userId}`, userId, text).catch(() => "");
+  const resolvedContext = chatContext ?? await buildContextBlock(contextChatId, userId, text).catch(() => "");
+  const contextResolution = resolveMessageWithContext(text, contextStateFromContextBlock(resolvedContext || undefined));
+  const routingText = contextResolution.resolvedText;
 
   let route: RouteResult;
   if (targetAgent === "mercury") {
     // Mercury handles external tool/API requests independently — it does not
     // go through Hermes routing, keeping the two agent graphs separate.
-    const { reply, pendingApprovals } = await handleMercuryRequest(userId, text, channel);
+    const { reply, pendingApprovals } = await handleMercuryRequest(userId, routingText, channel);
     route = { reply, pendingApprovals };
   } else {
     route = targetAgent
-      ? await routeToAgent(userId, targetAgent, text, channel, 0, resolvedContext || undefined)
-      : await routeMessage(userId, text, channel, resolvedContext || undefined);
+      ? await routeToAgent(userId, targetAgent, routingText, channel, 0, resolvedContext || undefined)
+      : await routeMessage(userId, routingText, channel, resolvedContext || undefined);
   }
 
   const replyRow = await prisma.chatMessage.create({
     data: { userId, role: "assistant", content: route.reply, channel, targetAgent },
   });
-  await updateSessionAfterResponse(`${channel}:${targetAgent ?? "hermes"}:${userId}`, userId, text).catch(() => {});
+  await updateSessionAfterResponse(contextChatId, userId, text).catch(() => {});
 
   return { userMessage: toView(userRow), reply: toView(replyRow), route };
 }

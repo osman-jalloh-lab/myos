@@ -1633,6 +1633,19 @@ export async function routeMessage(userId: string, text: string, channel?: strin
 
   const q = trimmed.toLowerCase();
 
+  if (/\b(flight|flights|airfare|plane ticket|google flights|flight prices|flight options)\b/i.test(trimmed)) {
+    const { handleMercuryRequest } = await import("@/agents/mercury");
+    const mercury = await handleMercuryRequest(userId, trimmed, channel);
+    await logHandoff({
+      agentName: "hermes",
+      inputSummary: `[delegated:mercury] ${trimmed.slice(0, 160)}`,
+      outputSummary: mercury.reply.slice(0, 500),
+      modelProvider: "none",
+      status: "completed",
+    });
+    return { reply: mercury.reply, pendingApprovals: mercury.pendingApprovals };
+  }
+
   // ── multi-agent parallel path ─────────────────────────────────────────────
   // Cross-domain queries (prep for interview, plan my week, big picture) fan
   // out to multiple agents in parallel, then synthesize. Always goes through

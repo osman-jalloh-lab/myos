@@ -11,6 +11,17 @@ import { createClient } from "@libsql/client";
 import { prisma } from "@/lib/db";
 import crypto from "node:crypto";
 import { getContextCards, readMemory } from "@/agents/mnemosyne";
+import {
+  mergeContextFromMessage,
+  parseSessionJson,
+  recentToolFailures,
+  serializeContextState,
+  toolHealthFromEnvironment,
+  type RememberedEntities,
+  type SessionContextState,
+  type ToolFailureEntry,
+  type ToolHealthEntry,
+} from "@/lib/context-persistence";
 
 // ── DB client (lazy singleton) ────────────────────────────────────────────────
 
@@ -35,6 +46,10 @@ export interface AgentSession {
   activeProjectId: string | null;
   currentGoal: string | null;
   currentTask: string | null;
+  activeIntent: string | null;
+  rememberedEntities: string | null;
+  toolHealth: string | null;
+  recentFailures: string | null;
   lastSummary: string | null;
   lastUpdated: string;
 }
@@ -75,6 +90,10 @@ function rowToSession(r: DbRow): AgentSession {
     activeProjectId: str(r.activeProjectId),
     currentGoal: str(r.currentGoal),
     currentTask: str(r.currentTask),
+    activeIntent: str(r.activeIntent),
+    rememberedEntities: str(r.rememberedEntities),
+    toolHealth: str(r.toolHealth),
+    recentFailures: str(r.recentFailures),
     lastSummary: str(r.lastSummary),
     lastUpdated: str(r.lastUpdated) ?? new Date().toISOString(),
   };
@@ -110,6 +129,7 @@ function rowToTask(r: DbRow): ProjectTask {
 
 export async function getOrCreateSession(chatId: string, userId: string): Promise<AgentSession> {
   const db = getDb();
+  await ensureAgentSessionColumns();
   const res = await db.execute({ sql: `SELECT * FROM AgentSession WHERE chatId = ? LIMIT 1`, args: [chatId] });
   if (res.rows.length > 0) return rowToSession(res.rows[0] as unknown as DbRow);
 
@@ -118,24 +138,90 @@ export async function getOrCreateSession(chatId: string, userId: string): Promis
     sql: `INSERT INTO AgentSession (id, chatId, userId) VALUES (?, ?, ?)`,
     args: [id, chatId, userId],
   });
-  return { id, chatId, userId, activeProjectId: null, currentGoal: null, currentTask: null, lastSummary: null, lastUpdated: new Date().toISOString() };
+  return {
+    id,
+    chatId,
+    userId,
+    activeProjectId: null,
+    currentGoal: null,
+    currentTask: null,
+    activeIntent: null,
+    rememberedEntities: null,
+    toolHealth: null,
+    recentFailures: null,
+    lastSummary: null,
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+let agentSessionColumnsReady = false;
+
+async function ensureAgentSessionColumns(): Promise<void> {
+  if (agentSessionColumnsReady) return;
+  const db = getDb();
+  await db.execute(`ALTER TABLE AgentSession ADD COLUMN activeIntent TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE AgentSession ADD COLUMN rememberedEntities TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE AgentSession ADD COLUMN toolHealth TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE AgentSession ADD COLUMN recentFailures TEXT`).catch(() => undefined);
+  agentSessionColumnsReady = true;
 }
 
 export async function updateSession(
   chatId: string,
-  updates: Partial<Pick<AgentSession, "activeProjectId" | "currentGoal" | "currentTask" | "lastSummary">>
+  updates: Partial<Pick<AgentSession, "activeProjectId" | "currentGoal" | "currentTask" | "activeIntent" | "rememberedEntities" | "toolHealth" | "recentFailures" | "lastSummary">>
 ): Promise<void> {
   const db = getDb();
+  await ensureAgentSessionColumns();
   const fields: string[] = [];
   const args: (string | null)[] = [];
   if (updates.activeProjectId !== undefined) { fields.push("activeProjectId = ?"); args.push(updates.activeProjectId); }
   if (updates.currentGoal !== undefined) { fields.push("currentGoal = ?"); args.push(updates.currentGoal); }
   if (updates.currentTask !== undefined) { fields.push("currentTask = ?"); args.push(updates.currentTask); }
+  if (updates.activeIntent !== undefined) { fields.push("activeIntent = ?"); args.push(updates.activeIntent); }
+  if (updates.rememberedEntities !== undefined) { fields.push("rememberedEntities = ?"); args.push(updates.rememberedEntities); }
+  if (updates.toolHealth !== undefined) { fields.push("toolHealth = ?"); args.push(updates.toolHealth); }
+  if (updates.recentFailures !== undefined) { fields.push("recentFailures = ?"); args.push(updates.recentFailures); }
   if (updates.lastSummary !== undefined) { fields.push("lastSummary = ?"); args.push(updates.lastSummary); }
   if (fields.length === 0) return;
   fields.push("lastUpdated = datetime('now')");
   args.push(chatId);
   await db.execute({ sql: `UPDATE AgentSession SET ${fields.join(", ")} WHERE chatId = ?`, args });
+}
+
+export function sessionToContextState(session: AgentSession): SessionContextState {
+  return {
+    activeIntent: session.activeIntent as SessionContextState["activeIntent"],
+    rememberedEntities: parseSessionJson<RememberedEntities>(session.rememberedEntities, {}),
+    toolHealth: parseSessionJson<ToolHealthEntry[]>(session.toolHealth, []),
+    recentFailures: parseSessionJson<ToolFailureEntry[]>(session.recentFailures, []),
+  };
+}
+
+async function updateSessionContextFromMessage(chatId: string, userId: string, newMessage: string, session: AgentSession): Promise<AgentSession> {
+  const failures = await recentToolFailures(userId).catch(() => []);
+  const nextState = mergeContextFromMessage(
+    {
+      ...sessionToContextState(session),
+      toolHealth: toolHealthFromEnvironment(),
+      recentFailures: failures,
+    },
+    newMessage
+  );
+  const serialized = serializeContextState(nextState);
+  await updateSession(chatId, {
+    activeIntent: serialized.activeIntent,
+    rememberedEntities: serialized.rememberedEntities,
+    toolHealth: serialized.toolHealth,
+    recentFailures: serialized.recentFailures,
+  });
+  return {
+    ...session,
+    activeIntent: serialized.activeIntent,
+    rememberedEntities: serialized.rememberedEntities,
+    toolHealth: serialized.toolHealth,
+    recentFailures: serialized.recentFailures,
+    lastUpdated: new Date().toISOString(),
+  };
 }
 
 // ── Project ───────────────────────────────────────────────────────────────────
@@ -258,8 +344,9 @@ export async function ensureBuildProject(chatId: string, userId: string, route: 
  * Returns empty string when there is nothing meaningful to inject.
  */
 export async function buildContextBlock(chatId: string, userId: string, newMessage: string): Promise<string> {
-  const [session, recentMessages, pendingApprovals, recentMemories, relevantMemories] = await Promise.all([
-    getOrCreateSession(chatId, userId),
+  const baseSession = await getOrCreateSession(chatId, userId);
+  const session = await updateSessionContextFromMessage(chatId, userId, newMessage, baseSession).catch(() => baseSession);
+  const [recentMessages, pendingApprovals, recentMemories, relevantMemories] = await Promise.all([
     prisma.chatMessage.findMany({
       where: { userId },
       orderBy: { createdAt: "desc" },
@@ -301,6 +388,30 @@ export async function buildContextBlock(chatId: string, userId: string, newMessa
   }
 
   const lines: string[] = [];
+
+  const contextState = sessionToContextState(session);
+  if (contextState.activeIntent || Object.keys(contextState.rememberedEntities).length > 0) {
+    lines.push(`ACTIVE INTENT: ${contextState.activeIntent ?? "none"}`);
+    lines.push(`REMEMBERED ENTITIES: ${JSON.stringify(contextState.rememberedEntities)}`);
+    lines.push("");
+  }
+
+  const toolHealth = contextState.toolHealth.length ? contextState.toolHealth : toolHealthFromEnvironment();
+  if (toolHealth.length > 0) {
+    lines.push("TOOL HEALTH:");
+    for (const tool of toolHealth) {
+      lines.push(`  - ${tool.tool}: ${tool.status}${tool.reason ? ` (${tool.reason})` : ""}`);
+    }
+    lines.push("");
+  }
+
+  if (contextState.recentFailures.length > 0) {
+    lines.push("RECENT TOOL FAILURES:");
+    for (const failure of contextState.recentFailures.slice(0, 6)) {
+      lines.push(`  - ${failure.tool}: ${failure.reason} (${failure.timestamp})`);
+    }
+    lines.push("");
+  }
 
   if (activeProject) {
     lines.push(`ACTIVE PROJECT: ${activeProject.projectName} [${activeProject.status}]`);
