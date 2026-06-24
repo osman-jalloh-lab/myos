@@ -10,6 +10,7 @@
 import { createClient } from "@libsql/client";
 import { prisma } from "@/lib/db";
 import crypto from "node:crypto";
+import { getContextCards, readMemory } from "@/agents/mnemosyne";
 
 // ── DB client (lazy singleton) ────────────────────────────────────────────────
 
@@ -257,7 +258,7 @@ export async function ensureBuildProject(chatId: string, userId: string, route: 
  * Returns empty string when there is nothing meaningful to inject.
  */
 export async function buildContextBlock(chatId: string, userId: string, newMessage: string): Promise<string> {
-  const [session, recentMessages, pendingApprovals] = await Promise.all([
+  const [session, recentMessages, pendingApprovals, recentMemories, relevantMemories] = await Promise.all([
     getOrCreateSession(chatId, userId),
     prisma.chatMessage.findMany({
       where: { userId },
@@ -271,6 +272,8 @@ export async function buildContextBlock(chatId: string, userId: string, newMessa
       take: 5,
       select: { id: true, actionType: true, payload: true, createdAt: true },
     }),
+    readMemory(userId).catch(() => []),
+    getContextCards(userId, newMessage, 8).catch(() => []),
   ]);
 
   let activeProject: Project | null = null;
@@ -327,6 +330,19 @@ export async function buildContextBlock(chatId: string, userId: string, newMessa
       } catch { /* ignore parse errors */ }
       lines.push(`  - ${summary} (id:${a.id})`);
     }
+    lines.push("");
+  }
+
+  const memoryLines = [
+    ...relevantMemories.map((m) => `  - ${m.fact}${m.source ? ` (source: ${m.source})` : ""}`),
+    ...recentMemories
+      .filter((m) => !relevantMemories.some((r) => r.fact === m.fact))
+      .slice(0, 5)
+      .map((m) => `  - ${m.fact}${m.source ? ` (source: ${m.source})` : ""}`),
+  ].slice(0, 10);
+  if (memoryLines.length > 0) {
+    lines.push("APPROVED MEMORY:");
+    lines.push(...memoryLines);
     lines.push("");
   }
 

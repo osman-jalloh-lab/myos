@@ -1689,8 +1689,9 @@ export async function routeMessage(userId: string, text: string, channel?: strin
   // This gives every callModel call a grounded view of what's happening,
   // not just the domain data from one CONTEXT_MATCHER.
   const { getRecentAgentTasks } = await import("@/lib/agentTasks");
-  const [recentMemories, recentAgentTasks, recentEngTasks] = await Promise.all([
+  const [recentMemories, relevantMemoryCards, recentAgentTasks, recentEngTasks] = await Promise.all([
     readMemory(userId).catch(() => []),
+    getContextCards(userId, trimmed, 8).catch(() => []),
     getRecentAgentTasks(userId, 3).catch(() => []),
     prisma.engineeringTask.findMany({
       where: { userId },
@@ -1734,7 +1735,13 @@ export async function routeMessage(userId: string, text: string, channel?: strin
 
   // Assemble structured prompt sections
   const memorySummary = recentMemories.length > 0
-    ? recentMemories.slice(0, 3).map((m) => `- ${m.fact}`).join("\n")
+    ? [
+        ...relevantMemoryCards.map((m) => `- ${m.fact}${m.source ? ` (source: ${m.source})` : ""}`),
+        ...recentMemories
+          .filter((m) => !relevantMemoryCards.some((r) => r.fact === m.fact))
+          .slice(0, 8)
+          .map((m) => `- ${m.fact}${m.source ? ` (source: ${m.source})` : ""}`),
+      ].slice(0, 12).join("\n")
     : "None.";
 
   const agentTaskLines = recentAgentTasks.map(

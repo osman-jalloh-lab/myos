@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/db";
 import { routeMessage, routeToAgent, type RouteResult } from "@/agents/hermes";
 import { handleMercuryRequest } from "@/agents/mercury";
+import { autoCaptureUserMemory } from "@/lib/auto-memory";
+import { buildContextBlock, updateSessionAfterResponse } from "@/lib/memory-context";
 
 export type ChatChannel = "dashboard" | "telegram";
 
@@ -80,6 +82,8 @@ export async function sendMessage(
   const userRow = await prisma.chatMessage.create({
     data: { userId, role: "user", content: text, channel, targetAgent },
   });
+  await autoCaptureUserMemory(userId, text).catch(() => []);
+  const resolvedContext = chatContext ?? await buildContextBlock(`${channel}:${targetAgent ?? "hermes"}:${userId}`, userId, text).catch(() => "");
 
   let route: RouteResult;
   if (targetAgent === "mercury") {
@@ -89,19 +93,21 @@ export async function sendMessage(
     route = { reply, pendingApprovals };
   } else {
     route = targetAgent
-      ? await routeToAgent(userId, targetAgent, text, channel, 0, chatContext)
-      : await routeMessage(userId, text, channel, chatContext);
+      ? await routeToAgent(userId, targetAgent, text, channel, 0, resolvedContext || undefined)
+      : await routeMessage(userId, text, channel, resolvedContext || undefined);
   }
 
   const replyRow = await prisma.chatMessage.create({
     data: { userId, role: "assistant", content: route.reply, channel, targetAgent },
   });
+  await updateSessionAfterResponse(`${channel}:${targetAgent ?? "hermes"}:${userId}`, userId, text).catch(() => {});
 
   return { userMessage: toView(userRow), reply: toView(replyRow), route };
 }
 
 /** Persist an already-executed reply without routing the prompt through Hermes again. */
 export async function persistExecutedMessage(userId: string, text: string, reply: string, channel: ChatChannel = "dashboard"): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView }> {
+  await autoCaptureUserMemory(userId, text).catch(() => []);
   const [userRow, replyRow] = await prisma.$transaction([
     prisma.chatMessage.create({ data: { userId, role: "user", content: text, channel, targetAgent: null } }),
     prisma.chatMessage.create({ data: { userId, role: "assistant", content: reply, channel, targetAgent: null } }),

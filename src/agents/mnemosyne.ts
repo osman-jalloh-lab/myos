@@ -30,8 +30,8 @@ export async function suggestMemory(userId: string, fact: string, source?: strin
   return memorySuggest(userId, fact, source);
 }
 
-export async function getContextCards(userId: string, query: string): Promise<ContextCard[]> {
-  return contextCards(userId, query);
+export async function getContextCards(userId: string, query: string, max?: number): Promise<ContextCard[]> {
+  return contextCards(userId, query, max);
 }
 
 export async function runStaleCleanup(userId: string): Promise<StaleCandidate[]> {
