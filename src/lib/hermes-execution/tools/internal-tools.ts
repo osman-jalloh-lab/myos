@@ -6,6 +6,56 @@ import { registerTool } from "../tool-registry";
 import type { ToolContext, ExecutionArtifact } from "../types";
 import { registerBuildTools } from "./build-tools";
 
+const GITHUB_URL_PREFIX = "https://github.com/";
+const GITHUB_REPO_SEGMENT_RE = /^[a-zA-Z0-9_.-]+$/;
+
+export function sanitizeGitHubRepoInput(input: string): string {
+  return input.replace(/[\uFEFF\u200B-\u200D]/g, "").trim();
+}
+
+function getGitHubRepoPath(input: string): { repoPath?: string; error?: string } {
+  const sanitized = sanitizeGitHubRepoInput(input);
+  const urlCandidate = sanitized.match(/https?:\/\/\S+/)?.[0]?.replace(/[),.;]+$/, "");
+
+  if (!urlCandidate) {
+    return {
+      error: "I could not find a GitHub URL in your message. Include a full URL like https://github.com/owner/repo",
+    };
+  }
+
+  if (!urlCandidate.startsWith(GITHUB_URL_PREFIX)) {
+    return {
+      error: "Invalid GitHub URL. Use a full repo URL that starts with https://github.com/owner/repo",
+    };
+  }
+
+  let url: URL;
+  try {
+    url = new URL(urlCandidate);
+  } catch {
+    return {
+      error: "Invalid GitHub URL. Use a full repo URL like https://github.com/owner/repo",
+    };
+  }
+
+  if (url.origin !== "https://github.com") {
+    return {
+      error: "Invalid GitHub URL. Use a full repo URL that starts with https://github.com/owner/repo",
+    };
+  }
+
+  const [owner, repoWithSuffix] = url.pathname.split("/").filter(Boolean);
+  const repo = repoWithSuffix?.replace(/\.git$/, "");
+
+  if (!owner || !repo || !GITHUB_REPO_SEGMENT_RE.test(owner) || !GITHUB_REPO_SEGMENT_RE.test(repo)) {
+    return {
+      error: "Invalid GitHub repo URL. Use https://github.com/owner/repo with a valid owner and repository name.",
+    };
+  }
+
+  return { repoPath: `${owner}/${repo}` };
+}
+
 // ── internal.chat.respond ─────────────────────────────────────────────────────
 
 export function registerInternalTools(): void {
@@ -35,18 +85,14 @@ export function registerInternalTools(): void {
       const message = String(input.message ?? "");
       const urlArg = input.repoUrl as string | undefined;
 
-      // Extract GitHub URL from message or explicit input
-      const urlMatch = (urlArg || message).match(
-        /https?:\/\/(?:www\.)?github\.com\/([a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+)/
-      );
-      if (!urlMatch) {
+      const { repoPath, error } = getGitHubRepoPath(urlArg || message);
+      if (!repoPath) {
         return {
-          answer: "I could not find a GitHub URL in your message. Include a full URL like https://github.com/owner/repo",
+          answer: error,
           artifacts: [],
         };
       }
 
-      const repoPath = urlMatch[1].replace(/\.git$/, "");
       const token = ctx.env.GITHUB_TOKEN;
       const headers: Record<string, string> = {
         Accept: "application/vnd.github+json",
