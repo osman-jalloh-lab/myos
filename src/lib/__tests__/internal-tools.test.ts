@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { registerInternalTools, sanitizeGitHubRepoInput } from "@/lib/hermes-execution/tools/internal-tools";
+import {
+  registerInternalTools,
+  sanitizeGitHubHeaderValue,
+  sanitizeGitHubRepoInput,
+} from "@/lib/hermes-execution/tools/internal-tools";
 import { getTool } from "@/lib/hermes-execution/tool-registry";
 import type { ToolContext } from "@/lib/hermes-execution/types";
 
@@ -62,6 +66,47 @@ describe("internal.github.inspectRepo", () => {
     expect(result.artifacts[0].title).toBe("wshobson/agents");
   });
 
+  it("removes hidden Unicode characters from the GitHub token header", async () => {
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          full_name: "wshobson/agents",
+          description: null,
+          language: null,
+          default_branch: "main",
+          stargazers_count: 0,
+          forks_count: 0,
+          open_issues_count: 0,
+          topics: [],
+          html_url: "https://github.com/wshobson/agents",
+          homepage: null,
+          license: null,
+          created_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-06-25T00:00:00Z",
+          size: 10,
+          visibility: "public",
+        }),
+      })
+      .mockResolvedValueOnce({ ok: false }) as unknown as typeof fetch;
+
+    const tool = getTool("internal.github.inspectRepo");
+    await tool?.execute(
+      { repoUrl: "https://github.com/wshobson/agents" },
+      { ...ctx, env: { GITHUB_TOKEN: "\uFEFFghp_test\u200B " } }
+    );
+
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "https://api.github.com/repos/wshobson/agents",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: "Bearer ghp_test",
+        }),
+      })
+    );
+  });
+
   it("returns a clear error for non-HTTPS GitHub URLs before fetch", async () => {
     global.fetch = vi.fn() as unknown as typeof fetch;
 
@@ -82,5 +127,11 @@ describe("sanitizeGitHubRepoInput", () => {
     expect(sanitizeGitHubRepoInput(" \uFEFFhttps://github.com/a/\u200Bb\u200C\u200D ")).toBe(
       "https://github.com/a/b"
     );
+  });
+});
+
+describe("sanitizeGitHubHeaderValue", () => {
+  it("trims whitespace and removes hidden Unicode characters", () => {
+    expect(sanitizeGitHubHeaderValue(" \uFEFFghp_test\u200B\u200C\u200D ")).toBe("ghp_test");
   });
 });
