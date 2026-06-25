@@ -13,6 +13,10 @@ export function sanitizeGitHubRepoInput(input: string): string {
   return input.replace(/[\uFEFF\u200B-\u200D]/g, "").trim();
 }
 
+export function sanitizeGitHubHeaderValue(input: string): string {
+  return input.replace(/[\uFEFF\u200B-\u200D]/g, "").trim();
+}
+
 function getGitHubRepoPath(input: string): { repoPath?: string; error?: string } {
   const sanitized = sanitizeGitHubRepoInput(input);
   const urlCandidate = sanitized.match(/https?:\/\/\S+/)?.[0]?.replace(/[),.;]+$/, "");
@@ -93,7 +97,7 @@ export function registerInternalTools(): void {
         };
       }
 
-      const token = ctx.env.GITHUB_TOKEN;
+      const token = ctx.env.GITHUB_TOKEN ? sanitizeGitHubHeaderValue(ctx.env.GITHUB_TOKEN) : "";
       const headers: Record<string, string> = {
         Accept: "application/vnd.github+json",
         "User-Agent": "hermes-os-execution",
