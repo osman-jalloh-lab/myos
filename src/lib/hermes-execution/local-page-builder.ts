@@ -8,6 +8,10 @@ import type { ExecutionArtifact, ToolContext } from "./types";
 
 type PageRequest = { route: string; heading: string; button: string };
 
+function isServerlessRuntime(): boolean {
+  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
+}
+
 function quotedAfter(message: string, label: string): string | null {
   const match = message.match(new RegExp(`${label}\\s*[\\\"'“”‘’]([^\\\"'“”‘’]+)[\\\"'“”‘’]`, "i"));
   return match?.[1]?.trim() ?? null;
@@ -48,6 +52,7 @@ async function run(command: string, args: string[], cwd: string): Promise<{ ok: 
 export async function buildLocalPage(message: string, ctx: ToolContext): Promise<{ answer: string; artifacts: ExecutionArtifact[] } | null> {
   const request = parseSafePageRequest(message);
   if (!request) return null;
+  if (isServerlessRuntime()) return null;
 
   const root = process.cwd();
   const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8")) as { scripts?: Record<string, string> };

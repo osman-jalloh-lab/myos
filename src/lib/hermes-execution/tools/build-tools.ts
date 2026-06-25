@@ -23,6 +23,20 @@ function isSafePath(filePath: string): boolean {
 
 const REPO_SLUG = "osman-jalloh-lab/myos";
 
+function isServerlessRuntime(): boolean {
+  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
+}
+
+function explicitlyRequestsRepoOrPullRequest(message: string): boolean {
+  return /\b(pull request|github|branch|commit|pr)\b/i.test(message)
+    || /\b(parawi|myos|hermes os|this repo|the repo|repository|codebase)\b/i.test(message);
+}
+
+function isUserAppOrWebsiteGeneration(message: string): boolean {
+  if (!/\b(build|create|make|generate|scaffold|start)\b/i.test(message)) return false;
+  return /\b(website|site|web app|app|landing page|local project|project|marketplace|store|shop|archive|product|experience)\b/i.test(message);
+}
+
 // ── GitHub API helpers ────────────────────────────────────────────────────────
 
 async function ghGet(path: string, token: string): Promise<Response> {
@@ -316,6 +330,38 @@ async function llmTypeCheck(files: GeneratedFile[], userId: string): Promise<str
 // Used by both internal.code.buildFeature and internal.code.buildAndPush.
 
 async function runBuildAndPush(message: string, ctx: ToolContext) {
+  if (isServerlessRuntime() && isUserAppOrWebsiteGeneration(message) && !explicitlyRequestsRepoOrPullRequest(message)) {
+    const { queueLocalBuilderWorkerTask } = await import("@/lib/local-builder");
+    const queued = await queueLocalBuilderWorkerTask(ctx.userId, "generate", message);
+    if (queued) {
+      const decision = "route=local_worker_queue reason=serverless_cannot_write_local_files";
+      console.log(`[hermes-execution] ${decision} task=${queued.taskId ?? "unknown"} project=${queued.projectName}`);
+      return {
+        answer: [
+          "Queued for Local Worker.",
+          "",
+          decision,
+          `Project: ${queued.projectName}`,
+          queued.taskId ? `Task: ${queued.taskId}` : null,
+          "Local Worker required: run `npm run worker:local` on the Windows machine to claim and execute it.",
+        ].filter(Boolean).join("\n"),
+        artifacts: [{
+          type: "text" as const,
+          title: "Local Worker Queue",
+          content: `Queued for Local Worker\n${decision}\nProject: ${queued.projectName}\nTask: ${queued.taskId ?? "unknown"}\nStatus: queued`,
+          metadata: {
+            route: "local_worker_queue",
+            reason: "serverless_cannot_write_local_files",
+            assignedExecutor: "local_worker",
+            projectId: queued.id,
+            taskId: queued.taskId,
+            status: "queued",
+          },
+        }],
+      };
+    }
+  }
+
   // Safe, isolated App Router pages execute in the checked-out workspace and
   // validate immediately. Broader builds keep the existing branch/PR path.
   const { buildLocalPage } = await import("../local-page-builder");

@@ -146,13 +146,14 @@ export async function getLocalBuilderRootInfo(): Promise<LocalBuilderRootInfo> {
 
 export function parseLocalBuildRequest(message: string): { projectName: string; folderName: string } | null {
   const trimmed = message.trim();
-  if (!/\b(build|create|make|start|scaffold)\b/i.test(trimmed)) return null;
-  if (!/\b(website|site|app|web app|landing page|project|marketplace|store|shop)\b/i.test(trimmed)) return null;
+  if (!/\b(build|create|make|start|scaffold|generate)\b/i.test(trimmed)) return null;
+  if (!/\b(website|site|app|web app|landing page|project|marketplace|store|shop|archive|product|experience)\b/i.test(trimmed)) return null;
 
   const explicitName =
     trimmed.match(/\b(?:called|named)\s+["']?([a-z0-9][a-z0-9 _-]{1,70})["']?/i)?.[1] ??
     trimmed.match(/\b(?:website|site|app|web app|landing page|project|marketplace|store|shop)\s+["']?([a-z0-9][a-z0-9 _-]{1,70})["']?/i)?.[1] ??
-    trimmed.match(/\bbuild(?:\s+me)?\s+(?:a|an)?\s*["']?([a-z0-9][a-z0-9 _-]{1,70}?(?:website|site|app|web app|landing page|project|marketplace|store|shop))["']?(?:[.!?]|$)/i)?.[1];
+    trimmed.match(/\bbuild(?:\s+me)?\s+(?:a|an)?\s*["']?([a-z0-9][a-z0-9 _-]{1,70}?(?:website|site|app|web app|landing page|project|marketplace|store|shop|archive|product|experience))["']?(?:[.!?]|$)/i)?.[1] ??
+    trimmed.match(/\b(?:build|create|make|generate)\s+(?:a|an|the)?\s*["']?([a-z0-9][a-z0-9 _-]{1,70})["']?(?:[.!?]|$)/i)?.[1];
 
   if (!explicitName) return null;
 
@@ -1351,7 +1352,7 @@ export async function queueLocalBuilderWorkerTask(
     priority: action === "prepare" ? "medium" : "high",
     assignedExecutor: "local_worker",
     projectId: resolvedProjectId,
-    initialLog: "Queued by Vercel/serverless boundary for local worker execution.",
+    initialLog: "route=local_worker_queue reason=serverless_cannot_write_local_files. Queued by Vercel/serverless boundary for local worker execution.",
   });
 
   const log = `${rowString(project?.localBuildLog) || ""}\nQueued ${action} for local worker task ${task.id}.\nServerless runtime did not touch ${localFolderPath}.`.trim();
