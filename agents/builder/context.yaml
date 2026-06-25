@@ -1,0 +1,12 @@
+agent: builder
+loads:
+  - collection: design
+    filter: {}
+  - collection: skills
+    filter: {}
+  - collection: projects
+    filter: {}
+  - collection: policies
+    filter: {}
+  - collection: preferences
+    filter: {}

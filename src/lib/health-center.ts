@@ -33,9 +33,18 @@ export type ScheduledJobHealth = {
 
 export type ExecutorHealthRow = {
   name: string;
-  status: "Online" | "Offline" | "Busy";
+  status: "Online" | "Offline" | "Busy" | "Unknown";
   lastRun: string | null;
   lastError: string | null;
+  workerId?: string | null;
+  machineName?: string | null;
+  rootPath?: string | null;
+  nodeVersion?: string | null;
+  npmVersion?: string | null;
+  gitAvailable?: boolean | null;
+  codexAvailable?: boolean | null;
+  currentTask?: string | null;
+  capabilities?: string[];
 };
 
 export type NotificationHealthRow = {
@@ -83,6 +92,20 @@ export type HealthCenterSnapshot = {
 type QueueHealthRow = {
   status: string;
   assigned_executor: string | null;
+};
+
+type LocalWorkerHeartbeatRow = {
+  workerId: string;
+  machineName: string;
+  status: string;
+  lastHeartbeat: string;
+  rootPath: string;
+  nodeVersion: string | null;
+  npmVersion: string | null;
+  gitAvailable: number | boolean | null;
+  codexAvailable: number | boolean | null;
+  currentTask: string | null;
+  lastError: string | null;
 };
 
 type AgentRunRow = {
@@ -171,6 +194,17 @@ function executorStatus(latest: AgentRunRow | null, active: boolean, available =
   if (active) return "Busy";
   if (!available) return "Offline";
   return "Online";
+}
+
+function localWorkerStatus(heartbeat: LocalWorkerHeartbeatRow | null): ExecutorHealthRow["status"] {
+  if (!heartbeat) return "Unknown";
+  const ageMs = Date.now() - new Date(heartbeat.lastHeartbeat).getTime();
+  if (ageMs > 90 * 1000 || heartbeat.status === "offline") return "Offline";
+  return heartbeat.currentTask ? "Busy" : "Online";
+}
+
+function boolish(value: number | boolean | null | undefined): boolean {
+  return value === true || value === 1;
 }
 
 async function logHealth(component: string, status: HealthSeverity, message: string): Promise<void> {
@@ -279,7 +313,9 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
     providerRow({ provider: "OpenAI", env: ["OPENAI_API_KEY"], runs, component: providerComponent("OpenAI") }),
     providerRow({ provider: "Anthropic / Claude", env: ["ANTHROPIC_API_KEY"], runs, component: providerComponent("Anthropic / Claude") }),
     providerRow({ provider: "Sakana / Fugu", env: ["SAKANA_API_KEY"], runs, component: providerComponent("Sakana / Fugu") }),
-    providerRow({ provider: "Serper Web Search", env: ["SERPER_API_KEY"], runs, component: providerComponent("Serper Web Search") }),
+    providerRow({ provider: "Firecrawl Web Search", env: ["FIRECRAWL_API_KEY"], runs, component: providerComponent("Firecrawl Web Search") }),
+    providerRow({ provider: "SerpAPI Google Flights", env: ["SERPAPI_API_KEY"], runs, component: providerComponent("SerpAPI Google Flights") }),
+    providerRow({ provider: "Amadeus Travel Fallback", env: ["AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET"], runs, component: providerComponent("Amadeus Travel Fallback") }),
     providerRow({ provider: "Google APIs", env: ["GOOGLE_MAPS_API_KEY"], runs, component: providerComponent("Google APIs") }),
     providerRow({ provider: "Gmail", env: [], runs, component: providerComponent("Gmail"), configured: accounts.some((account) => /gmail|mail\.google/i.test(account.scopes)) }),
     providerRow({ provider: "Calendar", env: [], runs, component: providerComponent("Calendar"), configured: accounts.some((account) => /calendar/i.test(account.scopes)) }),
@@ -300,11 +336,18 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
       result = await testJsonEndpoint("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } });
     } else if (row.provider === "Anthropic / Claude") {
       result = await testJsonEndpoint("https://api.anthropic.com/v1/models", { headers: { "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01" } });
-    } else if (row.provider === "Serper Web Search") {
-      result = await testJsonEndpoint("https://google.serper.dev/search", {
+    } else if (row.provider === "SerpAPI Google Flights") {
+      result = await testJsonEndpoint(`https://serpapi.com/account?api_key=${encodeURIComponent(process.env.SERPAPI_API_KEY ?? "")}`, {});
+    } else if (row.provider === "Amadeus Travel Fallback") {
+      const params = new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: process.env.AMADEUS_CLIENT_ID ?? "",
+        client_secret: process.env.AMADEUS_CLIENT_SECRET ?? "",
+      });
+      result = await testJsonEndpoint("https://test.api.amadeus.com/v1/security/oauth2/token", {
         method: "POST",
-        headers: { "X-API-KEY": process.env.SERPER_API_KEY ?? "", "Content-Type": "application/json" },
-        body: JSON.stringify({ q: "health check", num: 1 }),
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: params.toString(),
       });
     } else if (row.provider === "Telegram") {
       result = await testJsonEndpoint(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getMe`, {});
@@ -340,10 +383,11 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
 }
 
 export async function getHealthCenterSnapshot(userId: string): Promise<HealthCenterSnapshot> {
-  const [accounts, runs, queueTasks, trackedCount, jobLeadCount, codexStatus, recentApprovals] = await Promise.all([
+  const [accounts, runs, queueTasks, workerHeartbeats, trackedCount, jobLeadCount, codexStatus, recentApprovals] = await Promise.all([
     prisma.googleAccount.findMany({ where: { userId }, orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }] }),
     prisma.agentRun.findMany({ orderBy: { createdAt: "desc" }, take: 250 }),
     prisma.$queryRawUnsafe<QueueHealthRow[]>(`SELECT status, assigned_executor FROM AgentTask WHERE userId = ? ORDER BY updatedAt DESC LIMIT 80`, userId).catch(() => []),
+    prisma.$queryRawUnsafe<LocalWorkerHeartbeatRow[]>(`SELECT * FROM LocalWorkerHeartbeat ORDER BY lastHeartbeat DESC LIMIT 1`).catch(() => []),
     prisma.trackedApplication.count({ where: { userId } }).catch(() => 0),
     prisma.jobLead.count({ where: { userId } }).catch(() => 0),
     getCodexCliStatus().catch(() => ({ installed: false, available: false, version: null, message: "Codex CLI status unavailable." })),
@@ -476,9 +520,32 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
   });
 
   const busyExecutors = new Set(queueTasks.filter((task) => ["queued", "planning", "executing", "running", "qa_pending"].includes(task.status)).map((task) => task.assigned_executor ?? task.status));
+  const latestLocalWorker = workerHeartbeats[0] ?? null;
+  const gitAvailable = boolish(latestLocalWorker?.gitAvailable);
+  const codexAvailable = boolish(latestLocalWorker?.codexAvailable);
   const executorRows: ExecutorHealthRow[] = [
     { name: "Hermes", status: executorStatus(latestRun(runs, ["hermes"]), false, true), lastRun: iso(latestRun(runs, ["hermes"])?.createdAt), lastError: latestRun(runs, ["hermes"])?.status === "failed" ? latestRun(runs, ["hermes"])?.outputSummary ?? null : null },
     { name: "Builder", status: executorStatus(latestRun(runs, ["local_build", "hermes-local-builder"]), busyExecutors.has("hermes-local-builder"), true), lastRun: iso(latestRun(runs, ["local_build", "hermes-local-builder"])?.createdAt), lastError: latestRun(runs, ["local_build", "hermes-local-builder"])?.status === "failed" ? latestRun(runs, ["local_build", "hermes-local-builder"])?.outputSummary ?? null : null },
+    {
+      name: "Local Worker",
+      status: localWorkerStatus(latestLocalWorker),
+      lastRun: latestLocalWorker?.lastHeartbeat ?? null,
+      lastError: latestLocalWorker?.lastError ?? (latestLocalWorker ? null : "No local worker heartbeat recorded"),
+      workerId: latestLocalWorker?.workerId ?? null,
+      machineName: latestLocalWorker?.machineName ?? null,
+      rootPath: latestLocalWorker?.rootPath ?? null,
+      nodeVersion: latestLocalWorker?.nodeVersion ?? null,
+      npmVersion: latestLocalWorker?.npmVersion ?? null,
+      gitAvailable,
+      codexAvailable,
+      currentTask: latestLocalWorker?.currentTask ?? null,
+      capabilities: latestLocalWorker ? [
+        `Node ${latestLocalWorker.nodeVersion ?? "unknown"}`,
+        `npm ${latestLocalWorker.npmVersion ?? "unknown"}`,
+        `Git ${gitAvailable ? "available" : "missing"}`,
+        `Codex ${codexAvailable ? "available" : "missing"}`,
+      ] : [],
+    },
     { name: "Codex Executor", status: executorStatus(latestRun(runs, ["codex_cli"]), busyExecutors.has("codex_cli"), codexStatus.available), lastRun: iso(latestRun(runs, ["codex_cli"])?.createdAt), lastError: codexStatus.available ? latestRun(runs, ["codex_cli"])?.status === "failed" ? latestRun(runs, ["codex_cli"])?.outputSummary ?? null : null : codexStatus.message },
     { name: "Fugu Critic", status: executorStatus(latestRun(runs, ["fugu"]), false, hasEnv("SAKANA_API_KEY")), lastRun: iso(latestRun(runs, ["fugu"])?.createdAt), lastError: hasEnv("SAKANA_API_KEY") ? null : "SAKANA_API_KEY is not configured" },
     { name: "Job Tracker", status: executorStatus(latestRun(runs, ["job-tracker", "job-scout"]), false, true), lastRun: iso(latestRun(runs, ["job-tracker", "job-scout"])?.createdAt), lastError: latestRun(runs, ["job-tracker", "job-scout"])?.status === "failed" ? latestRun(runs, ["job-tracker", "job-scout"])?.outputSummary ?? null : null },

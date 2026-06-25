@@ -171,13 +171,20 @@ interface SkillView {
 interface SkillCandidate {
   name: string;
   source: string;
+  sourceUrl: string;
+  repository: string;
+  path: string;
   category: string;
   description: string;
   whyItHelps: string;
+  installCommand: string;
   riskyFiles: string[];
   approvalRequired: boolean;
   status: string;
   testResult: string;
+  taskId: string;
+  taskTitle: string;
+  taskStatus: string;
   createdAt: string;
 }
 
@@ -188,7 +195,7 @@ interface HealthCenterData {
   overall: { status: HealthSeverity; score: number; message: string; lastChecked: string };
   accounts: Array<{ name: string; connected: boolean; email?: string | null; label?: string | null; gmailScope?: boolean; calendarScope?: boolean; tokenExpiresAt?: string | null; lastSuccessfulSync: string | null; lastError: string | null; reconnectRequired: boolean; warnings: string[]; score: number }>;
   scheduledJobs: Array<{ name: string; key: string; enabled: boolean; lastRun: string | null; nextRun: string | null; lastResult: string | null; runtime: string | null; successCount: number; failureCount: number; status: "Healthy" | "Delayed" | "Failed" | "Never Ran" | "Disabled" }>;
-  executors: Array<{ name: string; status: "Online" | "Offline" | "Busy"; lastRun: string | null; lastError: string | null }>;
+  executors: Array<{ name: string; status: "Online" | "Offline" | "Busy" | "Unknown"; lastRun: string | null; lastError: string | null; workerId?: string | null; machineName?: string | null; rootPath?: string | null; nodeVersion?: string | null; npmVersion?: string | null; gitAvailable?: boolean | null; codexAvailable?: boolean | null; currentTask?: string | null; capabilities?: string[] }>;
   notifications: Array<{ name: string; lastSent: string | null; lastFailed: string | null; pendingNotifications: number; status: HealthSeverity }>;
   apiProviders: Array<{ provider: string; configured: boolean; requiredEnvVars: string[]; source: "local env" | "Vercel/runtime"; lastTested: string | null; status: "working" | "missing" | "invalid" | "error" | "configured_untested"; safeError: string | null }>;
   logs: Array<{ timestamp: string; component: string; status: HealthSeverity; message: string }>;
@@ -1294,7 +1301,14 @@ function SkillsPanel({ skills, candidate, onScout }: { skills: SkillView[]; cand
           <strong style={{ color: "#F1F4FB" }}>{candidate.name}</strong>
           <p style={{ color: "#94A3B8", fontSize: 13 }}>{candidate.description}</p>
           <p style={{ color: "#D8DEEB", fontSize: 13 }}>{candidate.whyItHelps}</p>
-          <div style={{ color: "#FBBF24", fontSize: 12 }}>Approval required before install. No unknown scripts were run.</div>
+          <div style={{ display: "grid", gap: 6, padding: "10px 12px", border: "1px solid rgba(56,189,248,0.22)", borderRadius: 8, background: "rgba(15,22,38,0.48)", marginBottom: 10 }}>
+            <div style={{ color: "#94A3B8", fontSize: 12 }}>
+              Found in <a href={candidate.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#38BDF8" }}>{candidate.repository}</a>
+            </div>
+            <div style={{ color: "#94A3B8", fontSize: 12 }}>Path: <code style={{ color: "#D8DEEB" }}>{candidate.path}</code></div>
+            <div style={{ color: "#94A3B8", fontSize: 12 }}>Review task: <code style={{ color: "#D8DEEB" }}>{candidate.taskId.slice(0, 8)}</code> / {candidate.taskStatus}</div>
+          </div>
+          <div style={{ color: "#FBBF24", fontSize: 12 }}>Approval required before install. Review task created; no unknown scripts were run.</div>
           <ul style={{ color: "#94A3B8", fontSize: 12, marginBottom: 0 }}>
             {candidate.riskyFiles.map((risk) => <li key={risk}>{risk}</li>)}
           </ul>
@@ -1567,6 +1581,10 @@ function HealthCenterPanel({
                   <span style={badgeStyle(statusColor(executor.status))}>{executor.status}</span>
                 </div>
                 <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 8 }}>Last Run: {executor.lastRun ? timeAgo(executor.lastRun) : "Never"}</div>
+                {executor.machineName && <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 4 }}>Machine: {executor.machineName}</div>}
+                {executor.currentTask && <div style={{ color: "#60A5FA", fontSize: 11, marginTop: 4, overflowWrap: "anywhere" }}>Current Task: {executor.currentTask}</div>}
+                {executor.rootPath && <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 4, overflowWrap: "anywhere" }}>Root: <code>{executor.rootPath}</code></div>}
+                {executor.capabilities?.length ? <div style={{ color: "#647089", fontSize: 10, marginTop: 4 }}>{executor.capabilities.join(" / ")}</div> : null}
                 <div style={{ color: executor.lastError ? "#F87171" : "#94A3B8", fontSize: 11, marginTop: 4 }}>Last Error: {executor.lastError ?? "none"}</div>
               </div>
             ))}

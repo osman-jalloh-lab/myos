@@ -1,0 +1,4 @@
+agent: iris
+loads:
+  - collection: policies
+    filter: { tags: [knowledge-card-system] }

@@ -41,12 +41,11 @@ describe("context persistence", () => {
 
   it("marks web search unavailable when no search API key exists", () => {
     vi.stubEnv("FIRECRAWL_API_KEY", "");
-    vi.stubEnv("SERPER_API_KEY", "");
 
     const webSearch = toolHealthFromEnvironment().find((tool) => tool.tool === "Web Search");
 
     expect(webSearch?.status).toBe("unavailable");
-    expect(webSearch?.reason).toMatch(/FIRECRAWL_API_KEY|SERPER_API_KEY/);
+    expect(webSearch?.reason).toMatch(/FIRECRAWL_API_KEY/);
   });
 
   it("resolves build pronoun follow-ups from active build context", () => {

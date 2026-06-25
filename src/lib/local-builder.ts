@@ -6,6 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { runFuguDesignCritique } from "@/lib/fugu-design-critic";
 import { createExecutionQueueTask, updateExecutionQueueTask } from "@/lib/execution-queue";
+import { loadAgentKnowledgeContext, type KnowledgeCard } from "@/lib/knowledge-cards";
 
 type Db = ReturnType<typeof createClient>;
 
@@ -66,6 +67,24 @@ const FUGU_DESIGN_AGENT = "fugu";
 const CODEX_CLI_EXECUTOR = "codex_cli";
 const DEFAULT_CODEX_CLI_MODEL = "gpt-5.4";
 const devServers = new Map<string, { child: ReturnType<typeof spawn>; url: string; pid: number | null }>();
+const DEFAULT_LOCAL_PROJECTS_ROOT = "C:\\Users\\osman\\OneDrive\\Desktop\\HermesProject";
+
+export function isServerlessRuntime(): boolean {
+  return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
+}
+
+function isWindowsAbsolute(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
+function resolveLocalPath(value: string): string {
+  if (isWindowsAbsolute(value)) return path.win32.normalize(value);
+  return path.resolve(value);
+}
+
+function joinLocalProjectPath(root: string, folderName: string): string {
+  return isWindowsAbsolute(root) ? path.win32.join(root, folderName) : path.resolve(root, folderName);
+}
 
 function getDb() {
   return createClient({
@@ -84,24 +103,35 @@ async function exists(dir: string): Promise<boolean> {
 
 export async function getLocalProjectsRoot(): Promise<string> {
   if (process.env.HERMES_LOCAL_PROJECTS_ROOT?.trim()) {
-    return path.resolve(process.env.HERMES_LOCAL_PROJECTS_ROOT.trim());
+    return resolveLocalPath(process.env.HERMES_LOCAL_PROJECTS_ROOT.trim());
   }
 
   const candidates = [
-    "C:\\Users\\osman\\OneDrive\\Desktop\\HermesProject",
+    DEFAULT_LOCAL_PROJECTS_ROOT,
     "C:\\Users\\osman\\OneDrive\\Desktop\\Hermes Project",
   ];
 
+  if (isServerlessRuntime()) return DEFAULT_LOCAL_PROJECTS_ROOT;
+
   for (const candidate of candidates) {
-    const resolved = path.resolve(candidate);
+    const resolved = resolveLocalPath(candidate);
     if (await exists(resolved)) return resolved;
   }
 
-  return path.resolve(candidates[0]);
+  return resolveLocalPath(candidates[0]);
 }
 
 export async function getLocalBuilderRootInfo(): Promise<LocalBuilderRootInfo> {
   const root = await getLocalProjectsRoot();
+  if (isServerlessRuntime()) {
+    return {
+      root,
+      exists: false,
+      projectCount: 0,
+      warning: "Serverless runtime cannot access local project folders. Actions are queued for the local worker.",
+    };
+  }
+
   const rootExists = await exists(root);
   const entries = rootExists ? await readdir(root, { withFileTypes: true }).catch(() => []) : [];
   const projectCount = entries.filter((entry) => entry.isDirectory()).length;
@@ -171,6 +201,20 @@ function cleanDisplayText(value: string): string {
   return value.replace(/[<>{}]/g, "").trim();
 }
 
+function queuedActionLabel(action: string): string {
+  switch (action) {
+    case "generate": return "Generate app";
+    case "open": return "Open folder";
+    case "startDev": return "Start dev server";
+    case "stopDev": return "Stop dev server";
+    case "rebuild": return "Rebuild";
+    case "fuguDesignReview": return "Run Fugu design review";
+    case "runQa": return "Run QA checklist";
+    case "runCodex": return "Run Codex improvement";
+    default: return "Prepare local build";
+  }
+}
+
 function rowNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -219,11 +263,39 @@ async function loadWebsiteBuilderSkills(): Promise<string> {
   return files.join("\n\n");
 }
 
+function summarizeKnowledgeCard(card: KnowledgeCard): string {
+  const title = typeof card.frontmatter.id === "string" ? card.frontmatter.id : card.path;
+  const tags = Array.isArray(card.frontmatter.tags) ? ` [${card.frontmatter.tags.join(", ")}]` : "";
+  const body = card.body.replace(/\s+/g, " ").trim();
+  return `- ${card.path}${tags}: ${title}. ${body.slice(0, 520)}`;
+}
+
+async function loadBuilderKnowledgeContext(projectName: string, message: string): Promise<string> {
+  const cards = await loadAgentKnowledgeContext("builder").catch(() => []);
+  if (!cards.length) return "No Builder knowledge cards loaded.";
+
+  const text = `${projectName} ${message}`.toLowerCase();
+  const scored = cards.map((card) => {
+    const haystack = `${card.path} ${JSON.stringify(card.frontmatter)} ${card.body}`.toLowerCase();
+    const score = text.split(/\W+/).filter((token) => token.length > 3 && haystack.includes(token)).length;
+    const builderTag = Array.isArray(card.frontmatter.tags) && card.frontmatter.tags.includes("builder") ? 2 : 0;
+    return { card, score: score + builderTag };
+  });
+
+  return scored
+    .filter((entry) => entry.score > 0 || ["preferences", "skills", "policies"].some((part) => entry.card.path.startsWith(`${part}/`)))
+    .sort((a, b) => b.score - a.score || a.card.path.localeCompare(b.card.path))
+    .slice(0, 8)
+    .map((entry) => summarizeKnowledgeCard(entry.card))
+    .join("\n") || "No relevant Builder knowledge cards matched.";
+}
+
 async function createAthenaResearchBrief(projectName: string, message: string): Promise<string> {
   const lower = `${projectName} ${message}`.toLowerCase();
   const isLuxuryWatch = /\b(watch|watches|chrono|timepiece|horology)\b/.test(lower);
   const isJobTracker = /\b(job|application|applicant|interview|resume|tracker|jobflow)\b/.test(lower);
   const skillSource = await loadWebsiteBuilderSkills();
+  const builderKnowledge = await loadBuilderKnowledgeContext(projectName, message);
   const audience = isLuxuryWatch
     ? "Collectors, style-conscious professionals, gift buyers, and first-time luxury watch shoppers who want trust, provenance, and a refined browsing experience."
     : isJobTracker
@@ -248,6 +320,9 @@ async function createAthenaResearchBrief(projectName: string, message: string): 
     "",
     "Loaded local skill files:",
     skillSource.split("\n").filter((line) => line.startsWith("## ")).map((line) => `- ${line.replace(/^## /, "")}`).join("\n"),
+    "",
+    "Loaded Builder knowledge cards:",
+    builderKnowledge,
     "",
     "Clarifying questions if prompt is vague:",
     "- Luxury, affordable, vintage, or general marketplace?",
@@ -467,7 +542,7 @@ dd { margin: 0; color: #fff8e8; text-align: right; }
 `;
 }
 
-async function appFiles(projectName: string, message: string, researchBrief?: string | null, designReview?: string | null): Promise<Record<string, string>> {
+async function appFiles(projectName: string, message: string, researchBrief?: string | null, designReview?: string | null, knowledgeContext?: string | null): Promise<Record<string, string>> {
   const heading = cleanDisplayText(
     quotedAfter(message, "heading(?:\\s+(?:that\\s+)?(?:says|reads))?") ??
     quotedAfter(message, "landing page(?:\\s+that\\s+says)?") ??
@@ -481,7 +556,8 @@ async function appFiles(projectName: string, message: string, researchBrief?: st
   const safeName = cleanDisplayText(projectName);
   const briefText = researchBrief?.trim() || "No Athena research brief was attached.";
   const reviewText = designReview?.trim() || "No Fugu design review was attached.";
-  const isLuxuryWatch = /\b(watch|watches|chrono|timepiece|horology)\b/i.test(`${projectName} ${message} ${briefText} ${reviewText}`);
+  const knowledgeText = knowledgeContext?.trim() || "No Builder knowledge cards were loaded.";
+  const isLuxuryWatch = /\b(watch|watches|chrono|timepiece|horology)\b/i.test(`${projectName} ${message} ${briefText} ${reviewText} ${knowledgeText}`);
   const isJobTracker = /\b(job|application|applicant|interview|resume|tracker|jobflow)\b/i.test(`${projectName} ${message} ${briefText} ${reviewText}`);
 
   if (isJobTracker) {
@@ -510,8 +586,8 @@ async function appFiles(projectName: string, message: string, researchBrief?: st
         typescript: "^5.6.0",
       },
     }, null, 2)}\n`,
-    "README.md": `# ${safeName}\n\nGenerated by Hermes Local Builder using an internal Athena research brief and Fugu design review.\n\n## Athena Research Brief\n\n${briefText}\n\n## Fugu Design Review\n\n${reviewText}\n\n## Commands\n\n\`\`\`bash\nnpm install\nnpm run build\nnpm run dev\n\`\`\`\n`,
-    "BUILDER_PLAN.md": `# ${safeName} Builder Plan\n\n## Product Brief\n\n${briefText}\n\n## Fugu Design Review\n\n${reviewText}\n\n## Design Brief\n\nOriginal visual direction only. Do not copy brand layouts, product photography, or copyrighted assets.\n\n## Feature Plan\n\nInclude real sections, clickable controls, stateful interactions, empty states, and responsive behavior appropriate to the prompt.\n\n## Build Plan\n\nGenerate a working Next.js app with visible product structure and local demo behavior before running install and build.\n\n## QA Checklist\n\n- npm run build passes\n- Main buttons work\n- Navigation works\n- Filters or core controls work\n- Saved/compare or equivalent state works when relevant\n- Mobile layout works\n- App feels like a real product\n- No copied assets\n`,
+    "README.md": `# ${safeName}\n\nGenerated by Hermes Local Builder using an internal Athena research brief, Builder knowledge cards, and Fugu design review.\n\n## Athena Research Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Fugu Design Review\n\n${reviewText}\n\n## Commands\n\n\`\`\`bash\nnpm install\nnpm run build\nnpm run dev\n\`\`\`\n`,
+    "BUILDER_PLAN.md": `# ${safeName} Builder Plan\n\n## Product Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Fugu Design Review\n\n${reviewText}\n\n## Design Brief\n\nOriginal visual direction only. Do not copy brand layouts, product photography, or copyrighted assets.\n\n## Feature Plan\n\nInclude real sections, clickable controls, stateful interactions, empty states, and responsive behavior appropriate to the prompt.\n\n## Build Plan\n\nGenerate a working Next.js app with visible product structure and local demo behavior before running install and build.\n\n## QA Checklist\n\n- npm run build passes\n- Main buttons work\n- Navigation works\n- Filters or core controls work\n- Saved/compare or equivalent state works when relevant\n- Mobile layout works\n- App feels like a real product\n- No copied assets\n`,
     "next.config.mjs": `const nextConfig = {};\n\nexport default nextConfig;\n`,
     "tsconfig.json": `${JSON.stringify({
       compilerOptions: {
@@ -834,6 +910,15 @@ async function restoreSecretFileChanges(root: string, before: Map<string, string
 }
 
 export async function getCodexCliStatus(): Promise<CodexCliStatus> {
+  if (isServerlessRuntime()) {
+    return {
+      installed: false,
+      available: false,
+      version: null,
+      message: "Codex CLI runs only on the local worker; serverless requests are queued.",
+    };
+  }
+
   const root = await getLocalProjectsRoot();
   const result = await runDetailed("codex", ["--version"], root, { timeoutMs: 10_000, env: codexProcessEnv() });
   const version = result.ok ? result.output.trim().split(/\r?\n/)[0]?.trim() || null : null;
@@ -856,6 +941,7 @@ function buildCodexImprovementPrompt(params: {
   projectName: string;
   userRequest: string;
   researchBrief: string;
+  knowledgeContext: string;
   designReview: string;
   polishReview: string;
   qaFailures: string;
@@ -878,6 +964,9 @@ function buildCodexImprovementPrompt(params: {
     "",
     "Product brief / Athena research brief:",
     params.researchBrief || "No Athena brief recorded.",
+    "",
+    "Builder knowledge cards:",
+    params.knowledgeContext || "No Builder knowledge cards loaded.",
     "",
     "Fugu design review:",
     params.designReview || "No Fugu design review recorded.",
@@ -1194,11 +1283,126 @@ export async function prepareLocalBuildProject(userId: string, message: string):
   };
 }
 
+export async function queueLocalBuilderWorkerTask(
+  userId: string,
+  action: string,
+  message: string,
+  projectId?: string
+): Promise<LocalBuildProject | null> {
+  const db = getDb();
+  await ensureLocalBuilderColumns(db);
+
+  const now = new Date().toISOString();
+  let project: Record<string, unknown> | null = null;
+  let resolvedProjectId = projectId ?? "";
+  let projectName = "Local Builder project";
+  let localFolderPath = joinLocalProjectPath(await getLocalProjectsRoot(), "queued-local-build");
+  let createdAt = now;
+
+  if (resolvedProjectId) {
+    const existing = await findLocalBuildProject(db, userId, resolvedProjectId);
+    project = existing;
+    projectName = rowString(existing.projectName) || projectName;
+    localFolderPath = rowString(existing.localFolderPath) || localFolderPath;
+    createdAt = rowString(existing.createdAt) || now;
+  } else {
+    const parsed = parseLocalBuildRequest(message);
+    if (!parsed) return null;
+    projectName = parsed.projectName;
+    localFolderPath = joinLocalProjectPath(await getLocalProjectsRoot(), parsed.folderName);
+
+    const existing = await db.execute({
+      sql: `SELECT * FROM Project WHERE userId = ? AND (lower(projectName) = lower(?) OR localFolderPath = ?) LIMIT 1`,
+      args: [userId, projectName, localFolderPath],
+    });
+
+    if (existing.rows.length) {
+      project = existing.rows[0] as Record<string, unknown>;
+      resolvedProjectId = rowString(project.id);
+      createdAt = rowString(project.createdAt) || now;
+    } else {
+      resolvedProjectId = crypto.randomUUID();
+      await db.execute({
+        sql: `INSERT INTO Project (id, userId, projectName, route, status, latestInstruction, assignedAgent, localFolderPath, localBuildLog, localBuildError, createdAt, updatedAt) VALUES (?, ?, ?, ?, 'queued_for_local_worker', ?, ?, ?, ?, NULL, datetime('now'), datetime('now'))`,
+        args: [
+          resolvedProjectId,
+          userId,
+          projectName,
+          null,
+          message.slice(0, 500),
+          LOCAL_BUILDER_AGENT,
+          localFolderPath,
+          "Queued for local worker. Serverless runtime did not touch the local filesystem.\n",
+        ],
+      });
+    }
+  }
+
+  const task = await createExecutionQueueTask({
+    userId,
+    title: `${queuedActionLabel(action)} for ${projectName}`,
+    description: [
+      `Action: ${action}`,
+      `Project: ${projectName}`,
+      `Local folder: ${localFolderPath}`,
+      message ? `Message: ${message}` : null,
+      "Run this from the local worker; serverless runtime must not execute local filesystem or process actions.",
+    ].filter(Boolean).join("\n").slice(0, 2000),
+    priority: action === "prepare" ? "medium" : "high",
+    assignedExecutor: "local_worker",
+    projectId: resolvedProjectId,
+    initialLog: "Queued by Vercel/serverless boundary for local worker execution.",
+  });
+
+  const log = `${rowString(project?.localBuildLog) || ""}\nQueued ${action} for local worker task ${task.id}.\nServerless runtime did not touch ${localFolderPath}.`.trim();
+  await db.execute({
+    sql: `UPDATE Project SET status = 'queued_for_local_worker', latestInstruction = ?, assignedAgent = ?, localFolderPath = ?, localBuildLog = ?, localBuildError = NULL, updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
+    args: [message.slice(0, 500), "local_worker", localFolderPath, log.slice(-12000), resolvedProjectId, userId],
+  });
+
+  const currentTask = `${queuedActionLabel(action)} for ${projectName}`;
+  await db.execute({
+    sql: `INSERT INTO ProjectTask (id, projectId, userId, title, description, status, assignedAgent, nextStep, updatedAt) VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, datetime('now'))`,
+    args: [
+      crypto.randomUUID(),
+      resolvedProjectId,
+      userId,
+      currentTask,
+      `Queued for local worker task ${task.id}`,
+      "local_worker",
+      "Local worker should claim and execute this task.",
+    ],
+  }).catch(() => undefined);
+
+  await logLocalBuilderRun(db, "queued", `local_build_queued action=${action} project=${projectName}`, `Queued local worker task ${task.id}: ${localFolderPath}`);
+
+  return {
+    id: resolvedProjectId,
+    projectName,
+    localFolderPath,
+    status: "queued_for_local_worker",
+    createdAt,
+    currentTask,
+    taskId: task.id,
+    buildLog: log.slice(-12000),
+    buildError: null,
+    localDevUrl: rowString(project?.localDevUrl) || null,
+    localDevPid: typeof project?.localDevPid === "number" ? project.localDevPid : null,
+    researchBrief: rowString(project?.localResearchBrief) || null,
+    designReview: rowString(project?.localDesignReview) || null,
+    polishReview: rowString(project?.localPolishReview) || null,
+    designScore: rowNumber(project?.designScore),
+    qaStatus: rowString(project?.localQaStatus) || null,
+    qaChecklist: parseQaChecklist(project?.localQaChecklist),
+  };
+}
+
 export async function generateLocalStarterApp(userId: string, projectId: string, message: string): Promise<LocalBuildProject> {
   const db = getDb();
   const project = await findLocalBuildProject(db, userId, projectId);
   const { projectName, folder: resolvedFolder, createdAt } = await resolveProjectFolder(project);
   const researchBrief = rowString(project.localResearchBrief) || await createAthenaResearchBrief(projectName, message);
+  const builderKnowledge = await loadBuilderKnowledgeContext(projectName, message);
   const designReview = rowString(project.localDesignReview);
   if (!rowString(project.localResearchBrief)) {
     await db.execute({
@@ -1229,7 +1433,8 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
   log += designReview
     ? `Builder: using saved Fugu design review${rowNumber(project.designScore) ? ` with score ${rowNumber(project.designScore)}/10` : ""}.\n`
     : "Builder: no Fugu design review attached; generating from the Athena brief.\n";
-  const files = await appFiles(projectName, message, researchBrief, designReview);
+  log += `Builder: loaded knowledge cards.\n${builderKnowledge}\n`;
+  const files = await appFiles(projectName, message, researchBrief, designReview, builderKnowledge);
   const changedFiles = Object.keys(files);
 
   try {
@@ -1424,10 +1629,12 @@ export async function runLocalCodexExecutor(userId: string, projectId: string, i
   });
 
   const pageSummary = await summarizeGeneratedPage(folder);
+  const builderKnowledge = await loadBuilderKnowledgeContext(projectName, improvementPrompt);
   const prompt = buildCodexImprovementPrompt({
     projectName,
     userRequest: rowString(project.latestInstruction),
     researchBrief: rowString(project.localResearchBrief),
+    knowledgeContext: builderKnowledge,
     designReview: rowString(project.localDesignReview),
     polishReview: rowString(project.localPolishReview),
     qaFailures: qaFailureSummary(project),

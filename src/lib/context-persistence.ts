@@ -254,8 +254,8 @@ export function toolHealthFromEnvironment(now = new Date()): ToolHealthEntry[] {
   return [
     {
       tool: "Web Search",
-      status: hasAny("FIRECRAWL_API_KEY", "SERPER_API_KEY") ? "available" : "unavailable",
-      reason: hasAny("FIRECRAWL_API_KEY", "SERPER_API_KEY") ? null : "Missing FIRECRAWL_API_KEY or SERPER_API_KEY.",
+      status: hasAny("FIRECRAWL_API_KEY") ? "available" : "unavailable",
+      reason: hasAny("FIRECRAWL_API_KEY") ? null : "Missing FIRECRAWL_API_KEY.",
       lastChecked: checked,
     },
     {

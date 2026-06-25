@@ -35,6 +35,9 @@ type Build = { id: string; title: string; status: string; resultSummary: string 
 type Run = { id: string; agentName: string; outputSummary: string | null; status: string };
 type RootInfo = { root: string; exists: boolean; projectCount: number; warning: string | null };
 type CodexStatus = { installed: boolean; available: boolean; version: string | null; message: string };
+type ProviderStatus = { provider: string; configured: boolean; status: "working" | "missing" | "invalid" | "error" | "configured_untested"; safeError: string | null };
+type ExecutorStatus = { name: string; status: "Online" | "Offline" | "Busy" | "Unknown"; lastError: string | null };
+type BuilderHealth = { apiProviders: ProviderStatus[]; executors: ExecutorStatus[] };
 
 const card: React.CSSProperties = { background: "rgba(26,35,54,.85)", border: "1px solid #28324A", borderRadius: 16, padding: "20px 24px", backdropFilter: "blur(12px)" };
 
@@ -67,24 +70,28 @@ export default function BuilderOffice() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [rootInfo, setRootInfo] = useState<RootInfo | null>(null);
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
+  const [health, setHealth] = useState<BuilderHealth | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [projectResponse, buildResponse, logResponse, localBuildResponse] = await Promise.all([
+    const [projectResponse, buildResponse, logResponse, localBuildResponse, healthResponse] = await Promise.all([
       fetch("/api/command-center/projects"),
       fetch("/api/command-center/builds"),
       fetch("/api/command-center/logs"),
       fetch("/api/command-center/local-builds"),
+      fetch("/api/command-center/health-center"),
     ]);
     const projectData = await projectResponse.json() as { projects?: Project[] };
     const buildData = await buildResponse.json() as { builds?: Build[] };
     const logData = await logResponse.json() as { runs?: Run[] };
     const localBuildData = await localBuildResponse.json() as { root?: RootInfo; codex?: CodexStatus };
+    const healthData = await healthResponse.json() as BuilderHealth | { error?: string };
     setProjects(projectData.projects ?? []);
     setBuilds(buildData.builds ?? []);
     setRuns(logData.runs ?? []);
     setRootInfo(localBuildData.root ?? null);
     setCodexStatus(localBuildData.codex ?? null);
+    if ("apiProviders" in healthData && "executors" in healthData) setHealth(healthData);
   }, []);
 
   useEffect(() => {
@@ -198,6 +205,8 @@ export default function BuilderOffice() {
   const busy = executing || generating || reviewing || Boolean(managing);
   const displayStatus = managing ? "working" : reviewing ? "Reviewing" : generating ? "Generating" : executing ? "preparing" : result?.project?.status ?? result?.status ?? (firstError ? "failed" : "ready");
   const latestLog = runs.find((run) => run.agentName === "hermes-local-builder") ?? runs.find((run) => run.agentName === "hermes-execution");
+  const fuguProvider = health?.apiProviders.find((provider) => provider.provider === "Sakana / Fugu");
+  const localWorker = health?.executors.find((executor) => executor.name === "Local Worker");
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.25fr) minmax(300px,.75fr)", gap: 20 }}>
@@ -253,8 +262,10 @@ export default function BuilderOffice() {
             <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}>
               <span style={{ overflowWrap: "anywhere" }}><code>{rootInfo.root}</code></span>
               <span>Folder: <strong style={{ color: rootInfo.exists ? "#34D399" : "#F87171" }}>{rootInfo.exists ? "found" : "missing"}</strong></span>
+              <span>Local Worker: <strong style={{ color: localWorker?.status === "Online" ? "#34D399" : localWorker?.status === "Offline" ? "#F87171" : "#FBBF24" }}>{localWorker?.status?.toLowerCase() ?? "unknown"}</strong></span>
               <span>Projects found: {rootInfo.projectCount}</span>
               {rootInfo.warning && <span style={{ color: "#F87171" }}>{rootInfo.warning}</span>}
+              {localWorker?.lastError && <span style={{ color: "#FBBF24" }}>{localWorker.lastError}</span>}
             </div>
           ) : (
             <div style={{ color: "#4B5563", fontSize: 12 }}>Root status not loaded yet.</div>
@@ -293,7 +304,9 @@ export default function BuilderOffice() {
           {project?.designReview ? (
             <pre style={{ color: "#D8DEEB", whiteSpace: "pre-wrap", wordBreak: "break-word", font: "11px/1.55 JetBrains Mono,monospace", maxHeight: 260, overflow: "auto", margin: 0 }}>{project.designReview}</pre>
           ) : (
-            <div style={{ color: "#4B5563", fontSize: 12 }}>Fugu not connected — add SAKANA_API_KEY to environment.</div>
+            <div style={{ color: fuguProvider?.configured ? "#60A5FA" : "#4B5563", fontSize: 12 }}>
+              {fuguProvider?.configured ? `Fugu connected (${fuguProvider.status.replace(/_/g, " ")}). No design review saved yet.` : (fuguProvider?.safeError ?? "Fugu not connected - add SAKANA_API_KEY to environment.")}
+            </div>
           )}
         </div>
         <div style={card}>

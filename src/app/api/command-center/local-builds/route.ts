@@ -4,9 +4,11 @@ import {
   generateLocalStarterApp,
   getCodexCliStatus,
   getLocalBuilderRootInfo,
+  isServerlessRuntime,
   type LocalBuildProject,
   openLocalProjectFolder,
   prepareLocalBuildProject,
+  queueLocalBuilderWorkerTask,
   rebuildLocalStarterApp,
   runLocalCodexExecutor,
   runLocalFuguDesignReview,
@@ -53,6 +55,31 @@ function responseFor(project: ReturnType<typeof projectView>, action: string, fa
   }, { status: failed ? 500 : 200 });
 }
 
+function queuedResponse(project: ReturnType<typeof projectView>, action: string) {
+  return NextResponse.json({
+    status: "queued",
+    answer: [
+      `Local Builder ${action} queued for ${project.projectName}.`,
+      `Folder: ${project.localFolderPath}`,
+      `Status: ${project.status}`,
+      `Worker task: ${project.taskId}`,
+      "Vercel/serverless did not touch the local filesystem or start local processes.",
+    ].join("\n"),
+    project,
+    toolCalls: [
+      {
+        id: `local_build_${action}_queued`,
+        tool: `internal.localBuilder.${action}`,
+        status: "queued",
+        result: project,
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+      },
+    ],
+    artifacts: [],
+  });
+}
+
 export async function GET() {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -71,6 +98,17 @@ export async function POST(req: Request) {
   const projectId = body?.projectId;
 
   if (action !== "prepare" && !projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
+
+  if (isServerlessRuntime()) {
+    const queued = await queueLocalBuilderWorkerTask(session.user.id, action, message ?? "", projectId);
+    if (!queued) {
+      return NextResponse.json(
+        { error: "Not a local build request. Try: Build a website called MyProject" },
+        { status: 400 }
+      );
+    }
+    return queuedResponse(projectView(queued), action);
+  }
 
   if (action === "generate") {
     if (!message) return NextResponse.json({ error: "message is required" }, { status: 400 });
