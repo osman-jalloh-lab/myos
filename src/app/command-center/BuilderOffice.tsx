@@ -57,6 +57,67 @@ function formatDate(iso?: string | null) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(iso));
 }
 
+function localPreviewPort(url?: string | null): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).port || null;
+  } catch {
+    return url.match(/:(\d+)(?:\/|$)/)?.[1] ?? null;
+  }
+}
+
+function localDevServerStatus(project: Project): string {
+  if (project.status === "Dev Server Running" || project.localDevUrl) return "Dev Server Running";
+  if (project.status === "Dev Server Stopped") return "Dev Server Stopped";
+  return "Not Started";
+}
+
+function manualDevCommand(folder?: string | null): string | null {
+  if (!folder) return null;
+  return `cd "${folder}"\nnpm run dev`;
+}
+
+function LocalPreviewPanel({ project }: { project: Project }) {
+  const [showLocalhostNote, setShowLocalhostNote] = useState(false);
+  const port = localPreviewPort(project.localDevUrl);
+  const devStatus = localDevServerStatus(project);
+  const command = manualDevCommand(project.localFolderPath);
+
+  useEffect(() => {
+    setShowLocalhostNote(window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1");
+  }, []);
+
+  return (
+    <div style={card}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+        <div style={{ color: "#34D399", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase" }}>Local preview</div>
+        <span style={badge(devStatus)}>{devStatus}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}>
+        <span>Project: <strong style={{ color: "#F1F4FB" }}>{project.projectName}</strong></span>
+        <span>Build status: <strong style={{ color: "#D8DEEB" }}>{project.status.replace(/_/g, " ")}</strong></span>
+        <span>QA status: <strong style={{ color: "#D8DEEB" }}>{project.qaStatus?.replace(/_/g, " ") ?? "qa pending"}</strong></span>
+        {project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}
+        {port && <span>Local port: <code>{port}</code></span>}
+        {project.localDevUrl ? (
+          <span>Local Preview: <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ color: "#34D399" }}>{project.localDevUrl}</a></span>
+        ) : (
+          <span style={{ color: "#647089" }}>Local Preview: start the dev server to create a localhost URL.</span>
+        )}
+        {command && (
+          <span>
+            Manual command:
+            <pre style={{ margin: "6px 0 0", padding: 9, borderRadius: 8, background: "rgba(8,13,24,0.48)", color: "#D8DEEB", font: "11px/1.45 JetBrains Mono,monospace", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{command}</pre>
+          </span>
+        )}
+        {showLocalhostNote && (
+          <span style={{ color: "#FBBF24" }}>Localhost preview links only open on the computer running the local worker. To access from phone, enable a tunnel later.</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function BuilderOffice() {
   const [prompt, setPrompt] = useState("");
   const [executing, setExecuting] = useState(false);
@@ -273,8 +334,9 @@ export default function BuilderOffice() {
         </div>
         <div style={card}>
           <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Project and task</div>
-          {project ? <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}><strong style={{ color: "#F1F4FB" }}>{project.projectName}</strong>{project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}{copiedPath && <span style={{ color: "#34D399" }}>Folder path copied.</span>}{project.localDevUrl && <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ color: "#34D399" }}>{project.localDevUrl}</a>}{project.route && <span>{project.route}</span>}{formatDate(project.createdAt) && <span>Created: {formatDate(project.createdAt)}</span>}{project.currentTask && <span>Current task: {project.currentTask}</span>}<span>{project.taskCounts.done}/{project.taskCounts.total} tasks done</span><div><span style={badge(project.status)}>{project.status}</span></div></div> : <div style={{ color: "#4B5563", fontSize: 12 }}>No project state yet.</div>}
+          {project ? <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}><strong style={{ color: "#F1F4FB" }}>{project.projectName}</strong>{project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}{copiedPath && <span style={{ color: "#34D399" }}>Folder path copied.</span>}{project.route && <span>{project.route}</span>}{formatDate(project.createdAt) && <span>Created: {formatDate(project.createdAt)}</span>}{project.currentTask && <span>Current task: {project.currentTask}</span>}<span>{project.taskCounts.done}/{project.taskCounts.total} tasks done</span><div><span style={badge(project.status)}>{project.status}</span></div></div> : <div style={{ color: "#4B5563", fontSize: 12 }}>No project state yet.</div>}
         </div>
+        {project && <LocalPreviewPanel project={project} />}
         <div style={card}>
           <div style={{ color: "#E879F9", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Athena / Fugu Brief Panel</div>
           {project?.researchBrief ? (
@@ -351,7 +413,7 @@ export default function BuilderOffice() {
               </button>
             ))}
           </div>
-          {project?.localDevUrl ? <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ display: "block", color: "#34D399", marginTop: 12, fontSize: 12 }}>View Local URL</a> : <div style={{ color: "#4B5563", marginTop: 12, fontSize: 12 }}>No local preview URL yet.</div>}
+          {project?.localDevUrl ? <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ display: "block", color: "#34D399", marginTop: 12, fontSize: 12 }}>View Local Preview: {project.localDevUrl}</a> : <div style={{ color: "#4B5563", marginTop: 12, fontSize: 12 }}>No local preview URL yet.</div>}
         </div>
         <div style={card}>
           <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Files changed</div>

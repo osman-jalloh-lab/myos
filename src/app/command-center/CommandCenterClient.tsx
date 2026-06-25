@@ -246,6 +246,67 @@ function statusLabel(status: string): string {
   return status.replace(/_/g, " ");
 }
 
+function localPreviewPort(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    return new URL(url).port || null;
+  } catch {
+    return url.match(/:(\d+)(?:\/|$)/)?.[1] ?? null;
+  }
+}
+
+function localDevServerStatus(project: Pick<Project, "status" | "localDevUrl" | "localDevPid">): string {
+  if (project.status === "Dev Server Running" || project.localDevUrl) return "Dev Server Running";
+  if (project.status === "Dev Server Stopped") return "Dev Server Stopped";
+  return "Not Started";
+}
+
+function manualDevCommand(folder: string | null | undefined): string | null {
+  if (!folder) return null;
+  return `cd "${folder}"\nnpm run dev`;
+}
+
+function LocalPreviewDetails({ project, compact = false }: { project: Project; compact?: boolean }) {
+  const [showLocalhostNote, setShowLocalhostNote] = useState(false);
+  const port = localPreviewPort(project.localDevUrl);
+  const devStatus = localDevServerStatus(project);
+  const manualCommand = manualDevCommand(project.localFolderPath);
+
+  useEffect(() => {
+    setShowLocalhostNote(window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1");
+  }, []);
+
+  return (
+    <div style={{ marginBottom: compact ? 0 : 12, padding: compact ? "10px 12px" : "12px 14px", background: "rgba(52,211,153,0.07)", border: "1px solid rgba(52,211,153,0.22)", borderRadius: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 8 }}>
+        <div style={{ color: "#34D399", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>Local preview</div>
+        <span style={badgeStyle(statusColor(devStatus))}>{devStatus}</span>
+      </div>
+      <div style={{ display: "grid", gap: 6, color: "#94A3B8", fontSize: 12 }}>
+        <span>Project: <strong style={{ color: "#F1F4FB" }}>{project.projectName}</strong></span>
+        <span>Build status: <strong style={{ color: statusColor(project.status) }}>{statusLabel(project.status)}</strong></span>
+        <span>QA status: <strong style={{ color: statusColor(project.qaStatus ?? "qa_pending") }}>{statusLabel(project.qaStatus ?? "qa_pending")}</strong></span>
+        {project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}
+        {port && <span>Local port: <code>{port}</code></span>}
+        {project.localDevUrl ? (
+          <span>Local Preview: <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ color: "#34D399" }}>{project.localDevUrl}</a></span>
+        ) : (
+          <span style={{ color: "#647089" }}>Local Preview: start the dev server to create a localhost URL.</span>
+        )}
+        {manualCommand && (
+          <span>
+            Manual command:
+            <pre style={{ margin: "6px 0 0", padding: 9, borderRadius: 8, background: "rgba(8,13,24,0.48)", color: "#D8DEEB", font: "11px/1.45 JetBrains Mono,monospace", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{manualCommand}</pre>
+          </span>
+        )}
+        {showLocalhostNote && (
+          <span style={{ color: "#FBBF24" }}>Localhost preview links only open on the computer running the local worker. To access from phone, enable a tunnel later.</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function approvalLabel(action: ApprovalAction): string {
   try {
     const p = action.payload as Record<string, unknown>;
@@ -822,10 +883,17 @@ function CompactHermesConsole({ initialMessages }: { initialMessages: ChatMessag
         ))}
         {messages.length === 0 && <div style={{ color: "#647089", fontSize: 12 }}>No dashboard commands yet.</div>}
       </div>
-      <div style={{ display: "flex", gap: 7, marginTop: 8 }}>
-        <input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void send(); }} placeholder="Command Hermes..." style={{ flex: 1, minWidth: 0, background: "rgba(8,13,24,0.62)", border: "1px solid rgba(93,111,143,0.32)", color: "#F1F4FB", borderRadius: 9, padding: "8px 9px", outline: "none", fontSize: 12 }} />
-        <button onClick={() => void send()} disabled={!input.trim() || sending} style={{ padding: "0 11px", borderRadius: 9, border: "1px solid rgba(167,139,250,0.35)", background: "rgba(167,139,250,0.14)", color: "#C4B5FD", fontSize: 12, fontWeight: 850, cursor: !input.trim() || sending ? "not-allowed" : "pointer", opacity: !input.trim() || sending ? 0.55 : 1 }}>{sending ? "..." : "Send"}</button>
-      </div>
+      <form onSubmit={(event) => { event.preventDefault(); void send(); }} style={{ display: "flex", gap: 7, marginTop: 8 }}>
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void send(); } }}
+          disabled={sending}
+          placeholder="Command Hermes..."
+          style={{ flex: 1, minWidth: 0, background: "rgba(8,13,24,0.62)", border: "1px solid rgba(93,111,143,0.32)", color: "#F1F4FB", borderRadius: 9, padding: "8px 9px", outline: "none", fontSize: 12, opacity: sending ? 0.7 : 1 }}
+        />
+        <button type="submit" disabled={sending} style={{ padding: "0 11px", borderRadius: 9, border: "1px solid rgba(167,139,250,0.35)", background: "rgba(167,139,250,0.14)", color: "#C4B5FD", fontSize: 12, fontWeight: 850, cursor: sending ? "not-allowed" : "pointer", opacity: sending ? 0.55 : 1 }}>{sending ? "..." : "Send"}</button>
+      </form>
     </div>
   );
 }
@@ -1001,6 +1069,8 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
             </div>
           )}
 
+          {(p.localFolderPath || p.localDevUrl) && <LocalPreviewDetails project={p} />}
+
           {(p.qaStatus || p.qaChecklist?.length) && (
             <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(251,191,36,0.07)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 8 }}>
@@ -1052,12 +1122,6 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
               </div>
               <pre style={{ margin: 0, maxHeight: 160, overflow: "auto", font: "11px/1.5 JetBrains Mono,monospace", color: "#D8DEEB", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{p.polishReview}</pre>
             </div>
-          )}
-
-          {p.localDevUrl && (
-            <a href={p.localDevUrl} target="_blank" rel="noopener" style={{ display: "inline-block", color: "#34D399", fontSize: 12, marginBottom: 12 }}>
-              {p.localDevUrl}
-            </a>
           )}
 
           {(p.buildLog || p.buildError) && (
@@ -1767,31 +1831,32 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
         <div ref={bottomRef} />
       </div>
 
-      <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+      <form onSubmit={(event) => { event.preventDefault(); void send(); }} style={{ marginTop: 16, display: "flex", gap: 10 }}>
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }}
-          placeholder="Message Hermes... (Enter to send, Shift+Enter for newline)"
+          onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void send(); } }}
+          disabled={sending}
+          placeholder="Message Hermes... (Ctrl/Cmd + Enter to send)"
           rows={2}
           style={{
             flex: 1, background: "rgba(14,20,36,0.6)", border: "1px solid #28324A", borderRadius: 12, padding: "10px 14px",
-            color: "#F1F4FB", fontSize: 13, resize: "none", outline: "none", fontFamily: "inherit",
+            color: "#F1F4FB", fontSize: 13, resize: "vertical", outline: "none", fontFamily: "inherit", opacity: sending ? 0.7 : 1,
           }}
         />
         <button
-          onClick={() => void send()}
-          disabled={!input.trim() || sending}
+          type="submit"
+          disabled={sending}
           style={{
             padding: "0 20px", borderRadius: 12, background: "rgba(167,139,250,0.15)",
             border: "1px solid rgba(167,139,250,0.3)", color: "#A78BFA", fontWeight: 600,
-            fontSize: 13, cursor: !input.trim() || sending ? "not-allowed" : "pointer",
-            opacity: !input.trim() || sending ? 0.5 : 1,
+            fontSize: 13, cursor: sending ? "not-allowed" : "pointer",
+            opacity: sending ? 0.5 : 1,
           }}
         >
           {sending ? "..." : "Send"}
         </button>
-      </div>
+      </form>
     </div>
   );
 }

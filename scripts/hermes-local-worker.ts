@@ -27,7 +27,7 @@ const POLL_MS = Number(process.env.HERMES_LOCAL_WORKER_POLL_MS ?? 15_000);
 const HEARTBEAT_MS = Number(process.env.HERMES_LOCAL_WORKER_HEARTBEAT_MS ?? 45_000);
 const WORKER_ID = process.env.HERMES_LOCAL_WORKER_ID?.trim() || `${os.hostname()}-${process.pid}`;
 const LOCAL_ROOT = "C:\\Users\\osman\\OneDrive\\Desktop\\HermesProject";
-const ALLOWED_ACTIONS = new Set(["prepare", "generate", "runQa", "rebuild", "build", "npmBuild"]);
+const ALLOWED_ACTIONS = new Set(["prepare", "generate", "runQa", "rebuild", "build", "npmBuild", "startDev", "stopDev"]);
 
 let currentTask: string | null = null;
 let lastError: string | null = null;
@@ -296,6 +296,10 @@ async function executeTask(db: Client, task: QueueTask): Promise<void> {
     if (!task.projectId) throw new Error(`${action} requires a project id.`);
     if (action === "generate") {
       project = await builder.generateLocalStarterApp(task.userId, task.projectId, message);
+    } else if (action === "startDev") {
+      project = await builder.startLocalDevServer(task.userId, task.projectId);
+    } else if (action === "stopDev") {
+      project = await builder.stopLocalDevServer(task.userId, task.projectId);
     } else if (action === "runQa") {
       project = await builder.runLocalBuilderQa(task.userId, task.projectId);
     } else if (action === "rebuild" || action === "build" || action === "npmBuild") {
