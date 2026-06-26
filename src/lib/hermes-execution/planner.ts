@@ -19,7 +19,7 @@ Tools available in Parawi/MyOS:
 - repo_inspect: Inspect the Hermes OS repo structure. Trigger: "what's in the repo", "show me the file structure", "what routes exist", "inspect the codebase"
 - run_command: Run a single build/typecheck/lint command. Trigger: "run build", "typecheck", "run lint", "npm run build", "check types", "run tests"
 - deploy: Check or trigger Vercel deployment. Trigger: "deploy", "check deployment", "deployment status", "is it deployed", "preview URL"
-- github_repo_review: Inspect any GitHub repo. Trigger: GitHub URL, "what is this repo", "inspect", "scan repo", "look at this project"
+- github_repo_review: Inspect any GitHub repo with Skill Scout. Trigger: GitHub URL, "what is this repo", "inspect", "scan repo", "look at this project"
 - email_triage: Check/triage inbox for action-needed emails. Trigger: "check my email", "inbox", "any emails", "recruiter emails", "unread", "follow-ups"
 - email_draft: Draft an email (held for approval, never auto-sent). Trigger: "draft a reply", "write an email", "compose", "respond to"
 - task_create: Create a task, reminder, or to-do. Trigger: "remind me", "create a task", "add a task", "todo", "follow up", "don't let me forget"
@@ -342,7 +342,7 @@ function buildPlan(
       };
 
     case "github_repo_review": {
-      const tool = bestTool("mcp.github.inspectRepo", "internal.github.inspectRepo");
+      const tool = bestTool("internal.skillScout.inspectRepo", "mcp.github.inspectRepo", "internal.github.inspectRepo");
       return {
         intent,
         confidence,
@@ -353,7 +353,7 @@ function buildPlan(
           risk: "read",
           requiresApproval: false,
         }],
-        reasoningSummary: `GitHub repo inspection via ${tool}.`,
+        reasoningSummary: `GitHub repo Skill Scout via ${tool}.`,
       };
     }
 

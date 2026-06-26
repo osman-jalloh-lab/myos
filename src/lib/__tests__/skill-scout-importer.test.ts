@@ -1,0 +1,55 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/knowledge-cards", () => ({
+  writeCard: vi.fn(async (cardPath: string, frontmatter: Record<string, unknown>, body: string) => ({
+    path: cardPath,
+    frontmatter,
+    body,
+  })),
+}));
+
+import { writeCard } from "@/lib/knowledge-cards";
+import { importApprovedSkillScoutItem } from "@/lib/skill-scout/importer";
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("importApprovedSkillScoutItem", () => {
+  it("writes a low-risk Skill Scout item as a knowledge card", async () => {
+    const result = await importApprovedSkillScoutItem({
+      candidateName: "wcag-audit-patterns",
+      sourceRepo: "wshobson/agents",
+      sourcePath: "plugins/accessibility-compliance/skills/wcag-audit-patterns/SKILL.md",
+      sourceUrl: "https://github.com/wshobson/agents/blob/HEAD/plugins/accessibility-compliance/skills/wcag-audit-patterns/SKILL.md",
+      recommendedAction: "add_qa_check",
+      whyItHelps: "Catches accessibility regressions before generated apps ship.",
+      riskLevel: "low",
+      filesExpectedToChange: ["catalog/design/accessibility.md", "catalog/skills/frontend-qa.md"],
+      rollbackPlan: "Revert the generated knowledge card.",
+    });
+
+    expect(result.cardPath).toBe("catalog/skills/skill-scout-wcag-audit-patterns.md");
+    expect(writeCard).toHaveBeenCalledWith(
+      "skills/skill-scout-wcag-audit-patterns.md",
+      expect.objectContaining({
+        type: "skill",
+        id: "skill-scout-wcag-audit-patterns",
+        risk_level: "low",
+      }),
+      expect.stringContaining("Do not run scripts from the source repository.")
+    );
+  });
+
+  it("rejects non-low-risk automatic imports", async () => {
+    await expect(importApprovedSkillScoutItem({
+      candidateName: "browser-automation",
+      sourceRepo: "wshobson/agents",
+      sourcePath: "plugins/browser/skills/browser-automation/SKILL.md",
+      sourceUrl: "https://github.com/wshobson/agents/blob/HEAD/plugins/browser/skills/browser-automation/SKILL.md",
+      riskLevel: "medium",
+    })).rejects.toThrow("low-risk");
+
+    expect(writeCard).not.toHaveBeenCalled();
+  });
+});

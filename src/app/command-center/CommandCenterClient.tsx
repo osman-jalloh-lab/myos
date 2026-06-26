@@ -188,6 +188,39 @@ interface SkillCandidate {
   createdAt: string;
 }
 
+interface SkillScoutCandidate {
+  name: string;
+  sourceRepo: string;
+  sourcePath: string;
+  sourceUrl: string;
+  category: string;
+  summary: string;
+  whyItHelpsParawi: string;
+  overlapWithExistingSystem: string;
+  implementationDifficulty: string;
+  riskLevel: "low" | "medium" | "high";
+  recommendedAction: string;
+  scores: { benefit: number; risk: number; effort: number; priority: "high" | "medium" | "low" };
+  expectedFilesChanged: string[];
+  rollbackPlan: string;
+}
+
+interface SkillScoutResult {
+  repoUrl: string;
+  repo: {
+    fullName: string;
+    description: string | null;
+    defaultBranch: string;
+    stars: number;
+    language: string | null;
+    topics: string[];
+  };
+  inspected: { treeItems: number; candidateFiles: number; scriptsRun: false; filesImported: false };
+  candidates: SkillScoutCandidate[];
+  approvals: Array<{ id: string; candidateName: string; actionType: string; status: string }>;
+  safetyNotes: string[];
+}
+
 type HealthSeverity = "healthy" | "warning" | "failure";
 type AgentOffice = "hermes" | "athena" | "builder" | "iris" | "fugu";
 
@@ -311,6 +344,7 @@ function approvalLabel(action: ApprovalAction): string {
   try {
     const p = action.payload as Record<string, unknown>;
     if (action.actionType === "engineering_plan") return `Build plan: ${String(p.projectName ?? "").slice(0, 50)}`;
+    if (action.actionType === "skill_scout_import") return `Skill Scout: ${String(p.candidateName ?? "candidate").slice(0, 50)}`;
     if (action.actionType === "save_memory") return `Remember: "${String(p.fact ?? "").slice(0, 50)}"`;
     if (action.actionType === "create_task") return `Task: "${String(p.title ?? "").slice(0, 50)}"`;
     return action.actionType.replace(/_/g, " ");
@@ -1333,49 +1367,160 @@ function MemoryList({ title, empty, items }: { title: string; empty: string; ite
   );
 }
 
-function SkillsPanel({ skills, candidate, onScout }: { skills: SkillView[]; candidate: SkillCandidate | null; onScout: () => Promise<void> }) {
+function SkillsPanel({
+  skills,
+  scoutResult,
+  approvals,
+  onScout,
+  onApprove,
+  onReject,
+}: {
+  skills: SkillView[];
+  scoutResult: SkillScoutResult | null;
+  approvals: ApprovalAction[];
+  onScout: (repoUrl: string) => Promise<void>;
+  onApprove: (id: string) => Promise<void>;
+  onReject: (id: string) => Promise<void>;
+}) {
   const [busy, setBusy] = useState(false);
+  const [repoUrl, setRepoUrl] = useState("https://github.com/wshobson/agents");
+  const [error, setError] = useState<string | null>(null);
   const scout = async () => {
+    if (!repoUrl.trim()) return;
     setBusy(true);
+    setError(null);
     try {
-      await onScout();
+      await onScout(repoUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Skill Scout failed.");
     } finally {
       setBusy(false);
     }
   };
 
+  const scoutApprovals = approvals.filter((approval) => approval.actionType === "skill_scout_import");
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={cardStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16 }}>
-          <div>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 16, alignItems: "end" }}>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#38BDF8", letterSpacing: "0.08em", textTransform: "uppercase" }}>Sophos / Skills</div>
-            <h2 style={{ fontSize: 24, margin: "6px 0 4px", fontFamily: "Fraunces, serif" }}>Skill Registry</h2>
-            <div style={{ fontSize: 12, color: "#94A3B8" }}>{skills.length} installed skill folders indexed from `.agents/skills` and `HermesProject/skills`.</div>
+            <h2 style={{ fontSize: 24, margin: "6px 0 4px", fontFamily: "Fraunces, serif" }}>Skill Scout</h2>
+            <div style={{ fontSize: 12, color: "#94A3B8" }}>{skills.length} installed skill folders indexed. Scout only reads GitHub metadata and file trees.</div>
+            <form onSubmit={(event) => { event.preventDefault(); void scout(); }} style={{ display: "flex", gap: 10, marginTop: 14 }}>
+              <input
+                value={repoUrl}
+                onChange={(event) => setRepoUrl(event.target.value)}
+                placeholder="https://github.com/owner/repo"
+                disabled={busy}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  background: "rgba(14,20,36,0.72)",
+                  border: "1px solid #28324A",
+                  borderRadius: 8,
+                  padding: "10px 12px",
+                  color: "#F1F4FB",
+                  fontSize: 13,
+                  outline: "none",
+                }}
+              />
+              <button type="submit" disabled={busy} style={{ padding: "9px 12px", borderRadius: 8, background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.35)", color: "#38BDF8", fontWeight: 700, cursor: busy ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+                {busy ? "Scouting..." : "Run Skill Scout"}
+              </button>
+            </form>
+            {error && <div style={{ color: "#F87171", fontSize: 12, marginTop: 8 }}>{error}</div>}
           </div>
-          <button onClick={() => void scout()} disabled={busy} style={{ padding: "9px 12px", borderRadius: 8, background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.35)", color: "#38BDF8", fontWeight: 700, cursor: busy ? "not-allowed" : "pointer" }}>
-            {busy ? "Scouting..." : "Scout one useful skill"}
-          </button>
+          <div style={{ display: "grid", gap: 6, minWidth: 190 }}>
+            <span style={badgeStyle("#34D399")}>No scripts run</span>
+            <span style={badgeStyle("#FBBF24")}>Approval required</span>
+            <span style={badgeStyle("#60A5FA")}>GitHub only v1</span>
+          </div>
         </div>
       </div>
 
-      {candidate && (
+      {scoutResult && (
         <div style={{ ...cardStyle, borderColor: "rgba(56,189,248,0.35)" }}>
-          <div style={{ color: "#38BDF8", fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Candidate Recommendation</div>
-          <strong style={{ color: "#F1F4FB" }}>{candidate.name}</strong>
-          <p style={{ color: "#94A3B8", fontSize: 13 }}>{candidate.description}</p>
-          <p style={{ color: "#D8DEEB", fontSize: 13 }}>{candidate.whyItHelps}</p>
-          <div style={{ display: "grid", gap: 6, padding: "10px 12px", border: "1px solid rgba(56,189,248,0.22)", borderRadius: 8, background: "rgba(15,22,38,0.48)", marginBottom: 10 }}>
-            <div style={{ color: "#94A3B8", fontSize: 12 }}>
-              Found in <a href={candidate.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#38BDF8" }}>{candidate.repository}</a>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "flex-start", marginBottom: 14 }}>
+            <div>
+              <div style={{ color: "#38BDF8", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>Skill Scout Results</div>
+              <h3 style={{ fontFamily: "Fraunces, serif", fontSize: 20, margin: 0 }}>{scoutResult.repo.fullName}</h3>
+              <div style={{ color: "#94A3B8", fontSize: 12, marginTop: 4 }}>{scoutResult.repo.description ?? "No repository description."}</div>
             </div>
-            <div style={{ color: "#94A3B8", fontSize: 12 }}>Path: <code style={{ color: "#D8DEEB" }}>{candidate.path}</code></div>
-            <div style={{ color: "#94A3B8", fontSize: 12 }}>Review task: <code style={{ color: "#D8DEEB" }}>{candidate.taskId.slice(0, 8)}</code> / {candidate.taskStatus}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
+              <span style={badgeStyle("#60A5FA")}>{scoutResult.inspected.treeItems} tree items</span>
+              <span style={badgeStyle("#34D399")}>{scoutResult.candidates.length} candidates</span>
+              <span style={badgeStyle("#FBBF24")}>{scoutResult.approvals.length} approvals</span>
+            </div>
           </div>
-          <div style={{ color: "#FBBF24", fontSize: 12 }}>Approval required before install. Review task created; no unknown scripts were run.</div>
-          <ul style={{ color: "#94A3B8", fontSize: 12, marginBottom: 0 }}>
-            {candidate.riskyFiles.map((risk) => <li key={risk}>{risk}</li>)}
-          </ul>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, marginBottom: 16 }}>
+            {scoutResult.safetyNotes.map((note) => (
+              <div key={note} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid rgba(52,211,153,0.22)", background: "rgba(52,211,153,0.07)", color: "#D8DEEB", fontSize: 12 }}>
+                {note}
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "grid", gap: 12 }}>
+            {scoutResult.candidates.map((candidate) => (
+              <div key={`${candidate.sourceRepo}-${candidate.sourcePath}`} style={{ padding: 14, borderRadius: 8, border: "1px solid rgba(40,50,74,0.85)", background: "rgba(15,22,38,0.42)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginBottom: 6 }}>
+                      <strong style={{ color: "#F1F4FB", fontSize: 15 }}>{candidate.name}</strong>
+                      <span style={badgeStyle(candidate.scores.priority === "high" ? "#34D399" : candidate.scores.priority === "medium" ? "#FBBF24" : "#94A3B8")}>{candidate.scores.priority}</span>
+                      <span style={badgeStyle(candidate.riskLevel === "low" ? "#34D399" : candidate.riskLevel === "medium" ? "#FBBF24" : "#F87171")}>{candidate.riskLevel} risk</span>
+                    </div>
+                    <div style={{ color: "#94A3B8", fontSize: 12, marginBottom: 8 }}>{candidate.summary}</div>
+                    <div style={{ color: "#D8DEEB", fontSize: 13, lineHeight: 1.5 }}>{candidate.whyItHelpsParawi}</div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 42px)", gap: 6, flexShrink: 0 }}>
+                    {[["B", candidate.scores.benefit], ["R", candidate.scores.risk], ["E", candidate.scores.effort]].map(([label, value]) => (
+                      <div key={label} style={{ textAlign: "center", padding: "6px 0", borderRadius: 8, background: "rgba(40,50,74,0.55)", border: "1px solid rgba(40,50,74,0.8)" }}>
+                        <div style={{ color: "#4B5563", fontSize: 10, fontWeight: 800 }}>{label}</div>
+                        <div style={{ color: "#F1F4FB", fontSize: 14, fontWeight: 800 }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div style={{ display: "grid", gap: 6, marginTop: 10, color: "#94A3B8", fontSize: 12 }}>
+                  <span>Action: <strong style={{ color: "#38BDF8" }}>{candidate.recommendedAction}</strong></span>
+                  <span>Source: <a href={candidate.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#38BDF8" }}>{candidate.sourcePath}</a></span>
+                  <span>Overlap: {candidate.overlapWithExistingSystem}</span>
+                  <span>Expected files: {candidate.expectedFilesChanged.join(", ")}</span>
+                  <span>Rollback: {candidate.rollbackPlan}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {scoutApprovals.length > 0 && (
+        <div style={cardStyle}>
+          <div style={{ color: "#FBBF24", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 10 }}>Pending Skill Scout Approvals</div>
+          <div style={{ display: "grid", gap: 10 }}>
+            {scoutApprovals.slice(0, 8).map((approval) => {
+              const payload = approval.payload as Record<string, unknown>;
+              return (
+                <div key={approval.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 12, padding: "12px 14px", border: "1px solid rgba(251,191,36,0.24)", background: "rgba(251,191,36,0.07)", borderRadius: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: "#F1F4FB", fontSize: 13, fontWeight: 750 }}>{String(payload.candidateName ?? "Skill Scout candidate")}</div>
+                    <div style={{ color: "#94A3B8", fontSize: 12, marginTop: 4 }}>{String(payload.whyItHelps ?? "")}</div>
+                    <div style={{ color: "#4B5563", fontSize: 11, marginTop: 5 }}>Destination: {Array.isArray(payload.destination) ? payload.destination.join(", ") : String(payload.destination ?? "review required")}</div>
+                  </div>
+                  {approval.status === "pending" && (
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <button onClick={() => void onApprove(approval.id)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid rgba(52,211,153,0.36)", background: "rgba(52,211,153,0.12)", color: "#34D399", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>Approve</button>
+                      <button onClick={() => void onReject(approval.id)} style={{ padding: "7px 10px", borderRadius: 8, border: "1px solid rgba(248,113,113,0.36)", background: "rgba(248,113,113,0.10)", color: "#F87171", fontSize: 12, fontWeight: 800, cursor: "pointer" }}>Reject</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -1878,7 +2023,7 @@ export default function CommandCenterClient() {
   const [healthCenter, setHealthCenter] = useState<HealthCenterData | null>(null);
   const [healthAction, setHealthAction] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillView[]>([]);
-  const [skillCandidate, setSkillCandidate] = useState<SkillCandidate | null>(null);
+  const [skillScoutResult, setSkillScoutResult] = useState<SkillScoutResult | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchAll = useCallback(async () => {
@@ -1944,15 +2089,18 @@ export default function CommandCenterClient() {
     await fetchAll();
   };
 
-  const scoutOneSkill = async () => {
+  const scoutRepo = async (repoUrl: string) => {
     const res = await fetch("/api/command-center/skills", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "scout" }),
+      body: JSON.stringify({ action: "scoutRepo", repoUrl }),
     });
     if (res.ok) {
-      const data = await res.json() as { candidate: SkillCandidate };
-      setSkillCandidate(data.candidate);
+      const data = await res.json() as { result: SkillScoutResult };
+      setSkillScoutResult(data.result);
+    } else {
+      const data = await res.json().catch(() => null) as { error?: string } | null;
+      throw new Error(data?.error ?? "Skill Scout failed.");
     }
     await fetchAll();
   };
@@ -2050,7 +2198,16 @@ export default function CommandCenterClient() {
               />
             )}
             {tab === "memory" && <MemoryOfficePanel data={memoryOffice} debug={memoryContextDebug} onCreateTestMemory={createTestMemory} />}
-            {tab === "skills" && <SkillsPanel skills={skills} candidate={skillCandidate} onScout={scoutOneSkill} />}
+            {tab === "skills" && (
+              <SkillsPanel
+                skills={skills}
+                scoutResult={skillScoutResult}
+                approvals={approvals}
+                onScout={scoutRepo}
+                onApprove={handleApprove}
+                onReject={handleReject}
+              />
+            )}
             {tab === "projects" && <ProjectsPanel projects={projects} />}
             {tab === "builds" && <BuildsPanel builds={builds} />}
             {tab === "logs" && <LogsPanel runs={runs} audit={audit} />}

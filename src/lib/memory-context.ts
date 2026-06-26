@@ -197,6 +197,22 @@ export function sessionToContextState(session: AgentSession): SessionContextStat
   };
 }
 
+export async function readSessionContextState(chatId: string, userId: string): Promise<SessionContextState> {
+  const session = await getOrCreateSession(chatId, userId);
+  return sessionToContextState(session);
+}
+
+export async function writeSessionContextState(chatId: string, userId: string, state: SessionContextState): Promise<void> {
+  await getOrCreateSession(chatId, userId);
+  const serialized = serializeContextState(state);
+  await updateSession(chatId, {
+    activeIntent: serialized.activeIntent,
+    rememberedEntities: serialized.rememberedEntities,
+    toolHealth: serialized.toolHealth,
+    recentFailures: serialized.recentFailures,
+  });
+}
+
 async function updateSessionContextFromMessage(chatId: string, userId: string, newMessage: string, session: AgentSession): Promise<AgentSession> {
   const failures = await recentToolFailures(userId).catch(() => []);
   const nextState = mergeContextFromMessage(

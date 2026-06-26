@@ -21,6 +21,17 @@ export interface TravelSearchContext {
 export interface BuildProjectContext {
   projectName?: string;
   rawRequest: string;
+  intake?: {
+    status: "collecting" | "ready";
+    originalRequest: string;
+    pendingQuestion: "audience" | "mode" | "style" | "features" | null;
+    answers: {
+      audience?: string;
+      mode?: string;
+      style?: string;
+      features?: string;
+    };
+  };
 }
 
 export interface RememberedEntities {

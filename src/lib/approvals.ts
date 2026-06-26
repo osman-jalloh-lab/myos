@@ -17,7 +17,8 @@ export type ApprovalActionType =
   | "log_income"
   | "add_job"
   | "update_job_status"
-  | "engineering_plan";
+  | "engineering_plan"
+  | "skill_scout_import";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "executed";
 
@@ -85,6 +86,7 @@ const SCOPE_BLOCKED: Record<ApprovalActionType, string | null> = {
   add_job: null,
   update_job_status: null,
   engineering_plan: null,
+  skill_scout_import: null,
 };
 
 async function writeAuditLog(
@@ -163,6 +165,8 @@ async function executeIfPossible(row: {
     view.executionNote = `Approved — execution held: ${blockedReason}`;
     return view;
   }
+
+  let executionNote: string | null = null;
 
   // create_task / save_memory only ever touch our own DB — safe to execute
   // immediately once approved, since they hold no external write power.
@@ -279,12 +283,25 @@ async function executeIfPossible(row: {
     }
   }
 
+  if (actionType === "skill_scout_import") {
+    const payload = JSON.parse(row.payload) as { riskLevel?: string; candidateName?: string };
+    if (String(payload.riskLevel ?? "").toLowerCase() !== "low") {
+      const view = toView(row);
+      view.executionNote = `Approved - execution held: ${String(payload.candidateName ?? "candidate")} is not low risk. Build a manual importer plan before writing files.`;
+      return view;
+    }
+
+    const { importApprovedSkillScoutItem } = await import("@/lib/skill-scout/importer");
+    const imported = await importApprovedSkillScoutItem(payload);
+    executionNote = imported.summary;
+  }
+
   const executed = await prisma.approvalAction.update({
     where: { id: row.id },
     data: { status: "executed" },
   });
   const view = toView(executed);
-  view.executionNote = buildExecutionNote(actionType, row.payload);
+  view.executionNote = executionNote ?? buildExecutionNote(actionType, row.payload);
   return view;
 }
 

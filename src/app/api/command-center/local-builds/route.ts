@@ -16,6 +16,7 @@ import {
   startLocalDevServer,
   stopLocalDevServer,
 } from "@/lib/local-builder";
+import { redactInternalDetails } from "@/lib/hermes-execution/response-formatter";
 
 function projectView(project: LocalBuildProject) {
   return {
@@ -26,27 +27,27 @@ function projectView(project: LocalBuildProject) {
 }
 
 function responseFor(project: ReturnType<typeof projectView>, action: string, failed = false) {
+  const answer = [
+    `Local Builder ${action} ${failed ? "failed" : "completed"} for ${project.projectName}.`,
+    `Folder: ${project.localFolderPath}`,
+    project.localDevUrl ? `URL: ${project.localDevUrl}` : null,
+    `Status: ${project.status}`,
+    project.researchBrief ? "Athena brief: ready" : null,
+    project.designReview ? `Fugu design review: ready${project.designScore ? ` (${project.designScore}/10)` : ""}` : null,
+    project.polishReview ? "Fugu polish review: ready" : null,
+    project.qaStatus ? `QA: ${project.qaStatus}` : null,
+    project.buildError ? `First error: ${project.buildError}` : null,
+  ].filter(Boolean).join("\n");
   return NextResponse.json({
     status: failed ? "failed" : "completed",
-    answer: [
-      `Local Builder ${action} ${failed ? "failed" : "completed"} for ${project.projectName}.`,
-      `Folder: ${project.localFolderPath}`,
-      project.localDevUrl ? `URL: ${project.localDevUrl}` : null,
-      `Status: ${project.status}`,
-      project.researchBrief ? "Athena brief: ready" : null,
-      project.designReview ? `Fugu design review: ready${project.designScore ? ` (${project.designScore}/10)` : ""}` : null,
-      project.polishReview ? "Fugu polish review: ready" : null,
-      project.qaStatus ? `QA: ${project.qaStatus}` : null,
-      project.buildError ? `First error: ${project.buildError}` : null,
-    ].filter(Boolean).join("\n"),
+    answer: redactInternalDetails(answer),
     project,
     toolCalls: [
       {
         id: `local_build_${action}`,
-        tool: `internal.localBuilder.${action}`,
+        tool: "Local Builder",
         status: failed ? "failed" : "completed",
-        error: project.buildError ?? undefined,
-        result: project,
+        error: project.buildError ? redactInternalDetails(project.buildError) : undefined,
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
       },
@@ -56,22 +57,22 @@ function responseFor(project: ReturnType<typeof projectView>, action: string, fa
 }
 
 function queuedResponse(project: ReturnType<typeof projectView>, action: string) {
+  const answer = [
+    `Local Builder ${action} queued for ${project.projectName}.`,
+    `Folder: ${project.localFolderPath}`,
+    `Status: ${project.status}`,
+    `Worker task: ${project.taskId}`,
+    "Vercel/serverless did not touch the local filesystem or start local processes.",
+  ].join("\n");
   return NextResponse.json({
     status: "queued",
-    answer: [
-      `Local Builder ${action} queued for ${project.projectName}.`,
-      `Folder: ${project.localFolderPath}`,
-      `Status: ${project.status}`,
-      `Worker task: ${project.taskId}`,
-      "Vercel/serverless did not touch the local filesystem or start local processes.",
-    ].join("\n"),
+    answer: redactInternalDetails(answer),
     project,
     toolCalls: [
       {
         id: `local_build_${action}_queued`,
-        tool: `internal.localBuilder.${action}`,
+        tool: "Local Builder",
         status: "queued",
-        result: project,
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
       },
@@ -117,7 +118,7 @@ export async function POST(req: Request) {
     const view = projectView(project);
     return NextResponse.json({
       status: failed ? "failed" : "completed",
-      answer: [
+      answer: redactInternalDetails([
         `Research-to-Build pipeline ${failed ? "failed" : "generated"} ${project.projectName}.`,
         `Folder: ${project.localFolderPath}`,
         `Status: ${project.status}`,
@@ -127,9 +128,9 @@ export async function POST(req: Request) {
         project.polishReview ? "Fugu polish review: ready" : "Fugu polish review: pending",
         project.qaStatus ? `QA status: ${project.qaStatus}` : "QA status: pending",
         project.buildError ? `First error: ${project.buildError}` : "npm install and npm run build passed. QA checklist is required before completion.",
-      ].join("\n"),
+      ].join("\n")),
       project: view,
-      toolCalls: [{ id: "local_build_generate", tool: "internal.localBuilder.generateStarterApp", status: failed ? "failed" : "completed", error: project.buildError ?? undefined, result: project, startedAt: new Date().toISOString(), completedAt: new Date().toISOString() }],
+      toolCalls: [{ id: "local_build_generate", tool: "Local Builder", status: failed ? "failed" : "completed", error: project.buildError ? redactInternalDetails(project.buildError) : undefined, startedAt: new Date().toISOString(), completedAt: new Date().toISOString() }],
       artifacts: (project.files ?? []).map((file) => ({ type: "file", title: file, metadata: { projectId: project.id, localFolderPath: project.localFolderPath, status: project.status } })),
     }, { status: failed ? 500 : 200 });
   }
@@ -188,7 +189,7 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     status: "completed",
-    answer: [
+    answer: redactInternalDetails([
       `Athena researched and Local Builder prepared ${project.projectName}.`,
       `Folder: ${project.localFolderPath}`,
       `Status: ${project.status}`,
@@ -198,14 +199,13 @@ export async function POST(req: Request) {
       "Fugu design review is optional. Run Fugu Design Review when the app feels too basic.",
       "",
       "Ready for Generate app.",
-    ].join("\n"),
+    ].join("\n")),
     project: view,
     toolCalls: [
       {
         id: "local_build_prepare",
-        tool: "internal.localBuilder.prepareProject",
+        tool: "Local Builder",
         status: "completed",
-        result: project,
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
       },

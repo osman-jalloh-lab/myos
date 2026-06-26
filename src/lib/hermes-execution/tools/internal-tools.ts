@@ -182,6 +182,52 @@ export function registerInternalTools(): void {
   // Wraps existing lib/tasks.ts:createTask() — no new DB table.
 
   registerTool({
+    name: "internal.skillScout.inspectRepo",
+    description: "Inspect a GitHub repo for Parawi-relevant skills, tools, and patterns, then queue approval requests before any import.",
+    risk: "read",
+    requiresApproval: false,
+    execute: async (input, ctx: ToolContext) => {
+      const { runSkillScout } = await import("@/lib/skill-scout/github");
+      const message = String(input.message ?? "");
+      const repoUrl = String(input.repoUrl ?? message);
+      const result = await runSkillScout(ctx.userId, repoUrl);
+
+      const lines = [
+        `Skill Scout inspected ${result.repo.fullName}.`,
+        result.repo.description ? result.repo.description : "No repository description.",
+        `Tree items inspected: ${result.inspected.treeItems}. Scripts run: no. Files imported: no.`,
+        `Approval requests queued: ${result.approvals.length}.`,
+        "",
+        "Top recommendations:",
+        ...result.candidates.slice(0, 5).map((candidate, index) =>
+          `${index + 1}. ${candidate.name} (${candidate.category}) - ${candidate.recommendedAction} - benefit ${candidate.scores.benefit}/10, risk ${candidate.scores.risk}/10, effort ${candidate.scores.effort}/10, priority ${candidate.scores.priority}\n   ${candidate.whyItHelpsParawi}\n   Source: ${candidate.sourcePath}`
+        ),
+        "",
+        "Nothing has been imported. Approve a Skill Scout request before adapting any files.",
+      ];
+
+      return {
+        answer: lines.join("\n"),
+        artifacts: [
+          {
+            type: "repo_report" as const,
+            title: `Skill Scout - ${result.repo.fullName}`,
+            url: result.repoUrl,
+            content: lines.join("\n"),
+            metadata: {
+              candidateCount: result.candidates.length,
+              approvalCount: result.approvals.length,
+              scriptsRun: false,
+              filesImported: false,
+            },
+          },
+        ],
+        result,
+      };
+    },
+  });
+
+  registerTool({
     name: "internal.tasks.create",
     description: "Create a task using the existing Hermes OS task system.",
     risk: "internal_write",

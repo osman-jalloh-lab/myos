@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { chatHistory, channelHistory, persistExecutedMessage, sendMessage } from "@/lib/chat";
+import { handleBuildIntake } from "@/lib/build-intake";
 import { shouldUseExecutionLayer } from "@/lib/hermes-execution/detect-execution-request";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -55,12 +56,30 @@ export async function POST(req: Request) {
   }
 
   const trimmed = body.message.trim();
+  const contextChatId = `dashboard:shared:${session.user.id}`;
+  const intake = !body.agentName
+    ? await handleBuildIntake(contextChatId, session.user.id, trimmed).catch(() => ({ action: "none" as const }))
+    : { action: "none" as const };
+  if (intake.action === "ask") {
+    const result = await persistExecutedMessage(session.user.id, trimmed, intake.answer, "dashboard");
+    return NextResponse.json({
+      userMessage: result.userMessage,
+      reply: {
+        ...result.reply,
+        content: intake.answer,
+        executionStatus: "waiting_for_requirements",
+        artifacts: [],
+        toolCalls: [],
+      },
+    });
+  }
+  const executionMessage = intake.action === "ready" ? intake.message : trimmed;
 
   // ── execution layer (feature-flagged, additive) ─────────────────────────────
   // When HERMES_EXECUTION_ENABLED=true and the message matches an action intent,
   // proxy through /api/hermes/execute and merge the execution result into the
   // standard chat reply shape so the existing UI receives the same structure.
-  if (!body.agentName && shouldUseExecutionLayer(trimmed)) {
+  if (!body.agentName && shouldUseExecutionLayer(executionMessage)) {
     try {
       const execRes = await fetch(
         new URL("/api/hermes/execute", process.env.NEXTAUTH_URL ?? "http://localhost:3000").toString(),
@@ -71,7 +90,7 @@ export async function POST(req: Request) {
             // Forward the session cookie so the execute route can auth
             Cookie: (req as Request & { headers: { get: (k: string) => string | null } }).headers.get("cookie") ?? "",
           },
-          body: JSON.stringify({ message: trimmed, source: "chat" }),
+          body: JSON.stringify({ message: executionMessage, source: "chat" }),
         }
       );
       if (execRes.ok) {
@@ -85,7 +104,7 @@ export async function POST(req: Request) {
             content: answer,
             executionStatus: execData.status,
             artifacts: execData.artifacts ?? [],
-            toolCalls: execData.toolCalls ?? [],
+            toolCalls: [],
           },
         });
       }

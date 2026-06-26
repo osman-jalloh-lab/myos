@@ -9,6 +9,7 @@ import { plan } from "@/lib/hermes-execution/planner";
 import { execute } from "@/lib/hermes-execution/executor";
 import { ensureRegistryInitialized } from "@/lib/hermes-execution/tool-registry";
 import { loadMcpToolsIntoRegistry } from "@/lib/hermes-execution/mcp-adapter";
+import { formatExecutionResponseForUser, userSafeFailureMessage } from "@/lib/hermes-execution/response-formatter";
 import type { ExecutionRequest } from "@/lib/hermes-execution/types";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 
@@ -67,16 +68,16 @@ export async function POST(req: Request) {
     await initRegistry();
     const execPlan = await plan(execReq);
     const result = await execute(execPlan, execReq);
-    return NextResponse.json(result);
+    return NextResponse.json(formatExecutionResponseForUser(result));
   } catch (err) {
     console.error("[/api/hermes/execute] unhandled error", err);
     return NextResponse.json(
       {
         status: "failed",
-        answer: "An unexpected error occurred in the execution layer. Check server logs.",
+        answer: userSafeFailureMessage(err instanceof Error ? err.message : String(err)),
         toolCalls: [],
         artifacts: [],
-        error: err instanceof Error ? err.message : String(err),
+        error: userSafeFailureMessage(err instanceof Error ? err.message : String(err)),
       },
       { status: 500 }
     );

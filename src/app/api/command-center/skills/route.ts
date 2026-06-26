@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { prisma } from "@/lib/db";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { runSkillScout } from "@/lib/skill-scout/github";
 
 type SkillView = {
   name: string;
@@ -13,10 +13,6 @@ type SkillView = {
   status: string;
   testResult: string;
 };
-
-const DEFAULT_SKILL_SOURCE_URL = "https://github.com/rampstackco/claude-skills/tree/main/skills/accessibility-audit";
-const DEFAULT_SKILL_REPO = "rampstackco/claude-skills";
-const DEFAULT_SKILL_PATH = "skills/accessibility-audit/SKILL.md";
 
 async function exists(dir: string): Promise<boolean> {
   try {
@@ -79,69 +75,16 @@ export async function POST(req: Request) {
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = (await req.json().catch(() => null)) as { action?: string; repoUrl?: string } | null;
 
-  if (body?.action !== "scout") return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
+  if (body?.action !== "scoutRepo") return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
+  if (!body.repoUrl?.trim()) return NextResponse.json({ error: "repoUrl is required" }, { status: 400 });
 
-  const sourceUrl = body.repoUrl?.trim() || DEFAULT_SKILL_SOURCE_URL;
-  const taskTitle = "Review accessibility-audit skill for possible install";
-  const taskDescription = [
-    "Sophos recommended an accessibility audit skill for generated app QA.",
-    `Source: ${sourceUrl}`,
-    `Repository: ${DEFAULT_SKILL_REPO}`,
-    `Path: ${DEFAULT_SKILL_PATH}`,
-    "Install only after manual approval and repository review.",
-  ].join("\n");
-
-  const existingTask = await prisma.task.findFirst({
-    where: {
-      userId: session.user.id,
-      source: "skill-scout",
-      sourceRef: sourceUrl,
-      status: { not: "done" },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  const task = existingTask ?? await prisma.task.create({
-    data: {
-      userId: session.user.id,
-      title: taskTitle,
-      description: taskDescription,
-      source: "skill-scout",
-      sourceRef: sourceUrl,
-      assignedAgent: "sophos",
-      delegatedBy: "sophos",
-      priority: "medium",
-    },
-  });
-
-  const candidate = {
-    name: "accessibility-audit",
-    source: sourceUrl,
-    sourceUrl,
-    repository: DEFAULT_SKILL_REPO,
-    path: DEFAULT_SKILL_PATH,
-    category: "QA",
-    description: "A safe skill that would audit generated apps for keyboard navigation, contrast, labels, responsive overlap, and common accessibility regressions.",
-    whyItHelps: "Hermes now builds richer local apps; accessibility QA catches issues that npm build cannot see.",
-    installCommand: "Manual review required before choosing an install command.",
-    riskyFiles: ["No repository downloaded.", "No scripts executed.", "Review task created before any install."],
-    approvalRequired: true,
-    status: "candidate only",
-    testResult: "Not installed; recommendation saved for review.",
-    taskId: task.id,
-    taskTitle: task.title,
-    taskStatus: task.status,
-    createdAt: new Date().toISOString(),
-  };
-
-  await prisma.memory.create({
-    data: {
-      userId: session.user.id,
-      fact: `Skill Scout recommendation: ${candidate.name}. Source: ${sourceUrl}. Review task: ${task.id}. ${candidate.whyItHelps} Status: candidate only; no install without approval.`,
-      source: "skill-scout:manual",
-      approvedAt: new Date(),
-    },
-  });
-
-  return NextResponse.json({ candidate });
+  try {
+    const result = await runSkillScout(session.user.id, body.repoUrl);
+    return NextResponse.json({ result });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Skill Scout failed." },
+      { status: 400 }
+    );
+  }
 }
