@@ -93,15 +93,16 @@ export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = (await req.json().catch(() => null)) as { action?: string; message?: string; projectId?: string } | null;
+  const body = (await req.json().catch(() => null)) as { action?: string; message?: string; projectId?: string; executor?: "local_worker" | "hermes_agent" } | null;
   const message = body?.message?.trim();
   const action = body?.action ?? "prepare";
   const projectId = body?.projectId;
 
   if (action !== "prepare" && !projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
 
-  if (isServerlessRuntime()) {
-    const queued = await queueLocalBuilderWorkerTask(session.user.id, action, message ?? "", projectId);
+  const selectedExecutor = body?.executor === "hermes_agent" ? "hermes_agent" : "local_worker";
+  if (isServerlessRuntime() || selectedExecutor === "hermes_agent") {
+    const queued = await queueLocalBuilderWorkerTask(session.user.id, action, message ?? "", projectId, selectedExecutor);
     if (!queued) {
       return NextResponse.json(
         { error: "Not a local build request. Try: Build a website called MyProject" },
@@ -162,13 +163,13 @@ export async function POST(req: Request) {
 
   if (action === "runQa") {
     const project = await runLocalBuilderQa(session.user.id, projectId!);
-    return responseFor(projectView(project), "runQa", project.status === "qa_failed");
+    return responseFor(projectView(project), "runQa");
   }
 
   if (action === "runCodex") {
     const improvementPrompt = message || "Improve this local app so it feels complete, polished, interactive, and ready to pass the Builder QA checklist.";
     const project = await runLocalCodexExecutor(session.user.id, projectId!, improvementPrompt);
-    return responseFor(projectView(project), "runCodex", project.status === "failed" || project.status === "qa_failed");
+    return responseFor(projectView(project), "runCodex", project.status === "failed");
   }
 
   if (!message) {

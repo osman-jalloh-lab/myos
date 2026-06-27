@@ -36,7 +36,7 @@ type Run = { id: string; agentName: string; outputSummary: string | null; status
 type RootInfo = { root: string; exists: boolean; projectCount: number; warning: string | null };
 type CodexStatus = { installed: boolean; available: boolean; version: string | null; message: string };
 type ProviderStatus = { provider: string; configured: boolean; status: "working" | "missing" | "invalid" | "error" | "configured_untested"; safeError: string | null };
-type ExecutorStatus = { name: string; status: "Online" | "Offline" | "Busy" | "Unknown"; lastError: string | null };
+type ExecutorStatus = { name: string; status: "Ready" | "Online" | "Offline" | "Busy" | "Unknown"; lastError: string | null };
 type BuilderHealth = { apiProviders: ProviderStatus[]; executors: ExecutorStatus[] };
 
 const card: React.CSSProperties = { background: "rgba(26,35,54,.85)", border: "1px solid #28324A", borderRadius: 16, padding: "20px 24px", backdropFilter: "blur(12px)" };
@@ -50,6 +50,42 @@ function qaColor(status: QaItem["status"]): string {
   if (status === "passed") return "#34D399";
   if (status === "failed") return "#F87171";
   return "#94A3B8";
+}
+
+type QaSummary = {
+  build: "passed" | "failed";
+  functional: "passed" | "failed" | "needs review";
+  polish: "pending" | "recommended" | "completed";
+  accessibility: "passed" | "needs review" | "failed";
+  pendingMessage: string | null;
+};
+
+function summarizeQa(project: Project): QaSummary {
+  const checklist = project.qaChecklist ?? [];
+  const byKeys = (keys: string[]) => checklist.filter((item) => keys.includes(item.key));
+  const buildPassed = /Building:\s*passed|Rebuild:\s*passed/i.test(project.buildLog ?? "") || ["qa_pending", "qa_failed", "qa_passed", "completed"].includes(project.status);
+  const functionalItems = byKeys(["homepage_loads", "navigation_works", "primary_buttons_clickable", "interactions_work", "local_storage_works", "no_empty_dead_sections"]);
+  const accessibilityItems = byKeys(["semantic_html", "button_accessible_names", "form_labels", "keyboard_navigation", "focus_states", "contrast"]);
+  const criticalFunctionalFailure = functionalItems.some((item) => ["homepage_loads", "primary_buttons_clickable"].includes(item.key) && item.status === "failed");
+  const functionalNeedsReview = functionalItems.some((item) => item.status === "failed");
+  const criticalAccessibilityFailure = accessibilityItems.some((item) => ["semantic_html", "keyboard_navigation", "contrast"].includes(item.key) && item.status === "failed");
+  const accessibilityNeedsReview = accessibilityItems.some((item) => item.status === "failed");
+  const polishItem = checklist.find((item) => item.key === "polish_review_completed");
+  const responsiveItem = checklist.find((item) => item.key === "mobile_layout_reviewed");
+  const pending = project.qaStatus === "qa_pending" || (buildPassed && project.qaStatus === "qa_failed");
+  return {
+    build: buildPassed ? "passed" : "failed",
+    functional: criticalFunctionalFailure ? "failed" : functionalNeedsReview ? "needs review" : "passed",
+    polish: polishItem?.status === "passed" ? "completed" : polishItem || responsiveItem?.status === "failed" ? "recommended" : "pending",
+    accessibility: criticalAccessibilityFailure ? "failed" : accessibilityNeedsReview ? "needs review" : "passed",
+    pendingMessage: pending ? "The app was built successfully. It still needs review for accessibility, responsive layout, and polish before marking complete." : null,
+  };
+}
+
+function qaStatusColor(status: string): string {
+  if (["passed", "completed"].includes(status)) return "#34D399";
+  if (status === "failed") return "#F87171";
+  return "#FBBF24";
 }
 
 function formatDate(iso?: string | null) {
@@ -82,6 +118,7 @@ function LocalPreviewPanel({ project }: { project: Project }) {
   const port = localPreviewPort(project.localDevUrl);
   const devStatus = localDevServerStatus(project);
   const command = manualDevCommand(project.localFolderPath);
+  const qa = summarizeQa(project);
 
   useEffect(() => {
     setShowLocalhostNote(window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1");
@@ -95,8 +132,11 @@ function LocalPreviewPanel({ project }: { project: Project }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}>
         <span>Project: <strong style={{ color: "#F1F4FB" }}>{project.projectName}</strong></span>
-        <span>Build status: <strong style={{ color: "#D8DEEB" }}>{project.status.replace(/_/g, " ")}</strong></span>
-        <span>QA status: <strong style={{ color: "#D8DEEB" }}>{project.qaStatus?.replace(/_/g, " ") ?? "qa pending"}</strong></span>
+        <span>Build status: <strong style={{ color: qaStatusColor(qa.build) }}>{qa.build}</strong></span>
+        <span>Functional QA: <strong style={{ color: qaStatusColor(qa.functional) }}>{qa.functional}</strong></span>
+        <span>Polish QA: <strong style={{ color: qaStatusColor(qa.polish) }}>{qa.polish}</strong></span>
+        <span>Accessibility QA: <strong style={{ color: qaStatusColor(qa.accessibility) }}>{qa.accessibility}</strong></span>
+        {qa.pendingMessage && <span style={{ color: "#FBBF24", lineHeight: 1.5 }}>{qa.pendingMessage}</span>}
         {project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}
         {port && <span>Local port: <code>{port}</code></span>}
         {project.localDevUrl ? (
@@ -120,6 +160,7 @@ function LocalPreviewPanel({ project }: { project: Project }) {
 
 export default function BuilderOffice() {
   const [prompt, setPrompt] = useState("");
+  const [buildExecutor, setBuildExecutor] = useState<"local_worker" | "hermes_agent">("local_worker");
   const [executing, setExecuting] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -192,7 +233,7 @@ export default function BuilderOffice() {
       const response = await fetch("/api/command-center/local-builds", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "generate", message, projectId: targetProject.id }),
+        body: JSON.stringify({ action: "generate", message, projectId: targetProject.id, executor: buildExecutor }),
       });
       const payload = await response.json().catch(() => null) as ExecutionResult | { error?: string } | null;
       if (!response.ok && !(payload && "status" in payload && payload.status === "failed")) {
@@ -260,9 +301,11 @@ export default function BuilderOffice() {
   };
 
   const project = result?.project ?? projects[0];
+  const qaSummary = project ? summarizeQa(project) : null;
   const build = builds[0];
   const files = result?.artifacts.filter((artifact) => artifact.type === "file") ?? [];
-  const firstError = requestError ?? result?.toolCalls.find((call) => call.error)?.error ?? (result?.status === "failed" ? result.answer : null);
+  const firstError = requestError
+    ?? (qaSummary?.build === "failed" ? result?.toolCalls.find((call) => call.error)?.error ?? (result?.status === "failed" ? result.answer : project?.buildError ?? null) : null);
   const busy = executing || generating || reviewing || Boolean(managing);
   const displayStatus = managing ? "working" : reviewing ? "Reviewing" : generating ? "Generating" : executing ? "preparing" : result?.project?.status ?? result?.status ?? (firstError ? "failed" : "ready");
   const latestLog = runs.find((run) => run.agentName === "hermes-local-builder") ?? runs.find((run) => run.agentName === "hermes-execution");
@@ -291,13 +334,19 @@ export default function BuilderOffice() {
           style={{ boxSizing: "border-box", width: "100%", color: "#F1F4FB", background: "rgba(14,20,36,.72)", border: "1px solid #28324A", borderRadius: 12, outline: "none", resize: "vertical", padding: "14px 16px", font: "13px/1.6 JetBrains Mono,monospace" }}
         />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 12 }}>
-          <span style={{ color: "#4B5563", fontSize: 11 }}>Ctrl/Cmd + Enter to run</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#94A3B8", fontSize: 11 }}>
+            <span>Build with:</span>
+            <select aria-label="Build executor" value={buildExecutor} onChange={(event) => setBuildExecutor(event.target.value as "local_worker" | "hermes_agent")} disabled={busy} style={{ color: "#D8DEEB", background: "#121A2B", border: "1px solid #28324A", borderRadius: 7, padding: "6px 8px", fontSize: 11 }}>
+              <option value="local_worker">Local Builder</option>
+              <option value="hermes_agent">Hermes Agent</option>
+            </select>
+          </div>
           <div style={{ display: "flex", gap: 10 }}>
           <button onClick={() => void execute()} disabled={!prompt.trim() || busy} style={{ color: "#38BDF8", background: "rgba(56,189,248,.12)", border: "1px solid rgba(56,189,248,.4)", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: !prompt.trim() || busy ? "not-allowed" : "pointer", opacity: !prompt.trim() || busy ? .5 : 1 }}>
             {executing ? "Preparing..." : "Prepare local build"}
           </button>
           <button onClick={() => void generate()} disabled={!prompt.trim() || !result?.project || busy} style={{ color: "#34D399", background: "rgba(52,211,153,.12)", border: "1px solid rgba(52,211,153,.4)", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: !prompt.trim() || !result?.project || busy ? "not-allowed" : "pointer", opacity: !prompt.trim() || !result?.project || busy ? .5 : 1 }}>
-            {generating ? "Generating..." : "Generate app"}
+            {generating ? "Generating..." : `Generate with ${buildExecutor === "hermes_agent" ? "Hermes Agent" : "Local Builder"}`}
           </button>
           <button onClick={() => void runFuguDesignReview()} disabled={!project || busy} style={{ color: "#E879F9", background: "rgba(232,121,249,.12)", border: "1px solid rgba(232,121,249,.4)", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: !project || busy ? "not-allowed" : "pointer", opacity: !project || busy ? .5 : 1 }}>
             {reviewing ? "Reviewing..." : "Run Fugu Design Review"}
@@ -308,7 +357,7 @@ export default function BuilderOffice() {
         <div style={{ marginTop: 22, flex: 1 }}>
           {!result && !firstError && !executing && <div style={{ color: "#4B5563", border: "1px dashed #28324A", borderRadius: 12, padding: 28, textAlign: "center", fontSize: 13 }}>Local builder output will appear here.</div>}
           {executing && <div style={{ color: "#A78BFA", border: "1px solid rgba(167,139,250,.3)", borderRadius: 12, padding: 18, fontSize: 13 }}>Hermes is routing the build to Athena, preparing the research brief, and creating the local project state.</div>}
-          {generating && <div style={{ color: "#A78BFA", border: "1px solid rgba(167,139,250,.3)", borderRadius: 12, padding: 18, fontSize: 13 }}>Hermes is generating the starter app, installing dependencies, and running the build.</div>}
+          {generating && <div style={{ color: "#A78BFA", border: "1px solid rgba(167,139,250,.3)", borderRadius: 12, padding: 18, fontSize: 13 }}>Parawi is routing this build to {buildExecutor === "hermes_agent" ? "Hermes Agent" : "Local Builder"}.</div>}
           {reviewing && <div style={{ color: "#A78BFA", border: "1px solid rgba(167,139,250,.3)", borderRadius: 12, padding: 18, fontSize: 13 }}>Fugu is reviewing the current project as read-only design guidance.</div>}
           {managing && <div style={{ color: "#A78BFA", border: "1px solid rgba(167,139,250,.3)", borderRadius: 12, padding: 18, fontSize: 13 }}>Running local action: {managing}</div>}
           {result?.answer && !executing && <pre style={{ color: "#D8DEEB", background: "rgba(40,50,74,.36)", borderRadius: 10, margin: 0, padding: 14, whiteSpace: "pre-wrap", wordBreak: "break-word", font: "12px/1.6 JetBrains Mono,monospace" }}>{result.answer}</pre>}
@@ -334,7 +383,7 @@ export default function BuilderOffice() {
         </div>
         <div style={card}>
           <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Project and task</div>
-          {project ? <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}><strong style={{ color: "#F1F4FB" }}>{project.projectName}</strong>{project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}{copiedPath && <span style={{ color: "#34D399" }}>Folder path copied.</span>}{project.route && <span>{project.route}</span>}{formatDate(project.createdAt) && <span>Created: {formatDate(project.createdAt)}</span>}{project.currentTask && <span>Current task: {project.currentTask}</span>}<span>{project.taskCounts.done}/{project.taskCounts.total} tasks done</span><div><span style={badge(project.status)}>{project.status}</span></div></div> : <div style={{ color: "#4B5563", fontSize: 12 }}>No project state yet.</div>}
+          {project ? <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}><strong style={{ color: "#F1F4FB" }}>{project.projectName}</strong>{project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}{copiedPath && <span style={{ color: "#34D399" }}>Folder path copied.</span>}{project.route && <span>{project.route}</span>}{formatDate(project.createdAt) && <span>Created: {formatDate(project.createdAt)}</span>}{project.currentTask && <span>Current task: {project.currentTask}</span>}<span>{project.taskCounts.done}/{project.taskCounts.total} tasks done</span><div><span style={badge(qaSummary?.build === "passed" && project.status === "qa_failed" ? "qa_pending" : project.status)}>{qaSummary?.build === "passed" && project.status === "qa_failed" ? "build passed / QA pending" : project.status.replace(/_/g, " ")}</span></div></div> : <div style={{ color: "#4B5563", fontSize: 12 }}>No project state yet.</div>}
         </div>
         {project && <LocalPreviewPanel project={project} />}
         <div style={card}>
@@ -382,8 +431,19 @@ export default function BuilderOffice() {
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
             <div style={{ color: "#FBBF24", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase" }}>Local QA checklist</div>
-            {project?.qaStatus && <span style={badge(project.qaStatus)}>{project.qaStatus.replace(/_/g, " ")}</span>}
+            {qaSummary && <span style={badge(qaSummary.pendingMessage ? "qa_pending" : project?.qaStatus ?? "ready")}>{qaSummary.pendingMessage ? "review pending" : project?.qaStatus?.replace(/_/g, " ")}</span>}
           </div>
+          {qaSummary && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, marginBottom: 12 }}>
+              {[["Build status", qaSummary.build], ["Functional QA", qaSummary.functional], ["Polish QA", qaSummary.polish], ["Accessibility QA", qaSummary.accessibility]].map(([label, value]) => (
+                <div key={label} style={{ padding: "9px 10px", border: "1px solid #28324A", borderRadius: 8, background: "rgba(8,13,24,.38)", fontSize: 11 }}>
+                  <div style={{ color: "#647089", marginBottom: 3 }}>{label}</div>
+                  <strong style={{ color: qaStatusColor(value) }}>{value}</strong>
+                </div>
+              ))}
+            </div>
+          )}
+          {qaSummary?.pendingMessage && <div style={{ color: "#D8DEEB", background: "rgba(251,191,36,.08)", border: "1px solid rgba(251,191,36,.25)", borderRadius: 8, padding: 10, marginBottom: 12, fontSize: 12, lineHeight: 1.5 }}>{qaSummary.pendingMessage}</div>}
           {project?.qaChecklist?.length ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
               {project.qaChecklist.map((item) => (
@@ -421,7 +481,7 @@ export default function BuilderOffice() {
         </div>
         <div style={card}>
           <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Build result</div>
-          {project?.buildError && <div style={{ color: "#F87171", whiteSpace: "pre-wrap", fontSize: 12, marginBottom: 10 }}>{project.buildError}</div>}
+          {project?.buildError && qaSummary?.build === "failed" && <div style={{ color: "#F87171", whiteSpace: "pre-wrap", fontSize: 12, marginBottom: 10 }}>{project.buildError}</div>}
           {project?.buildLog ? <pre style={{ color: "#94A3B8", whiteSpace: "pre-wrap", wordBreak: "break-word", font: "11px/1.5 JetBrains Mono,monospace", maxHeight: 220, overflow: "auto", margin: 0 }}>{project.buildLog}</pre> : <div style={{ color: "#4B5563", fontSize: 12 }}>No build log yet.</div>}
         </div>
         <div style={card}>

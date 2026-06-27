@@ -228,7 +228,7 @@ interface HealthCenterData {
   overall: { status: HealthSeverity; score: number; message: string; lastChecked: string };
   accounts: Array<{ name: string; connected: boolean; email?: string | null; label?: string | null; gmailScope?: boolean; calendarScope?: boolean; tokenExpiresAt?: string | null; lastSuccessfulSync: string | null; lastError: string | null; reconnectRequired: boolean; warnings: string[]; score: number }>;
   scheduledJobs: Array<{ name: string; key: string; enabled: boolean; lastRun: string | null; nextRun: string | null; lastResult: string | null; runtime: string | null; successCount: number; failureCount: number; status: "Healthy" | "Delayed" | "Failed" | "Never Ran" | "Disabled" }>;
-  executors: Array<{ name: string; status: "Online" | "Offline" | "Busy" | "Unknown"; lastRun: string | null; lastError: string | null; workerId?: string | null; machineName?: string | null; rootPath?: string | null; nodeVersion?: string | null; npmVersion?: string | null; gitAvailable?: boolean | null; codexAvailable?: boolean | null; currentTask?: string | null; capabilities?: string[] }>;
+  executors: Array<{ name: string; status: "Ready" | "Online" | "Offline" | "Busy" | "Unknown"; lastRun: string | null; lastError: string | null; workerId?: string | null; machineName?: string | null; rootPath?: string | null; nodeVersion?: string | null; npmVersion?: string | null; gitAvailable?: boolean | null; codexAvailable?: boolean | null; currentTask?: string | null; workerApiTarget?: string | null; lastFetchError?: string | null; capabilities?: string[] }>;
   notifications: Array<{ name: string; lastSent: string | null; lastFailed: string | null; pendingNotifications: number; status: HealthSeverity }>;
   apiProviders: Array<{ provider: string; configured: boolean; requiredEnvVars: string[]; source: "local env" | "Vercel/runtime"; lastTested: string | null; status: "working" | "missing" | "invalid" | "error" | "configured_untested"; safeError: string | null }>;
   logs: Array<{ timestamp: string; component: string; status: HealthSeverity; message: string }>;
@@ -261,7 +261,7 @@ function relativeTime(iso: string): string {
 
 function statusColor(status: string): string {
   switch (status) {
-    case "healthy": case "Healthy": case "Online": return "#34D399";
+    case "healthy": case "Healthy": case "Ready": case "Online": return "#34D399";
     case "warning": case "Delayed": case "Never Ran": return "#FBBF24";
     case "failure": case "Failed": case "Offline": return "#F87171";
     case "Busy": return "#A78BFA";
@@ -1793,6 +1793,8 @@ function HealthCenterPanel({
                 {executor.machineName && <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 4 }}>Machine: {executor.machineName}</div>}
                 {executor.currentTask && <div style={{ color: "#60A5FA", fontSize: 11, marginTop: 4, overflowWrap: "anywhere" }}>Current Task: {executor.currentTask}</div>}
                 {executor.rootPath && <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 4, overflowWrap: "anywhere" }}>Root: <code>{executor.rootPath}</code></div>}
+                {executor.workerApiTarget && <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 4, overflowWrap: "anywhere" }}>Worker API Target: <code>{executor.workerApiTarget}</code></div>}
+                {executor.name === "Local Worker" && <div style={{ color: executor.lastFetchError ? "#F87171" : "#94A3B8", fontSize: 11, marginTop: 4, overflowWrap: "anywhere" }}>Last Fetch Error: {executor.lastFetchError ?? "none"}</div>}
                 {executor.capabilities?.length ? <div style={{ color: "#647089", fontSize: 10, marginTop: 4 }}>{executor.capabilities.join(" / ")}</div> : null}
                 <div style={{ color: executor.lastError ? "#F87171" : "#94A3B8", fontSize: 11, marginTop: 4 }}>Last Error: {executor.lastError ?? "none"}</div>
               </div>

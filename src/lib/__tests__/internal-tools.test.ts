@@ -12,7 +12,7 @@ const ctx: ToolContext = {
   userId: "user_1",
   source: "api",
   previousResults: {},
-  env: {},
+  env: { NODE_ENV: "test" },
 };
 
 beforeEach(() => {
@@ -93,7 +93,7 @@ describe("internal.github.inspectRepo", () => {
     const tool = getTool("internal.github.inspectRepo");
     await tool?.execute(
       { repoUrl: "https://github.com/wshobson/agents" },
-      { ...ctx, env: { GITHUB_TOKEN: "\uFEFFghp_test\u200B " } }
+      { ...ctx, env: { NODE_ENV: "test", GITHUB_TOKEN: "\uFEFFghp_test\u200B " } }
     );
 
     expect(fetch).toHaveBeenNthCalledWith(

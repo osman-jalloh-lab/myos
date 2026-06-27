@@ -34,7 +34,7 @@ describe("handleBuildIntake", () => {
 
     await expect(handleBuildIntake("chat_1", "user_1", "Collectors")).resolves.toMatchObject({
       action: "ask",
-      answer: "Should it be ecommerce checkout, inquiry/concierge, or showcase only?",
+      answer: "What is the primary action or outcome this app should support?",
     });
 
     await expect(handleBuildIntake("chat_1", "user_1", "Inquiry and concierge")).resolves.toMatchObject({
@@ -54,7 +54,7 @@ describe("handleBuildIntake", () => {
     });
     if (ready.action === "ready") {
       expect(ready.message).toContain("Audience: Collectors");
-      expect(ready.message).toContain("Mode: Inquiry and concierge");
+      expect(ready.message).toContain("Primary outcome: Inquiry and concierge");
       expect(ready.message).toContain("Style: Modern luxury");
     }
   });

@@ -33,7 +33,7 @@ export type ScheduledJobHealth = {
 
 export type ExecutorHealthRow = {
   name: string;
-  status: "Online" | "Offline" | "Busy" | "Unknown";
+  status: "Ready" | "Online" | "Offline" | "Busy" | "Unknown";
   lastRun: string | null;
   lastError: string | null;
   workerId?: string | null;
@@ -44,6 +44,8 @@ export type ExecutorHealthRow = {
   gitAvailable?: boolean | null;
   codexAvailable?: boolean | null;
   currentTask?: string | null;
+  workerApiTarget?: string | null;
+  lastFetchError?: string | null;
   capabilities?: string[];
 };
 
@@ -106,6 +108,15 @@ type LocalWorkerHeartbeatRow = {
   codexAvailable: number | boolean | null;
   currentTask: string | null;
   lastError: string | null;
+  workerApiTarget: string | null;
+  lastFetchError: string | null;
+  hermesAgentAvailable: number | boolean | null;
+  hermesAgentPath: string | null;
+  hermesAgentVersion: string | null;
+  hermesAgentAuthConfigured: number | boolean | null;
+  hermesAgentModelConfigured: number | boolean | null;
+  lastHermesAgentRun: string | null;
+  lastHermesAgentError: string | null;
 };
 
 type AgentRunRow = {
@@ -262,6 +273,13 @@ function safeProviderError(error: unknown): string {
     .slice(0, 280);
 }
 
+/** Remove copy/paste artifacts that are invalid in HTTP header values. */
+export function cleanProviderCredential(value: string | undefined): string {
+  return (value ?? "")
+    .replace(/[\uFEFF\u200B-\u200D\u2060]/g, "")
+    .replace(/^[\u0000-\u0020\u007F-\u009F]+|[\u0000-\u0020\u007F-\u009F]+$/g, "");
+}
+
 function providerRow(params: {
   provider: string;
   env: string[];
@@ -352,9 +370,9 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
     } else if (row.provider === "Telegram") {
       result = await testJsonEndpoint(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getMe`, {});
     } else if (row.provider === "GitHub") {
-      result = await testJsonEndpoint("https://api.github.com/user", { headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}`, "User-Agent": "Hermes-Health-Center" } });
+      result = await testJsonEndpoint("https://api.github.com/user", { headers: { Authorization: `Bearer ${cleanProviderCredential(process.env.GITHUB_TOKEN)}`, "User-Agent": "Hermes-Health-Center" } });
     } else if (row.provider === "Vercel") {
-      result = await testJsonEndpoint("https://api.vercel.com/v2/user", { headers: { Authorization: `Bearer ${process.env.VERCEL_TOKEN}` } });
+      result = await testJsonEndpoint("https://api.vercel.com/v2/user", { headers: { Authorization: `Bearer ${cleanProviderCredential(process.env.VERCEL_TOKEN)}` } });
     } else if (row.provider === "Turso") {
       try {
         await prisma.$queryRawUnsafe("SELECT 1");
@@ -523,6 +541,10 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
   const latestLocalWorker = workerHeartbeats[0] ?? null;
   const gitAvailable = boolish(latestLocalWorker?.gitAvailable);
   const codexAvailable = boolish(latestLocalWorker?.codexAvailable);
+  const hermesAgentAvailable = boolish(latestLocalWorker?.hermesAgentAvailable);
+  const hermesAgentAuthConfigured = boolish(latestLocalWorker?.hermesAgentAuthConfigured);
+  const hermesAgentModelConfigured = boolish(latestLocalWorker?.hermesAgentModelConfigured);
+  const hermesAgentReady = hermesAgentAvailable && hermesAgentAuthConfigured && hermesAgentModelConfigured;
   const executorRows: ExecutorHealthRow[] = [
     { name: "Hermes", status: executorStatus(latestRun(runs, ["hermes"]), false, true), lastRun: iso(latestRun(runs, ["hermes"])?.createdAt), lastError: latestRun(runs, ["hermes"])?.status === "failed" ? latestRun(runs, ["hermes"])?.outputSummary ?? null : null },
     { name: "Builder", status: executorStatus(latestRun(runs, ["local_build", "hermes-local-builder"]), busyExecutors.has("hermes-local-builder"), true), lastRun: iso(latestRun(runs, ["local_build", "hermes-local-builder"])?.createdAt), lastError: latestRun(runs, ["local_build", "hermes-local-builder"])?.status === "failed" ? latestRun(runs, ["local_build", "hermes-local-builder"])?.outputSummary ?? null : null },
@@ -539,11 +561,27 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
       gitAvailable,
       codexAvailable,
       currentTask: latestLocalWorker?.currentTask ?? null,
+      workerApiTarget: latestLocalWorker?.workerApiTarget ?? null,
+      lastFetchError: latestLocalWorker?.lastFetchError ?? null,
       capabilities: latestLocalWorker ? [
         `Node ${latestLocalWorker.nodeVersion ?? "unknown"}`,
         `npm ${latestLocalWorker.npmVersion ?? "unknown"}`,
         `Git ${gitAvailable ? "available" : "missing"}`,
         `Codex ${codexAvailable ? "available" : "missing"}`,
+        `Hermes Agent ${hermesAgentAvailable ? latestLocalWorker.hermesAgentVersion ?? "available" : "missing"}`,
+      ] : [],
+    },
+    {
+      name: "Hermes Agent",
+      status: busyExecutors.has("hermes_agent") ? "Busy" : hermesAgentReady ? "Ready" : "Offline",
+      lastRun: latestLocalWorker?.lastHermesAgentRun ?? null,
+      lastError: latestLocalWorker?.lastHermesAgentError ?? (latestLocalWorker && !hermesAgentReady ? "Hermes Agent needs Nous OAuth and a selected model/provider" : null),
+      machineName: latestLocalWorker?.machineName ?? null,
+      capabilities: latestLocalWorker ? [
+        `Executable ${latestLocalWorker.hermesAgentPath ?? "missing"}`,
+        `Version ${latestLocalWorker.hermesAgentVersion ?? "unknown"}`,
+        `Nous OAuth ${hermesAgentAuthConfigured ? "configured" : "missing"}`,
+        `Model/provider ${hermesAgentModelConfigured ? "selected" : "missing"}`,
       ] : [],
     },
     { name: "Codex Executor", status: executorStatus(latestRun(runs, ["codex_cli"]), busyExecutors.has("codex_cli"), codexStatus.available), lastRun: iso(latestRun(runs, ["codex_cli"])?.createdAt), lastError: codexStatus.available ? latestRun(runs, ["codex_cli"])?.status === "failed" ? latestRun(runs, ["codex_cli"])?.outputSummary ?? null : null : codexStatus.message },

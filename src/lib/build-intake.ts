@@ -12,7 +12,7 @@ const QUESTION_ORDER: IntakeQuestion[] = ["audience", "mode", "style", "features
 
 const QUESTIONS: Record<IntakeQuestion, string> = {
   audience: "Who is the audience for this build?",
-  mode: "Should it be ecommerce checkout, inquiry/concierge, or showcase only?",
+  mode: "What is the primary action or outcome this app should support?",
   style: "What style or brand feel should it have?",
   features: "What must-have features should I include, and is there anything I should avoid?",
 };
@@ -52,7 +52,7 @@ function buildReadyPrompt(intake: NonNullable<BuildProjectContext["intake"]>): s
     "",
     "Builder intake answers:",
     `Audience: ${intake.answers.audience}`,
-    `Mode: ${intake.answers.mode}`,
+    `Primary outcome: ${intake.answers.mode}`,
     `Style: ${intake.answers.style}`,
     `Must-have features and avoidances: ${intake.answers.features}`,
     "",

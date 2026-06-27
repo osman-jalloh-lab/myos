@@ -144,13 +144,43 @@ export async function getLocalBuilderRootInfo(): Promise<LocalBuilderRootInfo> {
   };
 }
 
-export function parseLocalBuildRequest(message: string): { projectName: string; folderName: string } | null {
+export type BuildRequestAnalysis = {
+  projectName: string;
+  folderName: string;
+  appType: string;
+  isEcommerce: boolean;
+  isLuxury: boolean;
+  isJobCareer: boolean;
+  questions: string[];
+};
+
+function classifyAppType(message: string): Pick<BuildRequestAnalysis, "appType" | "isEcommerce" | "isLuxury" | "isJobCareer"> {
+  const text = message.toLowerCase();
+  const isJobCareer = /\b(job|career|application tracker|resume|interview)\b/.test(text);
+  const isEcommerce = /\b(ecommerce|e-commerce|marketplace|store|shop|checkout|cart|sell|selling)\b/.test(text);
+  const isLuxury = /\b(luxury|premium|high-end|exclusive|collector|boutique)\b/.test(text);
+  let appType = "website";
+  if (/\bpersonal productivity\b/.test(text)) appType = "personal productivity website";
+  else if (/\b(job tracker|application tracker)\b/.test(text)) appType = "job tracker app";
+  else if (isJobCareer) appType = "job/career app";
+  else if (/\brestaurant\b/.test(text)) appType = "restaurant website";
+  else if (/\bportfolio\b/.test(text)) appType = "portfolio website";
+  else if (/\b(apartment|rental|property)\b.*\b(finder|search|listing|app|website)\b|\b(apartment finder)\b/.test(text)) appType = "apartment finder app";
+  else if (/\b(watch|watches|timepiece|horology)\b/.test(text) && isEcommerce) appType = "watch marketplace";
+  else if (isEcommerce) appType = "ecommerce website";
+  else if (/\bdashboard\b/.test(text)) appType = "dashboard app";
+  else if (/\blanding page\b/.test(text)) appType = "landing page";
+  else if (/\b(web app|app)\b/.test(text)) appType = "web app";
+  return { appType, isEcommerce, isLuxury, isJobCareer };
+}
+
+export function parseLocalBuildRequest(message: string): BuildRequestAnalysis | null {
   const trimmed = message.trim();
   if (!/\b(build|create|make|start|scaffold|generate)\b/i.test(trimmed)) return null;
   if (!/\b(website|site|app|web app|landing page|project|marketplace|store|shop|archive|product|experience)\b/i.test(trimmed)) return null;
 
   const explicitName =
-    trimmed.match(/\b(?:called|named)\s+["']?([a-z0-9][a-z0-9 _-]{1,70})["']?/i)?.[1] ??
+    trimmed.match(/\b(?:called|named)\s+["'“”‘’]?([^.!?\r\n]{2,80}?)["'“”‘’]?(?=\s+(?:for|with|that|using|in)\b|[.!?]|$)/i)?.[1] ??
     trimmed.match(/\b(?:website|site|app|web app|landing page|project|marketplace|store|shop)\s+["']?([a-z0-9][a-z0-9 _-]{1,70})["']?/i)?.[1] ??
     trimmed.match(/\bbuild(?:\s+me)?\s+(?:a|an)?\s*["']?([a-z0-9][a-z0-9 _-]{1,70}?(?:website|site|app|web app|landing page|project|marketplace|store|shop|archive|product|experience))["']?(?:[.!?]|$)/i)?.[1] ??
     trimmed.match(/\b(?:build|create|make|generate)\s+(?:a|an|the)?\s*["']?([a-z0-9][a-z0-9 _-]{1,70})["']?(?:[.!?]|$)/i)?.[1];
@@ -171,7 +201,14 @@ export function parseLocalBuildRequest(message: string): { projectName: string; 
     .trim();
 
   if (!folderName) return null;
-  return { projectName, folderName };
+  const classification = classifyAppType(trimmed);
+  const hasPurpose = classification.appType !== "website" || /\bfor\s+(?:a|an|the|my|our)\s+[^.!?]{3,}/i.test(trimmed);
+  const questions = hasPurpose ? [] : [
+    `What should ${projectName} help people do?`,
+    "Who is the primary audience?",
+    "What visual style and must-have features should the first version include?",
+  ];
+  return { projectName, folderName, ...classification, questions };
 }
 
 async function ensureLocalBuilderColumns(db: Db): Promise<void> {
@@ -247,15 +284,15 @@ function packageName(projectName: string): string {
     || "hermes-local-app";
 }
 
-async function loadWebsiteBuilderSkills(): Promise<string> {
+async function loadWebsiteBuilderSkills(analysis: BuildRequestAnalysis): Promise<string> {
   const root = path.join(await getLocalProjectsRoot(), "skills");
   const names = [
     "web-product-discovery",
-    "luxury-ui-design",
-    "ecommerce-build",
     "interaction-design",
     "frontend-qa",
     "visual-polish-review",
+    ...(analysis.isEcommerce ? ["ecommerce-build"] : []),
+    ...(analysis.isLuxury ? ["luxury-ui-design"] : []),
   ];
   const files = await Promise.all(names.map(async (name) => {
     const content = await readFile(path.join(root, name, "SKILL.md"), "utf8").catch(() => "");
@@ -275,8 +312,17 @@ async function loadBuilderKnowledgeContext(projectName: string, message: string)
   const cards = await loadAgentKnowledgeContext("builder").catch(() => []);
   if (!cards.length) return "No Builder knowledge cards loaded.";
 
-  const text = `${projectName} ${message}`.toLowerCase();
-  const scored = cards.map((card) => {
+  const analysis = classifyAppType(`${projectName} ${message}`);
+  const text = `${projectName} ${message} ${analysis.appType}`.toLowerCase();
+  const eligible = cards.filter((card) => {
+    const tags = Array.isArray(card.frontmatter.tags) ? card.frontmatter.tags.map((tag) => String(tag).toLowerCase()) : [];
+    const haystack = `${card.path} ${tags.join(" ")}`.toLowerCase();
+    if (/luxury|chrono/.test(haystack) && !analysis.isLuxury) return false;
+    if (/ecommerce|marketplace/.test(haystack) && !analysis.isEcommerce) return false;
+    if (/\b(job|career)\b/.test(haystack) && !analysis.isJobCareer) return false;
+    return card.path.startsWith("design/") || card.path.startsWith("skills/") || card.path.startsWith("preferences/");
+  });
+  const scored = eligible.map((card) => {
     const haystack = `${card.path} ${JSON.stringify(card.frontmatter)} ${card.body}`.toLowerCase();
     const score = text.split(/\W+/).filter((token) => token.length > 3 && haystack.includes(token)).length;
     const builderTag = Array.isArray(card.frontmatter.tags) && card.frontmatter.tags.includes("builder") ? 2 : 0;
@@ -284,7 +330,7 @@ async function loadBuilderKnowledgeContext(projectName: string, message: string)
   });
 
   return scored
-    .filter((entry) => entry.score > 0 || ["preferences", "skills", "policies"].some((part) => entry.card.path.startsWith(`${part}/`)))
+    .filter((entry) => entry.score > 0 || ["preferences", "skills"].some((part) => entry.card.path.startsWith(`${part}/`)) || /accessibility|qa|responsive|principles|typography|spacing/.test(entry.card.path))
     .sort((a, b) => b.score - a.score || a.card.path.localeCompare(b.card.path))
     .slice(0, 8)
     .map((entry) => summarizeKnowledgeCard(entry.card))
@@ -292,32 +338,22 @@ async function loadBuilderKnowledgeContext(projectName: string, message: string)
 }
 
 async function createAthenaResearchBrief(projectName: string, message: string): Promise<string> {
-  const lower = `${projectName} ${message}`.toLowerCase();
-  const isLuxuryWatch = /\b(watch|watches|chrono|timepiece|horology)\b/.test(lower);
-  const isJobTracker = /\b(job|application|applicant|interview|resume|tracker|jobflow)\b/.test(lower);
-  const skillSource = await loadWebsiteBuilderSkills();
+  const parsed = parseLocalBuildRequest(message);
+  const analysis: BuildRequestAnalysis = parsed ?? { projectName, folderName: projectName, ...classifyAppType(message), questions: [] };
+  const skillSource = await loadWebsiteBuilderSkills(analysis);
   const builderKnowledge = await loadBuilderKnowledgeContext(projectName, message);
-  const audience = isLuxuryWatch
-    ? "Collectors, style-conscious professionals, gift buyers, and first-time luxury watch shoppers who want trust, provenance, and a refined browsing experience."
-    : isJobTracker
-    ? "Active job seekers, students, and career switchers who need a focused operating system for applications, interviews, reminders, and notes."
-    : "Visitors who need a clear promise, quick proof, and a polished path from interest to action.";
-  const inspiration = isLuxuryWatch
-    ? "Borrow broad patterns from premium marketplaces: strong hero curation, trust markers, editorial collection cards, concierge-style CTAs, and product provenance cues. Do not copy any competitor page structure, styling, copy, or product presentation exactly."
-    : "Use broad category conventions only: immediate value proposition, proof points, concise feature sections, and clear CTAs. Keep the layout original.";
-  const visualStyle = isLuxuryWatch
-    ? "Modern luxury with deep charcoal, warm metallic accents, clean serif headings, restrained spacing, and high-contrast product staging created with CSS shapes or generated-safe placeholders."
-    : isJobTracker
-    ? "Premium dark productivity dashboard with Linear, Vercel, and Notion cues: compact panels, crisp borders, subtle gradients, dense but calm tables, and stateful controls."
-    : "Sophisticated, responsive, and original, with restrained color contrast, strong typography, and clear hierarchy.";
-  const sections = isLuxuryWatch
-    ? "Hero with marketplace promise, curated collection strip, authentication/trust section, editorial buying guidance, seller concierge CTA, and a final start/browse action."
-    : isJobTracker
-    ? "Dashboard, applications list, pipeline board, interview schedule, follow-up reminders, notes, analytics cards, search/filter, add application form, and status update controls."
-    : "Hero, proof band, feature sections, audience benefits, CTA, and lightweight footer.";
+  const scope = analysis.isEcommerce
+    ? "Include only commerce behavior supported by the request, such as catalog, cart, checkout, inquiry, or marketplace flows."
+    : analysis.isJobCareer
+    ? "Prioritize application, interview, follow-up, status, and career workflow needs that are actually requested."
+    : `Design the information architecture and interactions appropriate for a ${analysis.appType}.`;
 
   return [
     `Hermes website builder skill workflow for ${projectName}`,
+    `Project name: ${projectName}`,
+    `App type: ${analysis.appType}`,
+    `Questions asked: ${analysis.questions.length ? analysis.questions.join(" | ") : "none; the request supplied enough direction"}`,
+    `Questions answered from request: ${analysis.questions.length ? "pending" : message}`,
     "",
     "Loaded local skill files:",
     skillSource.split("\n").filter((line) => line.startsWith("## ")).map((line) => `- ${line.replace(/^## /, "")}`).join("\n"),
@@ -325,28 +361,13 @@ async function createAthenaResearchBrief(projectName: string, message: string): 
     "Loaded Builder knowledge cards:",
     builderKnowledge,
     "",
-    "Clarifying questions if prompt is vague:",
-    "- Luxury, affordable, vintage, or general marketplace?",
-    "- Show pricing, hide pricing, or mix inquiry-only listings?",
-    "- Should it feel ecommerce, editorial, portfolio, or concierge-led?",
-    "- Is cart/demo checkout required for this phase?",
-    "- Any style references, brands to avoid copying, or content constraints?",
+    `Product brief: Build ${projectName} as a ${analysis.appType}. Do not infer ecommerce, marketplace, luxury, watches, or a dark visual theme unless the request explicitly calls for them.`,
     "",
-    `Product brief: Audience: ${audience} Business goal: convert visitors into confident shoppers or qualified inquiries. Pages/sections: homepage, shop/catalog, saved/compare workspace, product detail, trust/concierge CTA. Tone: specific, premium, useful, and original.`,
+    `Feature plan: ${scope} Use the user's terminology and domain; do not recycle content from unrelated example projects.`,
     "",
-    `Design brief: ${visualStyle} Use distinctive typography, restrained motion, deliberate spacing, responsive density, and CSS-created or generated-safe visuals.`,
+    "Build plan: Use Next.js App Router and TypeScript by default. Create a useful first version with working requested interactions, responsive behavior, semantic HTML, and visible focus states.",
     "",
-    `Competitor/inspiration patterns: ${inspiration}`,
-    "",
-    `Feature plan: ${sections} Include product cards, filters, detail views, saved items, compare behavior, empty states, and demo checkout or concierge actions when relevant.`,
-    "",
-    "Build plan: Generate a real app surface, not only a landing page. Use local component state for filters/modals and localStorage for saved/compare interactions. Keep routes, anchors, buttons, and responsive behavior testable.",
-    "",
-    "QA checklist: npm run build passes; main buttons work; navigation works; filters work; save/compare persists; detail view opens/closes; mobile layout does not overlap; app feels like a real product; no copied assets.",
-    "",
-    "Image/asset direction: Do not scrape copyrighted product images. For v1, use original CSS gradients, abstract watch/product placeholders, licensed assets, or generated-safe imagery. If real images are later used, store source, credit, and license notes with the project.",
-    "",
-    "Risks/copyright notes: Avoid brand logos, trademark-heavy claims, copied catalog text, copied product photography, or layouts that are recognizably cloned from a competitor. Keep copy original and make provenance/authentication claims conservative until backed by real operations.",
+    "QA checklist: npm run build passes; requested content and controls work; responsive layout does not overlap; accessibility checks pass; no dead buttons or unrelated domain content.",
   ].join("\n");
 }
 
@@ -997,6 +1018,92 @@ function buildCodexImprovementPrompt(params: {
   ].join("\n");
 }
 
+export async function buildHermesAgentExecutionPrompt(userId: string, projectId: string, userRequest: string): Promise<{ projectName: string; folder: string; prompt: string; qaChecklist: string; requiresNextContract: boolean; appType: string; questions: string[]; cardsLoaded: string[] }> {
+  const db = getDb();
+  const project = await findLocalBuildProject(db, userId, projectId);
+  const { projectName, folder } = await resolveProjectFolder(project);
+  const effectiveRequest = rowString(project.latestInstruction) || userRequest;
+  const analysis = parseLocalBuildRequest(effectiveRequest) ?? { projectName, folderName: projectName, ...classifyAppType(effectiveRequest), questions: [] };
+  const knowledgeContext = await loadBuilderKnowledgeContext(projectName, effectiveRequest);
+  const cardsLoaded = knowledgeContext.split(/\r?\n/).map((line) => line.match(/^- ([^:]+):/)?.[1]).filter((value): value is string => Boolean(value));
+  const shellFolder = folder.replace(/^([A-Za-z]):\\/, (_, drive: string) => `/${drive.toLowerCase()}/`).replace(/\\/g, "/");
+  const checklist = parseQaChecklist(project.localQaChecklist) ?? [];
+  const qaChecklist = checklist.length
+    ? checklist.map((item) => `- [${item.status}] ${item.label}: ${item.detail}`).join("\n")
+    : [
+      "- npm run build passes",
+      "- Requested content and interactions are present",
+      "- Layout works on mobile and desktop",
+      "- Buttons and links have working behavior",
+      "- Accessibility labels, focus states, and contrast are reasonable",
+    ].join("\n");
+  const explicitAlternateFramework = /\b(?:using|with|as)\s+(?:a\s+)?(?:vite|create react app|cra|plain html|astro|remix|svelte|vue)\b/i.test(userRequest);
+  const requiresNextContract = !explicitAlternateFramework;
+
+  return {
+    projectName,
+    folder,
+    qaChecklist,
+    requiresNextContract,
+    appType: analysis.appType,
+    questions: analysis.questions,
+    cardsLoaded,
+    prompt: [
+      "You are Nous Research Hermes Agent acting only as Parawi's coding executor.",
+      "Parawi is the orchestrator. Follow this execution packet exactly and do not broaden scope.",
+      "",
+      "Hard safety constraints:",
+      `- Work only inside this project folder: ${shellFolder}`,
+      `- Your terminal uses Git Bash. Its exact project path is: ${shellFolder}`,
+      `- If a command needs an explicit directory, use cd "${shellFolder}". Never pass the Windows backslash path to bash.`,
+      "- The worker has already set this project as your terminal working directory. Prefer relative paths from `.`.",
+      "- Never read, create, edit, rename, delete, or print any .env file or secret.",
+      "- Never access the parent HermesProject folder or the main Parawi repository.",
+      "- Never commit, push, deploy, or use Git remotes.",
+      "- Never delete a folder.",
+      "- Run commands only with this project folder as the working directory.",
+      "- Create or edit only files needed for this build.",
+      "",
+      "Parawi Local App Contract:",
+      ...(requiresNextContract ? [
+        "- Build a Next.js App Router application only.",
+        "- Use TypeScript.",
+        "- Required files: src/app/page.tsx, src/app/layout.tsx, src/app/globals.css.",
+        "- package.json must depend on next, react, and react-dom and define `build` as `next build`.",
+        "- npm run build must pass before completion.",
+        "- Do not create Vite, Create React App, plain-HTML, or other framework scaffolding.",
+        "- Do not create vite.config.*, root index.html, src/main.*, or react-scripts configuration.",
+        "- If an incompatible scaffold already exists, replace its app files with this Next.js App Router contract without deleting folders.",
+      ] : [
+        "- The user explicitly requested a non-default framework; honor that request while keeping all safety constraints.",
+      ]),
+      "",
+      "User request:",
+      userRequest || rowString(project.latestInstruction) || "No request recorded.",
+      "",
+      "Builder plan / research brief:",
+      rowString(project.localResearchBrief) || "No Builder plan recorded.",
+      "",
+      "Knowledge Cards:",
+      knowledgeContext || "No relevant Knowledge Cards loaded.",
+      "",
+      "Fugu review:",
+      rowString(project.localDesignReview) || "No Fugu review recorded.",
+      rowString(project.localPolishReview) || "No Fugu polish review recorded.",
+      "",
+      "QA checklist:",
+      qaChecklist,
+      "",
+      "Project folder:",
+      shellFolder,
+      "",
+      requiresNextContract
+        ? "Implement the request under the Parawi Local App Contract. Do not push or deploy. Finish with a concise summary of files changed."
+        : "Implement the explicitly requested framework. Do not push or deploy. Finish with a concise summary of files changed.",
+    ].join("\n"),
+  };
+}
+
 function qaItem(key: string, label: string, passed: boolean, detail: string): LocalBuilderQaItem {
   return { key, label, status: passed ? "passed" : "failed", detail };
 }
@@ -1194,7 +1301,7 @@ async function evaluateLocalBuilderQa(project: Record<string, unknown>, folder: 
 
   const failed = checklist.filter((item) => item.status === "failed");
   const summary = failed.length
-    ? `QA failed: ${failed.map((item) => item.label).join(", ")}.`
+    ? `QA review pending: ${failed.map((item) => item.label).join(", ")}.`
     : "QA passed: build, interaction, responsive, and polish gates are satisfied.";
 
   return {
@@ -1296,6 +1403,9 @@ export async function runLocalFuguDesignReview(userId: string, projectId: string
 export async function prepareLocalBuildProject(userId: string, message: string): Promise<LocalBuildProject | null> {
   const parsed = parseLocalBuildRequest(message);
   if (!parsed) return null;
+  if (parsed.questions.length) {
+    throw new Error(`Clarification required before building ${parsed.projectName}: ${parsed.questions.join(" ")}`);
+  }
 
   const root = await getLocalProjectsRoot();
   if (!(await exists(root))) {
@@ -1433,7 +1543,8 @@ export async function queueLocalBuilderWorkerTask(
   userId: string,
   action: string,
   message: string,
-  projectId?: string
+  projectId?: string,
+  assignedExecutor: "local_worker" | "hermes_agent" = "local_worker"
 ): Promise<LocalBuildProject | null> {
   const db = getDb();
   await ensureLocalBuilderColumns(db);
@@ -1454,6 +1565,9 @@ export async function queueLocalBuilderWorkerTask(
   } else {
     const parsed = parseLocalBuildRequest(message);
     if (!parsed) return null;
+    if (parsed.questions.length) {
+      throw new Error(`Clarification required before building ${parsed.projectName}: ${parsed.questions.join(" ")}`);
+    }
     projectName = parsed.projectName;
     localFolderPath = joinLocalProjectPath(await getLocalProjectsRoot(), parsed.folderName);
 
@@ -1495,15 +1609,15 @@ export async function queueLocalBuilderWorkerTask(
       "Run this from the local worker; serverless runtime must not execute local filesystem or process actions.",
     ].filter(Boolean).join("\n").slice(0, 2000),
     priority: action === "prepare" ? "medium" : "high",
-    assignedExecutor: "local_worker",
+    assignedExecutor,
     projectId: resolvedProjectId,
-    initialLog: "route=local_worker_queue reason=serverless_cannot_write_local_files. Queued by Vercel/serverless boundary for local worker execution.",
+    initialLog: `route=local_worker_queue executor=${assignedExecutor} reason=serverless_cannot_write_local_files. Queued for local execution.`,
   });
 
   const log = `${rowString(project?.localBuildLog) || ""}\nQueued ${action} for local worker task ${task.id}.\nServerless runtime did not touch ${localFolderPath}.`.trim();
   await db.execute({
     sql: `UPDATE Project SET status = 'queued_for_local_worker', latestInstruction = ?, assignedAgent = ?, localFolderPath = ?, localBuildLog = ?, localBuildError = NULL, updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
-    args: [message.slice(0, 500), "local_worker", localFolderPath, log.slice(-12000), resolvedProjectId, userId],
+    args: [message.slice(0, 500), assignedExecutor, localFolderPath, log.slice(-12000), resolvedProjectId, userId],
   });
 
   const currentTask = `${queuedActionLabel(action)} for ${projectName}`;
@@ -1515,8 +1629,8 @@ export async function queueLocalBuilderWorkerTask(
       userId,
       currentTask,
       `Queued for local worker task ${task.id}`,
-      "local_worker",
-      "Local worker should claim and execute this task.",
+      assignedExecutor,
+      `Local worker should claim and launch ${assignedExecutor}.`,
     ],
   }).catch(() => undefined);
 
@@ -1693,10 +1807,11 @@ export async function runLocalBuilderQa(userId: string, projectId: string): Prom
   }
 
   const passed = qa.status === "qa_passed";
-  const finalStatus = passed ? "completed" : "qa_failed";
+  const finalStatus = passed ? "completed" : "qa_pending";
+  const displayedQaStatus = passed ? "qa_passed" : "qa_pending";
   await db.execute({
     sql: `UPDATE Project SET status = ?, localQaStatus = ?, localQaChecklist = ?, localBuildLog = ?, localBuildError = ?, updatedAt = datetime('now') WHERE id = ?`,
-    args: [finalStatus, qa.status, JSON.stringify(qa.checklist), log.slice(-12000), passed ? null : qa.summary, projectId],
+    args: [finalStatus, displayedQaStatus, JSON.stringify(qa.checklist), log.slice(-12000), null, projectId],
   });
 
   await db.execute({
@@ -1724,14 +1839,14 @@ export async function runLocalBuilderQa(userId: string, projectId: string): Prom
     currentTask: `QA checklist for ${projectName}`,
     taskId: crypto.randomUUID(),
     buildLog: log.slice(-12000),
-    buildError: passed ? null : qa.summary,
+    buildError: null,
     localDevUrl: rowString(project.localDevUrl) || null,
     localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
     researchBrief: rowString(project.localResearchBrief) || null,
     designReview: rowString(project.localDesignReview) || null,
     polishReview: rowString(project.localPolishReview) || null,
     designScore: rowNumber(project.designScore),
-    qaStatus: qa.status,
+    qaStatus: displayedQaStatus,
     qaChecklist: qa.checklist,
   };
 }

@@ -3,6 +3,9 @@ import crypto from "node:crypto";
 
 type Db = ReturnType<typeof createClient>;
 
+export const EXECUTOR_TYPES = ["hermes", "local_worker", "hermes_agent", "codex_cli"] as const;
+export type ExecutorType = typeof EXECUTOR_TYPES[number];
+
 export type ExecutionQueueStatus =
   | "queued"
   | "planning"
@@ -19,7 +22,7 @@ export type ExecutionQueueTask = {
   description: string;
   status: ExecutionQueueStatus;
   priority: string;
-  assignedExecutor: string;
+  assignedExecutor: ExecutorType | string;
   projectId: string | null;
   createdAt: string;
   updatedAt: string;

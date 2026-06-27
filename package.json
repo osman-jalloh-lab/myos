@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "worker:local": "tsx scripts/hermes-local-worker.ts",
+    "test:hermes-agent:queue": "tsx scripts/queue-hermes-agent-test.ts",
     "worker:install-startup": "powershell -ExecutionPolicy Bypass -File scripts/install-hermes-local-worker-startup.ps1",
     "worker:uninstall-startup": "powershell -ExecutionPolicy Bypass -File scripts/install-hermes-local-worker-startup.ps1 -Uninstall",
     "db:generate": "prisma generate",
