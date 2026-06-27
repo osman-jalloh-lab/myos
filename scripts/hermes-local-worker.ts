@@ -419,7 +419,7 @@ async function claimTask(db: Client): Promise<QueueTask | null> {
   return update.rowsAffected > 0 ? task : null;
 }
 
-async function updateTask(db: Client, task: QueueTask, params: { status?: string; result?: string | null; error?: string | null; log?: string }): Promise<void> {
+async function updateTask(db: Client, task: QueueTask, params: { status?: string; result?: string | null; error?: string | null; log?: string; files?: string[] }): Promise<void> {
   const current = await db.execute({ sql: `SELECT logs FROM AgentTask WHERE id = ? LIMIT 1`, args: [task.id] });
   const existingLogs = typeof (current.rows[0] as Record<string, unknown> | undefined)?.logs === "string"
     ? String((current.rows[0] as Record<string, unknown>).logs)
@@ -444,6 +444,10 @@ async function updateTask(db: Client, task: QueueTask, params: { status?: string
   if (params.log) {
     fields.push("logs = ?");
     args.push(appendLog(existingLogs, params.log));
+  }
+  if (params.files) {
+    fields.push("files = ?");
+    args.push(JSON.stringify(params.files.slice(0, 200)));
   }
   if (!fields.length) return;
   fields.push("updatedAt = datetime('now')");
@@ -625,13 +629,21 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
   const deletedDirectories = [...beforeDirectories].filter((item) => !afterDirectories.has(item));
   if (deletedDirectories.length) throw new Error(`Hermes Agent safety check failed: deleted folder(s): ${deletedDirectories.slice(0, 8).join(", ")}`);
 
+  await updateTask(db, task, { log: "Hermes Agent finished editing; verifying the app contract and generated files." });
   if (packet.requiresNextContract) await verifyParawiLocalAppContract(folder);
+  const filesCreated = await listReportableFiles(folder);
+  await updateTask(db, task, { files: filesCreated, log: `Files created or updated: ${filesCreated.length}.` });
 
   const packagePath = path.join(folder, "package.json");
   let buildOutput = "No package.json found; npm build skipped.";
   if (existsSync(packagePath)) {
+    await updateTask(db, task, { log: "Dependencies install started." });
     const installOutput = existsSync(path.join(folder, "node_modules")) ? "Dependencies already present." : await runNpm(folder, ["install"], 10 * 60_000);
-    buildOutput = `${installOutput}\n${await runNpm(folder, ["run", "build"], 10 * 60_000)}`.trim();
+    await updateTask(db, task, { log: "Dependencies installed successfully." });
+    await updateTask(db, task, { log: "npm run build started." });
+    const npmBuildOutput = await runNpm(folder, ["run", "build"], 10 * 60_000);
+    await updateTask(db, task, { log: "npm run build passed." });
+    buildOutput = `${installOutput}\n${npmBuildOutput}`.trim();
   }
 
   await db.execute({
@@ -639,10 +651,12 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
     args: [`Installing: passed\nBuilding: passed\n${buildOutput}`, task.projectId, task.userId],
   });
 
+  await updateTask(db, task, { log: "Parawi QA checklist started." });
   await builder.runLocalBuilderQa(task.userId, task.projectId);
+  await updateTask(db, task, { log: "Browser QA and preview startup started." });
   const qa = await builder.startPreviewAndRunBrowserQa(task.userId, task.projectId);
   const passed = qa.qaStatus === "qa_passed";
-  const filesCreated = await listReportableFiles(folder);
+  await updateTask(db, task, { log: `Browser QA ${passed ? "passed" : "needs review"}; preview ${qa.localDevUrl ? "started" : "unavailable"}.` });
   const summary = [
     `Hermes Agent completed ${packet.projectName}.`,
     `Project name: ${packet.projectName}`,

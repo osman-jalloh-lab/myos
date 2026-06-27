@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import BuilderOffice from "./BuilderOffice";
+import LiveBuildConsole from "./LiveBuildConsole";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -659,7 +660,7 @@ function OverviewPanel({
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <LiveActivityFeed items={liveActivity} />
           <ActivitySection runs={runs} builds={builds} projects={projects} skills={skills} />
-          <CompactHermesConsole initialMessages={chatMessages.filter((m) => m.channel !== "telegram").slice(-8)} />
+          <LiveBuildConsole />
         </div>
       </div>
     </div>
