@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import ProjectInspector from "./ProjectInspector";
+import { diagnoseBuildFailure } from "@/lib/build-failure-diagnostics";
+import { redactBuildText } from "@/lib/live-build-console";
 
 type Artifact = { type: string; title: string; url?: string; content?: string; metadata?: Record<string, unknown> };
 type QaItem = { key: string; label: string; status: "passed" | "failed" | "skipped"; detail: string };
@@ -318,8 +321,9 @@ export default function BuilderOffice() {
   const qaSummary = project ? summarizeQa(project) : null;
   const build = builds[0];
   const files = result?.artifacts.filter((artifact) => artifact.type === "file") ?? [];
-  const firstError = requestError
+  const rawFirstError = requestError
     ?? (qaSummary?.build === "failed" ? result?.toolCalls.find((call) => call.error)?.error ?? (result?.status === "failed" ? result.answer : project?.buildError ?? null) : null);
+  const firstError = rawFirstError ? redactBuildText(diagnoseBuildFailure([rawFirstError, project?.buildError]).exactError) : null;
   const busy = executing || generating || reviewing || Boolean(managing);
   const displayStatus = managing ? "working" : reviewing ? "Reviewing" : generating ? "Generating" : executing ? "preparing" : result?.project?.status ?? result?.status ?? (firstError ? "failed" : "ready");
   const latestLog = runs.find((run) => run.agentName === "hermes-local-builder") ?? runs.find((run) => run.agentName === "hermes-execution");
@@ -400,6 +404,7 @@ export default function BuilderOffice() {
           {project ? <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}><strong style={{ color: "#F1F4FB" }}>{project.projectName}</strong>{project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}{copiedPath && <span style={{ color: "#34D399" }}>Folder path copied.</span>}{project.route && <span>{project.route}</span>}{formatDate(project.createdAt) && <span>Created: {formatDate(project.createdAt)}</span>}{project.currentTask && <span>Current task: {project.currentTask}</span>}<span>{project.taskCounts.done}/{project.taskCounts.total} tasks done</span><div><span style={badge(qaSummary?.build === "passed" && project.status === "qa_failed" ? "qa_pending" : project.status)}>{qaSummary?.build === "passed" && project.status === "qa_failed" ? "build passed / QA pending" : project.status.replace(/_/g, " ")}</span></div></div> : <div style={{ color: "#4B5563", fontSize: 12 }}>No project state yet.</div>}
           {projects.length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 12, paddingTop: 10, borderTop: "1px solid #28324A" }}>{projects.slice(0, 6).map((item) => <a key={item.id} href={`/command-center?liveBuild=${encodeURIComponent(item.id)}#live-build-console`} style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "#60A5FA", fontSize: 11, textDecoration: "none" }}><span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.projectName}</span><strong>View Live Build</strong></a>)}</div>}
         </div>
+        {project && <ProjectInspector projectId={project.id} />}
         {project && <LocalPreviewPanel project={project} />}
         <div style={card}>
           <div style={{ color: "#E879F9", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Athena / Fugu Brief Panel</div>

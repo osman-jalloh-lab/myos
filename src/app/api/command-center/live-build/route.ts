@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@libsql/client";
 import { auth } from "@/lib/auth";
 import { readSessionContextState } from "@/lib/memory-context";
+import { updateExecutionQueueTask } from "@/lib/execution-queue";
+import { diagnoseBuildFailure } from "@/lib/build-failure-diagnostics";
 import {
   buildStatusMeaning,
   extractBuildFiles,
@@ -85,7 +87,7 @@ export async function GET(request: Request) {
       } : null,
       timeline: collecting ? [step("intake", "Intake", "complete", null), step("clarifying", "Clarifying Questions", "running", null)] : [],
       logs: [], files: [], preview: null,
-      worker: { status: workerStatus, lastHeartbeat: heartbeatAt || null },
+      worker: { status: workerStatus, lastHeartbeat: heartbeatAt || null }, inspector: null,
     };
     return NextResponse.json(empty);
   }
@@ -131,6 +133,27 @@ export async function GET(request: Request) {
     step("preview", "Preview Started", previewUrl ? text(selected.localPreviewStatus) === "stale" ? "failed" : "complete" : "pending", qts(/preview.*started/i) ?? (previewUrl ? updatedAt : null)),
     step("finish", failed ? "Failed" : "Completed", failed ? "failed" : active ? "pending" : "complete", failed || !active ? updatedAt : null),
   ];
+  const diagnostic = failed ? diagnoseBuildFailure([
+    text(selected.localBuildError),
+    text(queueTask?.error),
+    ...queueTasks.map((row) => text(row.error)),
+    ...queueLogs.slice().reverse(),
+    ...buildLines.slice().reverse(),
+  ]) : null;
+  const diagnosticStep = diagnostic ? ({
+    filesystem: "Files Created",
+    local_worker: "Worker Claimed Task",
+    hermes_agent: "Hermes Agent Running",
+    github: "Repository Access",
+    vercel: "Deployment",
+    build: "Build Running",
+    qa: "Browser QA Running",
+    unknown: "Unknown step",
+  } as Record<string, string>)[diagnostic.category] : null;
+  const runningStep = timeline.find((item) => item.status === "running");
+  const failedStep = timeline.find((item) => item.status === "failed");
+  const pendingStep = timeline.find((item) => item.status === "pending");
+  const completedSteps = timeline.filter((item) => item.status === "complete");
 
   const logs: LiveBuildLog[] = [];
   for (const line of queueLogs) {
@@ -169,6 +192,37 @@ export async function GET(request: Request) {
     files,
     preview: previewUrl ? { url: previewUrl, status: text(selected.localPreviewStatus) || "online", manualCommand: text(selected.localFolderPath) ? `cd "${redactBuildText(text(selected.localFolderPath))}"\nnpm run dev` : null } : null,
     worker: { status: workerStatus, lastHeartbeat: heartbeatAt || null },
+    inspector: {
+      currentStage: text(selected.status) || projectStatus,
+      currentStep: diagnosticStep ?? runningStep?.label ?? failedStep?.label ?? pendingStep?.label ?? "Completed",
+      lastSuccessfulStep: completedSteps.at(-1)?.label ?? null,
+      lastFailedStep: diagnosticStep ?? failedStep?.label ?? null,
+      exactError: diagnostic ? redactBuildText(diagnostic.exactError) : null,
+      failureCategory: diagnostic?.category ?? null,
+      canRetry: queueTasks.some((row) => text(row.status) === "failed"),
+    },
   };
   return NextResponse.json(result);
+}
+
+export async function POST(request: Request) {
+  const session = await auth();
+  if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const body = await request.json().catch(() => null) as { action?: string; projectId?: string } | null;
+  if (body?.action !== "retry" || !body.projectId) return NextResponse.json({ error: "action=retry and projectId are required" }, { status: 400 });
+  const client = db();
+  const failed = await client.execute({
+    sql: `SELECT id FROM AgentTask WHERE userId = ? AND project_id = ? AND status = 'failed' ORDER BY updatedAt DESC LIMIT 1`,
+    args: [session.user.id, body.projectId],
+  });
+  const taskId = text((failed.rows[0] as unknown as Row | undefined)?.id);
+  if (!taskId) return NextResponse.json({ error: "No failed execution task is available to retry. View logs for the recorded failure." }, { status: 409 });
+  const task = await updateExecutionQueueTask(session.user.id, taskId, { status: "queued", error: null, result: null, log: "Retry requested from Project Inspector." });
+  if (task) {
+    await client.execute({
+      sql: `UPDATE Project SET status = 'queued_for_local_worker', localBuildError = NULL, updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
+      args: [body.projectId, session.user.id],
+    });
+  }
+  return NextResponse.json({ ok: Boolean(task), task });
 }

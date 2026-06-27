@@ -36,6 +36,15 @@ export type LiveBuildConsoleData = {
   files: string[];
   preview: null | { url: string; status: string; manualCommand: string | null };
   worker: { status: "online" | "offline" | "stale"; lastHeartbeat: string | null };
+  inspector: {
+    currentStage: string;
+    currentStep: string;
+    lastSuccessfulStep: string | null;
+    lastFailedStep: string | null;
+    exactError: string | null;
+    failureCategory: string | null;
+    canRetry: boolean;
+  } | null;
 };
 
 export function redactBuildText(value: string): string {
