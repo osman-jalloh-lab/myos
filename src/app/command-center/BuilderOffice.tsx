@@ -16,6 +16,7 @@ type Project = {
   buildError?: string | null;
   localDevUrl?: string | null;
   localDevPid?: number | null;
+  previewStatus?: "online" | "offline" | "stale" | null;
   researchBrief?: string | null;
   designReview?: string | null;
   polishReview?: string | null;
@@ -36,7 +37,7 @@ type Run = { id: string; agentName: string; outputSummary: string | null; status
 type RootInfo = { root: string; exists: boolean; projectCount: number; warning: string | null };
 type CodexStatus = { installed: boolean; available: boolean; version: string | null; message: string };
 type ProviderStatus = { provider: string; configured: boolean; status: "working" | "missing" | "invalid" | "error" | "configured_untested"; safeError: string | null };
-type ExecutorStatus = { name: string; status: "Ready" | "Online" | "Offline" | "Busy" | "Unknown"; lastError: string | null };
+type ExecutorStatus = { name: string; status: "Ready" | "Online" | "Offline" | "Stale" | "Busy" | "Unknown"; lastError: string | null };
 type BuilderHealth = { apiProviders: ProviderStatus[]; executors: ExecutorStatus[] };
 
 const card: React.CSSProperties = { background: "rgba(26,35,54,.85)", border: "1px solid #28324A", borderRadius: 16, padding: "20px 24px", backdropFilter: "blur(12px)" };
@@ -103,7 +104,8 @@ function localPreviewPort(url?: string | null): string | null {
 }
 
 function localDevServerStatus(project: Project): string {
-  if (project.status === "Dev Server Running" || project.localDevUrl) return "Dev Server Running";
+  if (project.previewStatus === "stale" || project.status === "Preview Stale") return "Preview Stale";
+  if (project.previewStatus === "online" || project.status === "Dev Server Running") return "Dev Server Running";
   if (project.status === "Dev Server Stopped") return "Dev Server Stopped";
   return "Not Started";
 }
@@ -115,6 +117,7 @@ function manualDevCommand(folder?: string | null): string | null {
 
 function LocalPreviewPanel({ project }: { project: Project }) {
   const [showLocalhostNote, setShowLocalhostNote] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
   const port = localPreviewPort(project.localDevUrl);
   const devStatus = localDevServerStatus(project);
   const command = manualDevCommand(project.localFolderPath);
@@ -140,7 +143,13 @@ function LocalPreviewPanel({ project }: { project: Project }) {
         {project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}
         {port && <span>Local port: <code>{port}</code></span>}
         {project.localDevUrl ? (
-          <span>Local Preview: <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ color: "#34D399" }}>{project.localDevUrl}</a></span>
+          <>
+            <span>Local Preview: <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ color: project.previewStatus === "stale" ? "#FBBF24" : "#34D399" }}>{project.localDevUrl}</a></span>
+            <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ ...previewAction, textDecoration: "none" }}>Open Preview</a>
+              <button type="button" onClick={() => void navigator.clipboard.writeText(project.localDevUrl ?? "").then(() => setCopiedUrl(true))} style={previewAction}>{copiedUrl ? "URL Copied" : "Copy URL"}</button>
+            </span>
+          </>
         ) : (
           <span style={{ color: "#647089" }}>Local Preview: start the dev server to create a localhost URL.</span>
         )}
@@ -157,6 +166,11 @@ function LocalPreviewPanel({ project }: { project: Project }) {
     </div>
   );
 }
+
+const previewAction: React.CSSProperties = {
+  color: "#D8DEEB", background: "rgba(40,50,74,.46)", border: "1px solid #28324A",
+  borderRadius: 8, padding: "7px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+};
 
 export default function BuilderOffice() {
   const [prompt, setPrompt] = useState("");
@@ -473,7 +487,7 @@ export default function BuilderOffice() {
               </button>
             ))}
           </div>
-          {project?.localDevUrl ? <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ display: "block", color: "#34D399", marginTop: 12, fontSize: 12 }}>View Local Preview: {project.localDevUrl}</a> : <div style={{ color: "#4B5563", marginTop: 12, fontSize: 12 }}>No local preview URL yet.</div>}
+          {project?.localDevUrl ? <a href={project.localDevUrl} target="_blank" rel="noopener" style={{ display: "block", color: project.previewStatus === "stale" ? "#FBBF24" : "#34D399", marginTop: 12, fontSize: 12 }}>Open Preview: {project.localDevUrl}</a> : <div style={{ color: "#4B5563", marginTop: 12, fontSize: 12 }}>No local preview URL yet.</div>}
         </div>
         <div style={card}>
           <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Files changed</div>

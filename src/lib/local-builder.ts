@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { runFuguDesignCritique } from "@/lib/fugu-design-critic";
 import { createExecutionQueueTask, updateExecutionQueueTask } from "@/lib/execution-queue";
 import { loadAgentKnowledgeContext, type KnowledgeCard } from "@/lib/knowledge-cards";
+import { runBrowserQa } from "@/lib/browser-qa";
 
 type Db = ReturnType<typeof createClient>;
 
@@ -22,6 +23,7 @@ export type LocalBuildProject = {
   buildError: string | null;
   localDevUrl: string | null;
   localDevPid: number | null;
+  previewStatus?: "online" | "offline" | "stale" | null;
   researchBrief: string | null;
   designReview: string | null;
   polishReview: string | null;
@@ -217,6 +219,8 @@ async function ensureLocalBuilderColumns(db: Db): Promise<void> {
   await db.execute(`ALTER TABLE Project ADD COLUMN localBuildError TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localDevUrl TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localDevPid INTEGER`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localPreviewStatus TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localPreviewCheckedAt TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localResearchBrief TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localDesignReview TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localPolishReview TEXT`).catch(() => undefined);
@@ -764,8 +768,8 @@ async function updateProjectBuildState(db: Db, projectId: string, status: string
 
 async function updateProjectDevState(db: Db, projectId: string, status: string, url: string | null, pid: number | null, log: string): Promise<void> {
   await db.execute({
-    sql: `UPDATE Project SET status = ?, localDevUrl = ?, localDevPid = ?, localBuildLog = ?, localBuildError = NULL, updatedAt = datetime('now') WHERE id = ?`,
-    args: [status, url, pid, log.slice(-12000), projectId],
+    sql: `UPDATE Project SET status = ?, localDevUrl = ?, localDevPid = ?, localPreviewStatus = ?, localPreviewCheckedAt = datetime('now'), localBuildLog = ?, localBuildError = NULL, updatedAt = datetime('now') WHERE id = ?`,
+    args: [status, url, pid, status === "Dev Server Running" ? "online" : status === "Preview Stale" ? "stale" : "offline", log.slice(-12000), projectId],
   });
 }
 
@@ -836,6 +840,24 @@ async function logAthenaResearchRun(db: Db, projectName: string, brief: string):
     sql: `INSERT INTO AgentRun (id, agentName, inputSummary, outputSummary, modelProvider, status, createdAt) VALUES (?, ?, ?, ?, 'internal', 'completed', datetime('now'))`,
     args: [crypto.randomUUID(), ATHENA_RESEARCH_AGENT, `research_build_brief project=${projectName}`, brief.slice(0, 2000)],
   }).catch(() => undefined);
+}
+
+async function previewResponds(url: string, timeoutMs = 2_500): Promise<boolean> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), cache: "no-store" });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForPreview(url: string, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await previewResponds(url)) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`Preview did not become ready within ${Math.round(timeoutMs / 1000)} seconds: ${url}`);
 }
 
 async function logFuguRun(db: Db, projectName: string, phase: "design" | "polish", review: string): Promise<void> {
@@ -2139,7 +2161,7 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
   const project = await findLocalBuildProject(db, userId, projectId);
   const { projectName, folder, createdAt } = await resolveProjectFolder(project);
   const existing = devServers.get(projectId);
-  if (existing && !existing.child.killed) {
+  if (existing && !existing.child.killed && await previewResponds(existing.url)) {
     return {
       id: projectId,
       projectName,
@@ -2152,6 +2174,7 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
       buildError: null,
       localDevUrl: existing.url,
       localDevPid: existing.pid,
+      previewStatus: "online",
       researchBrief: rowString(project.localResearchBrief) || null,
       designReview: rowString(project.localDesignReview) || null,
       polishReview: rowString(project.localPolishReview) || null,
@@ -2175,10 +2198,22 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
   child.stderr?.on("data", (chunk) => { output = `${output}\n${String(chunk)}`.slice(-12000); });
   child.on("exit", () => {
     const current = devServers.get(projectId);
-    if (current?.child === child) devServers.delete(projectId);
+    if (current?.child === child) {
+      devServers.delete(projectId);
+      const staleLog = `${output}\nPreview process exited; preview marked stale.`.slice(-12000);
+      void updateProjectDevState(db, projectId, "Preview Stale", url, null, staleLog).catch(() => undefined);
+    }
   });
 
-  await new Promise((resolve) => setTimeout(resolve, 2500));
+  try {
+    await waitForPreview(url);
+  } catch (error) {
+    if (child.pid) await killProcessTree(child.pid).catch(() => undefined);
+    devServers.delete(projectId);
+    output = `${output}\n${error instanceof Error ? error.message : String(error)}`.slice(-12000);
+    await updateProjectDevState(db, projectId, "Preview Stale", url, null, output);
+    throw error;
+  }
   await updateProjectDevState(db, projectId, "Dev Server Running", url, child.pid ?? null, output);
   await logLocalBuilderRun(db, "completed", `local_build_start_dev project=${projectName}`, `Dev Server Running: ${url}`);
 
@@ -2194,6 +2229,7 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
     buildError: null,
     localDevUrl: url,
     localDevPid: child.pid ?? null,
+    previewStatus: "online",
     researchBrief: rowString(project.localResearchBrief) || null,
     designReview: rowString(project.localDesignReview) || null,
     polishReview: rowString(project.localPolishReview) || null,
@@ -2226,6 +2262,7 @@ export async function stopLocalDevServer(userId: string, projectId: string): Pro
     buildError: null,
     localDevUrl: null,
     localDevPid: null,
+    previewStatus: "offline",
     researchBrief: rowString(project.localResearchBrief) || null,
     designReview: rowString(project.localDesignReview) || null,
     polishReview: rowString(project.localPolishReview) || null,
@@ -2233,4 +2270,72 @@ export async function stopLocalDevServer(userId: string, projectId: string): Pro
     qaStatus: rowString(project.localQaStatus) || null,
     qaChecklist: parseQaChecklist(project.localQaChecklist),
   };
+}
+
+export async function runBrowserQaForProject(userId: string, projectId: string): Promise<LocalBuildProject> {
+  const db = getDb();
+  const project = await findLocalBuildProject(db, userId, projectId);
+  let url = rowString(project.localDevUrl);
+  if (!url || !(await previewResponds(url))) {
+    const preview = await startLocalDevServer(userId, projectId);
+    url = preview.localDevUrl ?? "";
+  }
+  if (!url) throw new Error("Browser QA requires a running local preview.");
+
+  const browserQa = await runBrowserQa(url);
+  const latest = await findLocalBuildProject(db, userId, projectId);
+  const existingChecklist = parseQaChecklist(latest.localQaChecklist) ?? [];
+  const browserKeys = new Set(browserQa.checks.map((check) => check.key));
+  const checklist = [...existingChecklist.filter((item) => !browserKeys.has(item.key)), ...browserQa.checks];
+  const staticFailed = existingChecklist.some((item) => item.status === "failed" && ["homepage_loads", "primary_buttons_clickable"].includes(item.key));
+  const qaStatus = browserQa.passed && !staticFailed ? "qa_passed" : "qa_pending";
+  const summary = browserQa.passed
+    ? `Browser QA passed at ${url}.`
+    : `Browser QA needs review at ${url}: ${browserQa.checks.filter((item) => item.status === "failed").map((item) => item.label).join(", ")}.`;
+  await db.execute({
+    sql: `UPDATE Project SET localQaStatus = ?, localQaChecklist = ?, localPreviewStatus = 'online', localPreviewCheckedAt = datetime('now'), localBuildLog = substr(coalesce(localBuildLog, '') || char(10) || ?, -12000), updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
+    args: [qaStatus, JSON.stringify(checklist), summary, projectId, userId],
+  });
+  await logLocalBuilderRun(db, browserQa.passed ? "completed" : "failed", `browser_qa project=${rowString(project.projectName)}`, summary);
+  const updated = await findLocalBuildProject(db, userId, projectId);
+  return {
+    id: projectId,
+    projectName: rowString(updated.projectName),
+    localFolderPath: rowString(updated.localFolderPath),
+    status: qaStatus,
+    createdAt: rowString(updated.createdAt) || new Date().toISOString(),
+    currentTask: `Browser QA for ${rowString(updated.projectName)}`,
+    taskId: crypto.randomUUID(),
+    buildLog: rowString(updated.localBuildLog),
+    buildError: null,
+    localDevUrl: url,
+    localDevPid: typeof updated.localDevPid === "number" ? updated.localDevPid : null,
+    previewStatus: "online",
+    researchBrief: rowString(updated.localResearchBrief) || null,
+    designReview: rowString(updated.localDesignReview) || null,
+    polishReview: rowString(updated.localPolishReview) || null,
+    designScore: rowNumber(updated.designScore),
+    qaStatus,
+    qaChecklist: checklist,
+  };
+}
+
+export async function startPreviewAndRunBrowserQa(userId: string, projectId: string): Promise<LocalBuildProject> {
+  await startLocalDevServer(userId, projectId);
+  return runBrowserQaForProject(userId, projectId);
+}
+
+export async function markDeadPreviewsStale(): Promise<number> {
+  const db = getDb();
+  await ensureLocalBuilderColumns(db);
+  const rows = await db.execute(`SELECT id, localDevUrl, localBuildLog FROM Project WHERE localDevUrl IS NOT NULL AND localPreviewStatus = 'online'`);
+  let stale = 0;
+  for (const row of rows.rows as Array<Record<string, unknown>>) {
+    const url = rowString(row.localDevUrl);
+    if (!url || await previewResponds(url)) continue;
+    const log = `${rowString(row.localBuildLog)}\nPreview health check failed; preview marked stale.`.slice(-12000);
+    await updateProjectDevState(db, rowString(row.id), "Preview Stale", url, null, log);
+    stale++;
+  }
+  return stale;
 }

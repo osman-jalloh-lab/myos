@@ -31,8 +31,9 @@ type WorkerCapabilities = {
 
 const execFileAsync = promisify(execFile);
 const POLL_MS = Number(process.env.HERMES_LOCAL_WORKER_POLL_MS ?? 15_000);
-const HEARTBEAT_MS = Number(process.env.HERMES_LOCAL_WORKER_HEARTBEAT_MS ?? 45_000);
-const WORKER_ID = process.env.HERMES_LOCAL_WORKER_ID?.trim() || `${os.hostname()}-${process.pid}`;
+const HEARTBEAT_MS = Number(process.env.HERMES_LOCAL_WORKER_HEARTBEAT_MS ?? 15_000);
+const LEASE_MS = 5 * 60_000;
+const WORKER_ID = process.env.HERMES_LOCAL_WORKER_ID?.trim() || `local-worker:${os.hostname()}:${process.pid}`;
 const LOCAL_ROOT = "C:\\Users\\osman\\OneDrive\\Desktop\\HermesProject";
 const ALLOWED_ACTIONS = new Set(["prepare", "generate", "runQa", "rebuild", "build", "npmBuild", "startDev", "stopDev"]);
 
@@ -178,6 +179,46 @@ async function ensureWorkerTables(db: Client): Promise<void> {
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN hermesAgentModelConfigured INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN lastHermesAgentRun TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN lastHermesAgentError TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE AgentTask ADD COLUMN claimed_by_worker_id TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE AgentTask ADD COLUMN lease_expires_at TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE AgentTask ADD COLUMN claimed_at TEXT`).catch(() => undefined);
+}
+
+async function recoverStaleTasks(db: Client): Promise<number> {
+  const stale = await db.execute({
+    sql: `SELECT id, logs FROM AgentTask
+          WHERE status = 'executing'
+            AND assigned_executor IN ('local_worker', 'hermes_agent')
+            AND (lease_expires_at < datetime('now')
+              OR (lease_expires_at IS NULL AND updatedAt < datetime('now', '-5 minutes')))`,
+    args: [],
+  });
+  let recovered = 0;
+  for (const row of stale.rows as Array<Record<string, unknown>>) {
+    const id = String(row.id ?? "");
+    if (!id) continue;
+    const update = await db.execute({
+      sql: `UPDATE AgentTask
+            SET status = 'queued', claimed_by_worker_id = NULL, lease_expires_at = NULL,
+                claimed_at = NULL, logs = ?, updatedAt = datetime('now')
+            WHERE id = ? AND status = 'executing'
+              AND (lease_expires_at < datetime('now')
+                OR (lease_expires_at IS NULL AND updatedAt < datetime('now', '-5 minutes')))`,
+      args: [appendLog(typeof row.logs === "string" ? row.logs : null, "Recovered after worker lease expired."), id],
+    });
+    recovered += update.rowsAffected;
+  }
+  if (recovered) console.warn(`Recovered ${recovered} stale executing task(s).`);
+  return recovered;
+}
+
+async function renewTaskLease(db: Client, taskId: string): Promise<boolean> {
+  const update = await db.execute({
+    sql: `UPDATE AgentTask SET lease_expires_at = datetime('now', '+5 minutes'), updatedAt = datetime('now')
+          WHERE id = ? AND status = 'executing' AND claimed_by_worker_id = ?`,
+    args: [taskId, WORKER_ID],
+  });
+  return update.rowsAffected > 0;
 }
 
 async function commandAvailable(command: string, args: string[]): Promise<{ available: boolean; version: string | null }> {
@@ -368,10 +409,11 @@ async function claimTask(db: Client): Promise<QueueTask | null> {
   const update = await db.execute({
     sql: `
       UPDATE AgentTask
-      SET status = 'executing', logs = ?, updatedAt = datetime('now')
+      SET status = 'executing', claimed_by_worker_id = ?, claimed_at = datetime('now'),
+          lease_expires_at = datetime('now', '+5 minutes'), logs = ?, updatedAt = datetime('now')
       WHERE id = ? AND status = 'queued' AND assigned_executor = ?
     `,
-    args: [appendLog(task.logs, `Claimed by local worker ${WORKER_ID} for ${task.assignedExecutor}.`), task.id, task.assignedExecutor],
+    args: [WORKER_ID, appendLog(task.logs, `Claimed by local worker ${WORKER_ID} for ${task.assignedExecutor}; lease ${LEASE_MS / 60_000} minutes.`), task.id, task.assignedExecutor],
   });
 
   return update.rowsAffected > 0 ? task : null;
@@ -387,6 +429,9 @@ async function updateTask(db: Client, task: QueueTask, params: { status?: string
   if (params.status) {
     fields.push("status = ?");
     args.push(params.status);
+    if (params.status !== "executing") {
+      fields.push("claimed_by_worker_id = NULL", "lease_expires_at = NULL", "claimed_at = NULL");
+    }
   }
   if (params.result !== undefined) {
     fields.push("result = ?");
@@ -403,7 +448,7 @@ async function updateTask(db: Client, task: QueueTask, params: { status?: string
   if (!fields.length) return;
   fields.push("updatedAt = datetime('now')");
   args.push(task.id);
-  await db.execute({ sql: `UPDATE AgentTask SET ${fields.join(", ")} WHERE id = ?`, args });
+  await db.execute({ sql: `UPDATE AgentTask SET ${fields.join(", ")} WHERE id = ? AND claimed_by_worker_id = ?`, args: [...args, WORKER_ID] });
 }
 
 async function updateProjectExecuting(db: Client, task: QueueTask, action: string): Promise<void> {
@@ -594,8 +639,9 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
     args: [`Installing: passed\nBuilding: passed\n${buildOutput}`, task.projectId, task.userId],
   });
 
-  const qa = await builder.runLocalBuilderQa(task.userId, task.projectId);
-  const passed = qa.status === "completed" || qa.status === "qa_passed";
+  await builder.runLocalBuilderQa(task.userId, task.projectId);
+  const qa = await builder.startPreviewAndRunBrowserQa(task.userId, task.projectId);
+  const passed = qa.qaStatus === "qa_passed";
   const filesCreated = await listReportableFiles(folder);
   const summary = [
     `Hermes Agent completed ${packet.projectName}.`,
@@ -607,6 +653,7 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
     `Files created: ${filesCreated.join(", ") || "none"}`,
     `Build: ${existsSync(packagePath) ? "passed" : "skipped (no package.json)"}`,
     `QA: ${passed ? "passed" : "review pending"}`,
+    `Preview: ${qa.localDevUrl ?? "unavailable"}`,
     !passed ? "The app was built successfully. It still needs review for accessibility, responsive layout, and polish before marking complete." : null,
     `Local preview: cd "${folder}" then run npm run dev`,
     agentOutput ? `Agent output:\n${agentOutput.slice(-4000)}` : null,
@@ -657,6 +704,10 @@ async function executeTask(db: Client, task: QueueTask): Promise<void> {
 
   if (!project) throw new Error(`No project result returned for action: ${action}`);
 
+  if (["generate", "rebuild", "build", "npmBuild"].includes(action) && task.projectId && !/failed/i.test(project.status)) {
+    project = await builder.startPreviewAndRunBrowserQa(task.userId, task.projectId);
+  }
+
   const finalStatus = taskStatusForProjectStatus(project.status);
   const result = [
     `${action} finished for ${project.projectName}.`,
@@ -680,6 +731,9 @@ async function runLoop(): Promise<void> {
   const db = createDb();
   const capabilities = await getCapabilities();
   await ensureWorkerTables(db);
+  await recoverStaleTasks(db);
+  const builder = await import("../src/lib/local-builder");
+  await builder.markDeadPreviewsStale().catch((error) => { lastError = safeError(error); });
   console.log(`Worker API Base URL: ${apiBaseUrl}`);
   await heartbeat(db, capabilities, apiBaseUrl);
 
@@ -687,7 +741,8 @@ async function runLoop(): Promise<void> {
   console.log(`Root: ${process.env.HERMES_LOCAL_PROJECTS_ROOT}`);
   console.log(`Polling every ${Math.round(POLL_MS / 1000)}s.`);
 
-  let lastHeartbeat = 0;
+  let lastHeartbeat = Date.now();
+  let lastRecovery = 0;
   let stopping = false;
   const runOnce = process.env.HERMES_LOCAL_WORKER_ONCE === "1";
   const stop = async () => {
@@ -707,6 +762,11 @@ async function runLoop(): Promise<void> {
       });
       lastHeartbeat = now;
     }
+    if (now - lastRecovery >= HEARTBEAT_MS) {
+      await recoverStaleTasks(db).catch((error) => { lastError = safeError(error); });
+      await builder.markDeadPreviewsStale().catch((error) => { lastError = safeError(error); });
+      lastRecovery = now;
+    }
 
     const task = await claimTask(db).catch((error) => {
       lastError = safeError(error);
@@ -714,6 +774,12 @@ async function runLoop(): Promise<void> {
     });
 
     if (task) {
+      const maintenance = setInterval(() => {
+        void Promise.all([
+          renewTaskLease(db, task.id),
+          heartbeat(db, capabilities, apiBaseUrl),
+        ]).catch((error) => { lastError = safeError(error); });
+      }, HEARTBEAT_MS);
       try {
         await heartbeat(db, capabilities, apiBaseUrl);
         await executeTask(db, task);
@@ -723,6 +789,7 @@ async function runLoop(): Promise<void> {
         if (task.assignedExecutor === "hermes_agent") lastHermesAgentError = lastError;
         await updateTask(db, task, { status: "failed", error: lastError, log: `Failed: ${lastError}` }).catch(() => undefined);
       } finally {
+        clearInterval(maintenance);
         currentTask = null;
         await heartbeat(db, capabilities, apiBaseUrl).catch(() => undefined);
       }

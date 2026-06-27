@@ -30,6 +30,7 @@ interface Project {
   buildError: string | null;
   localDevUrl: string | null;
   localDevPid: number | null;
+  previewStatus: "online" | "offline" | "stale" | null;
   researchBrief: string | null;
   designReview: string | null;
   polishReview: string | null;
@@ -289,7 +290,8 @@ function localPreviewPort(url: string | null | undefined): string | null {
 }
 
 function localDevServerStatus(project: Pick<Project, "status" | "localDevUrl" | "localDevPid">): string {
-  if (project.status === "Dev Server Running" || project.localDevUrl) return "Dev Server Running";
+  if (project.status === "Preview Stale") return "Preview Stale";
+  if (project.status === "Dev Server Running") return "Dev Server Running";
   if (project.status === "Dev Server Stopped") return "Dev Server Stopped";
   return "Not Started";
 }

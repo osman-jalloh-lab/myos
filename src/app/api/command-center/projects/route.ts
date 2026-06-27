@@ -69,6 +69,7 @@ export async function GET() {
         buildError: (p.localBuildError as string | null) ?? null,
         localDevUrl: (p.localDevUrl as string | null) ?? null,
         localDevPid: (p.localDevPid as number | null) ?? null,
+        previewStatus: (p.localPreviewStatus as string | null) ?? null,
         researchBrief: (p.localResearchBrief as string | null) ?? null,
         designReview: (p.localDesignReview as string | null) ?? null,
         polishReview: (p.localPolishReview as string | null) ?? null,

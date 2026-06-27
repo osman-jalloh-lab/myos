@@ -33,7 +33,7 @@ export type ScheduledJobHealth = {
 
 export type ExecutorHealthRow = {
   name: string;
-  status: "Ready" | "Online" | "Offline" | "Busy" | "Unknown";
+  status: "Ready" | "Online" | "Offline" | "Stale" | "Busy" | "Unknown";
   lastRun: string | null;
   lastError: string | null;
   workerId?: string | null;
@@ -211,6 +211,7 @@ function localWorkerStatus(heartbeat: LocalWorkerHeartbeatRow | null): ExecutorH
   if (!heartbeat) return "Unknown";
   const ageMs = Date.now() - new Date(heartbeat.lastHeartbeat).getTime();
   if (ageMs > 90 * 1000 || heartbeat.status === "offline") return "Offline";
+  if (ageMs > 45 * 1000 || heartbeat.status === "stale") return "Stale";
   return heartbeat.currentTask ? "Busy" : "Online";
 }
 
