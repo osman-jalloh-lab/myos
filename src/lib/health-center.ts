@@ -260,7 +260,7 @@ export async function logHealthSnapshot(snapshot: HealthCenterSnapshot): Promise
     ),
     logHealth(
       "api-providers",
-      snapshot.apiProviders.some((provider) => provider.status === "invalid" || provider.status === "error") ? "failure" : snapshot.apiProviders.some((provider) => provider.status === "missing") ? "warning" : "healthy",
+      aggregateProviderSeverity(snapshot.apiProviders),
       snapshot.apiProviders.map((provider) => `${provider.provider}: ${provider.status}`).join(" | ")
     ),
   ]);
@@ -277,8 +277,36 @@ function safeProviderError(error: unknown): string {
 /** Remove copy/paste artifacts that are invalid in HTTP header values. */
 export function cleanProviderCredential(value: string | undefined): string {
   return (value ?? "")
-    .replace(/[\uFEFF\u200B-\u200D\u2060]/g, "")
+    .replace(/[\uFEFF\u200B-\u200D]/g, "")
+    .trim()
     .replace(/^[\u0000-\u0020\u007F-\u009F]+|[\u0000-\u0020\u007F-\u009F]+$/g, "");
+}
+
+const SANITIZED_PROVIDER_ENV = new Set([
+  "GITHUB_TOKEN", "VERCEL_TOKEN", "FIRECRAWL_API_KEY", "SERPAPI_API_KEY",
+  "SAKANA_API_KEY", "TELEGRAM_BOT_TOKEN", "AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET",
+]);
+
+function providerCredential(name: string): string {
+  return cleanProviderCredential(process.env[name]);
+}
+
+function providerEnvConfigured(name: string): boolean {
+  return SANITIZED_PROVIDER_ENV.has(name) ? Boolean(providerCredential(name)) : hasEnv(name);
+}
+
+const OPTIONAL_PROVIDERS = new Set(["Amadeus Travel Fallback", "Google APIs"]);
+
+export function apiProviderSeverity(provider: Pick<ApiProviderHealth, "provider" | "status">): HealthSeverity {
+  if (provider.status === "working" || provider.status === "configured_untested") return "healthy";
+  if (provider.status === "missing" && OPTIONAL_PROVIDERS.has(provider.provider)) return "warning";
+  if (provider.status === "missing") return "warning";
+  return "failure";
+}
+
+function aggregateProviderSeverity(providers: ApiProviderHealth[]): HealthSeverity {
+  const severities = providers.map(apiProviderSeverity);
+  return severities.includes("failure") ? "failure" : severities.includes("warning") ? "warning" : "healthy";
 }
 
 function providerRow(params: {
@@ -290,7 +318,7 @@ function providerRow(params: {
   safeError?: string | null;
   configured?: boolean;
 }): ApiProviderHealth {
-  const configured = params.configured ?? params.env.every(hasEnv);
+  const configured = params.configured ?? params.env.every(providerEnvConfigured);
   const latest = latestHealthLog(params.runs, params.component);
   let status = params.status;
   let safeError = params.safeError ?? null;
@@ -306,7 +334,7 @@ function providerRow(params: {
     source: runtimeSource(),
     lastTested: iso(latest?.createdAt),
     status: status ?? (configured ? "configured_untested" : "missing"),
-    safeError: safeError ?? (configured ? null : `Missing ${params.env.filter((key) => !hasEnv(key)).join(", ")}`),
+    safeError: safeError ?? (configured ? null : `Missing ${params.env.filter((key) => !providerEnvConfigured(key)).join(", ")}`),
   };
 }
 
@@ -314,10 +342,10 @@ function providerComponent(provider: string): string {
   return provider.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-async function testJsonEndpoint(url: string, init: RequestInit, authErrorLabel = "provider returned authentication error"): Promise<{ status: ApiProviderStatus; safeError: string | null }> {
+async function testJsonEndpoint(url: string, init: RequestInit, authErrorLabel = "provider returned authentication error", authStatuses = [401, 403]): Promise<{ status: ApiProviderStatus; safeError: string | null }> {
   try {
     const res = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
-    if (res.status === 401 || res.status === 403) return { status: "invalid", safeError: authErrorLabel };
+    if (authStatuses.includes(res.status)) return { status: "invalid", safeError: authErrorLabel };
     if (!res.ok) return { status: "error", safeError: `Provider returned HTTP ${res.status}.` };
     return { status: "working", safeError: null };
   } catch (error) {
@@ -350,18 +378,18 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
   for (const row of rows) {
     let result: { status: ApiProviderStatus; safeError: string | null };
     if (!row.configured) {
-      result = { status: "missing", safeError: `Missing ${row.requiredEnvVars.filter((key) => !hasEnv(key)).join(", ") || "connected account"}` };
+      result = { status: "missing", safeError: `Missing ${row.requiredEnvVars.filter((key) => !providerEnvConfigured(key)).join(", ") || "connected account"}` };
     } else if (row.provider === "OpenAI") {
-      result = await testJsonEndpoint("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` } });
+      result = await testJsonEndpoint("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${cleanProviderCredential(process.env.OPENAI_API_KEY)}` } });
     } else if (row.provider === "Anthropic / Claude") {
-      result = await testJsonEndpoint("https://api.anthropic.com/v1/models", { headers: { "x-api-key": process.env.ANTHROPIC_API_KEY ?? "", "anthropic-version": "2023-06-01" } });
+      result = await testJsonEndpoint("https://api.anthropic.com/v1/models", { headers: { "x-api-key": cleanProviderCredential(process.env.ANTHROPIC_API_KEY), "anthropic-version": "2023-06-01" } });
     } else if (row.provider === "SerpAPI Google Flights") {
-      result = await testJsonEndpoint(`https://serpapi.com/account?api_key=${encodeURIComponent(process.env.SERPAPI_API_KEY ?? "")}`, {});
+      result = await testJsonEndpoint(`https://serpapi.com/account?api_key=${encodeURIComponent(providerCredential("SERPAPI_API_KEY"))}`, {}, "Invalid key or provider rejected request", [400, 401, 403]);
     } else if (row.provider === "Amadeus Travel Fallback") {
       const params = new URLSearchParams({
         grant_type: "client_credentials",
-        client_id: process.env.AMADEUS_CLIENT_ID ?? "",
-        client_secret: process.env.AMADEUS_CLIENT_SECRET ?? "",
+        client_id: providerCredential("AMADEUS_CLIENT_ID"),
+        client_secret: providerCredential("AMADEUS_CLIENT_SECRET"),
       });
       result = await testJsonEndpoint("https://test.api.amadeus.com/v1/security/oauth2/token", {
         method: "POST",
@@ -369,11 +397,11 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
         body: params.toString(),
       });
     } else if (row.provider === "Telegram") {
-      result = await testJsonEndpoint(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getMe`, {});
+      result = await testJsonEndpoint(`https://api.telegram.org/bot${providerCredential("TELEGRAM_BOT_TOKEN")}/getMe`, {});
     } else if (row.provider === "GitHub") {
-      result = await testJsonEndpoint("https://api.github.com/user", { headers: { Authorization: `Bearer ${cleanProviderCredential(process.env.GITHUB_TOKEN)}`, "User-Agent": "Hermes-Health-Center" } });
+      result = await testJsonEndpoint("https://api.github.com/user", { headers: { Authorization: `Bearer ${providerCredential("GITHUB_TOKEN")}`, "User-Agent": "Hermes-Health-Center" } });
     } else if (row.provider === "Vercel") {
-      result = await testJsonEndpoint("https://api.vercel.com/v2/user", { headers: { Authorization: `Bearer ${cleanProviderCredential(process.env.VERCEL_TOKEN)}` } });
+      result = await testJsonEndpoint("https://api.vercel.com/v2/user", { headers: { Authorization: `Bearer ${providerCredential("VERCEL_TOKEN")}` } });
     } else if (row.provider === "Turso") {
       try {
         await prisma.$queryRawUnsafe("SELECT 1");
@@ -385,7 +413,7 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
       result = { status: "configured_untested", safeError: "Configured but no safe minimal test endpoint is wired yet." };
     }
 
-    const statusForLog: HealthSeverity = result.status === "working" || result.status === "configured_untested" ? "healthy" : result.status === "missing" ? "warning" : "failure";
+    const statusForLog = apiProviderSeverity({ provider: row.provider, status: result.status });
     await prisma.agentRun.create({
       data: {
         agentName: "health-center",
@@ -630,17 +658,20 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
   const failures = [
     ...accountRows.filter((row) => !row.connected || row.lastError),
     ...scheduledJobs.filter((job) => job.status === "Failed"),
-    ...executorRows.filter((row) => row.status === "Offline" && row.lastError),
+    ...executorRows.filter((row) => row.status === "Offline" && row.lastError && !(row.name === "Codex Executor" && hermesAgentReady)),
     ...notificationRows.filter((row) => row.status === "failure"),
+    ...apiProviders.filter((row) => apiProviderSeverity(row) === "failure"),
   ].length;
   const warnings = [
     ...accountRows.filter((row) => row.warnings.length > 0),
     ...scheduledJobs.filter((job) => job.status === "Delayed" || job.status === "Never Ran"),
+    ...executorRows.filter((row) => row.status === "Stale" || (row.status === "Offline" && row.name === "Codex Executor" && hermesAgentReady)),
     ...notificationRows.filter((row) => row.status === "warning"),
+    ...apiProviders.filter((row) => apiProviderSeverity(row) === "warning"),
   ].length;
   const accountScore = Math.round(accountRows.reduce((sum, row) => sum + row.score, 0) / Math.max(1, accountRows.length));
   const jobScore = Math.round((scheduledJobs.filter((job) => job.status === "Healthy").length / Math.max(1, scheduledJobs.length)) * 100);
-  const executorScore = Math.round((executorRows.filter((row) => row.status !== "Offline").length / Math.max(1, executorRows.length)) * 100);
+  const executorScore = Math.round((executorRows.filter((row) => row.status !== "Offline" || (row.name === "Codex Executor" && hermesAgentReady)).length / Math.max(1, executorRows.length)) * 100);
   const notificationScore = Math.round((notificationRows.filter((row) => row.status === "healthy").length / Math.max(1, notificationRows.length)) * 100);
   const score = Math.round((accountScore + jobScore + executorScore + notificationScore) / 4);
   const status: HealthSeverity = failures > 0 ? "failure" : warnings > 0 ? "warning" : "healthy";

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { createHealthLog, getApiProviderHealth, getHealthCenterSnapshot, logHealthSnapshot } from "@/lib/health-center";
+import { apiProviderSeverity, createHealthLog, getApiProviderHealth, getHealthCenterSnapshot, logHealthSnapshot } from "@/lib/health-center";
 import { GET as runJobScout } from "@/app/api/cron/job-scout/route";
 import { GET as runEmailScout } from "@/app/api/cron/email-watcher/route";
 import { GET as runSkillScout } from "@/app/api/cron/skills-scout/route";
@@ -84,7 +84,7 @@ export async function POST(req: Request) {
     const apiProviders = await getApiProviderHealth(session.user.id, runs, true);
     await createHealthLog(
       "api-providers",
-      apiProviders.some((provider) => provider.status === "invalid" || provider.status === "error") ? "failure" : apiProviders.some((provider) => provider.status === "missing") ? "warning" : "healthy",
+      apiProviders.some((provider) => apiProviderSeverity(provider) === "failure") ? "failure" : apiProviders.some((provider) => apiProviderSeverity(provider) === "warning") ? "warning" : "healthy",
       apiProviders.map((provider) => `${provider.provider}: ${provider.status}`).join(" | ")
     );
     return NextResponse.json({

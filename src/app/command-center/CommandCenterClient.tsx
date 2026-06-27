@@ -229,7 +229,7 @@ interface HealthCenterData {
   overall: { status: HealthSeverity; score: number; message: string; lastChecked: string };
   accounts: Array<{ name: string; connected: boolean; email?: string | null; label?: string | null; gmailScope?: boolean; calendarScope?: boolean; tokenExpiresAt?: string | null; lastSuccessfulSync: string | null; lastError: string | null; reconnectRequired: boolean; warnings: string[]; score: number }>;
   scheduledJobs: Array<{ name: string; key: string; enabled: boolean; lastRun: string | null; nextRun: string | null; lastResult: string | null; runtime: string | null; successCount: number; failureCount: number; status: "Healthy" | "Delayed" | "Failed" | "Never Ran" | "Disabled" }>;
-  executors: Array<{ name: string; status: "Ready" | "Online" | "Offline" | "Busy" | "Unknown"; lastRun: string | null; lastError: string | null; workerId?: string | null; machineName?: string | null; rootPath?: string | null; nodeVersion?: string | null; npmVersion?: string | null; gitAvailable?: boolean | null; codexAvailable?: boolean | null; currentTask?: string | null; workerApiTarget?: string | null; lastFetchError?: string | null; capabilities?: string[] }>;
+  executors: Array<{ name: string; status: "Ready" | "Online" | "Offline" | "Stale" | "Busy" | "Unknown"; lastRun: string | null; lastError: string | null; workerId?: string | null; machineName?: string | null; rootPath?: string | null; nodeVersion?: string | null; npmVersion?: string | null; gitAvailable?: boolean | null; codexAvailable?: boolean | null; currentTask?: string | null; workerApiTarget?: string | null; lastFetchError?: string | null; capabilities?: string[] }>;
   notifications: Array<{ name: string; lastSent: string | null; lastFailed: string | null; pendingNotifications: number; status: HealthSeverity }>;
   apiProviders: Array<{ provider: string; configured: boolean; requiredEnvVars: string[]; source: "local env" | "Vercel/runtime"; lastTested: string | null; status: "working" | "missing" | "invalid" | "error" | "configured_untested"; safeError: string | null }>;
   logs: Array<{ timestamp: string; component: string; status: HealthSeverity; message: string }>;
@@ -384,8 +384,12 @@ function calculateSystemHealthScore(health: HealthCenterData | null, queue: Exec
 
   const executorScore = health?.executors.length
     ? average(health.executors.map((executor) => {
+      const hermesReady = health.executors.some((candidate) => candidate.name === "Hermes Agent" && ["Ready", "Online", "Busy"].includes(candidate.status));
+      if (executor.name === "Codex Executor" && executor.status === "Offline" && hermesReady) return 70;
       if (executor.status === "Online") return executor.lastError ? 70 : 100;
+      if (executor.status === "Ready") return 100;
       if (executor.status === "Busy") return executor.lastError ? 65 : 90;
+      if (executor.status === "Stale") return 60;
       return 25;
     }))
     : health ? 60 : 100;
@@ -394,7 +398,8 @@ function calculateSystemHealthScore(health: HealthCenterData | null, queue: Exec
     ? average(health.apiProviders.map((provider) => {
       if (provider.status === "working") return 100;
       if (provider.status === "configured_untested") return 80;
-      if (provider.status === "missing") return 45;
+      if (provider.status === "missing" && ["Amadeus Travel Fallback", "Google APIs"].includes(provider.provider)) return 70;
+      if (provider.status === "missing") return 55;
       return 15;
     }))
     : health ? 60 : 100;
@@ -686,7 +691,9 @@ function IndicatorChip({ label, status, detail, onClick }: { label: string; stat
 function MissionHealthBar({ health, queue, memoryDebug }: { health: HealthCenterData | null; queue: ExecutionQueueData | null; memoryDebug: MemoryContextDebugData | null }) {
   const accountsDisconnected = health?.accounts.filter((a) => !a.connected || a.reconnectRequired || a.lastError).length ?? 0;
   const delayedJobs = health?.scheduledJobs.filter((j) => ["Delayed", "Failed", "Never Ran"].includes(j.status)).length ?? 0;
-  const executorIssues = health?.executors.filter((e) => e.status === "Offline" || e.lastError).length ?? 0;
+  const hermesReady = health?.executors.some((executor) => executor.name === "Hermes Agent" && ["Ready", "Online", "Busy"].includes(executor.status)) ?? false;
+  const executorIssues = health?.executors.filter((e) => (e.status === "Offline" || e.lastError) && !(e.name === "Codex Executor" && hermesReady)).length ?? 0;
+  const executorWarnings = health?.executors.filter((e) => e.status === "Stale" || (e.name === "Codex Executor" && e.status === "Offline" && hermesReady)).length ?? 0;
   const notificationIssues = health?.notifications.filter((n) => n.status !== "healthy" || n.lastFailed).length ?? 0;
   const queueFailures = queue?.counts?.failed ?? 0;
   const memoryIssues = (memoryDebug?.recentFailures.length ?? 0) + (memoryDebug?.toolHealth.filter((t) => t.status === "unavailable").length ?? 0);
@@ -695,7 +702,7 @@ function MissionHealthBar({ health, queue, memoryDebug }: { health: HealthCenter
     <div style={{ ...missionCardStyle, padding: 8, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 6 }}>
       <IndicatorChip label="Accounts" status={accountsDisconnected ? "warning" : "healthy"} detail={accountsDisconnected ? `${accountsDisconnected} need attention` : "connected"} />
       <IndicatorChip label="Scheduled jobs" status={delayedJobs ? "warning" : "healthy"} detail={delayedJobs ? `${delayedJobs} delayed` : "on schedule"} />
-      <IndicatorChip label="Executors" status={executorIssues ? "failure" : health?.overall.status ?? "healthy"} detail={executorIssues ? `${executorIssues} issue` : "available"} />
+      <IndicatorChip label="Executors" status={executorIssues ? "failure" : executorWarnings ? "warning" : "healthy"} detail={executorIssues ? `${executorIssues} issue` : executorWarnings ? `${executorWarnings} warning` : "available"} />
       <IndicatorChip label="Memory context" status={memoryIssues ? "warning" : "healthy"} detail={memoryDebug?.activeIntent ?? "ready"} />
       <IndicatorChip label="Notifications" status={notificationIssues ? "warning" : "healthy"} detail={notificationIssues ? `${notificationIssues} warning` : "healthy"} />
       <IndicatorChip label="Queue" status={queueFailures ? "failure" : (queue?.counts?.executing ?? 0) > 0 ? "Busy" : "healthy"} detail={`${queue?.counts?.executing ?? 0} running / ${queueFailures} failed`} />
@@ -1658,6 +1665,7 @@ function HealthCenterPanel({
     ["testApiKeys", "Test API Keys"],
     ["refreshHealth", "Refresh Health"],
   ] as const;
+  const hermesExecutorReady = data.executors.some((executor) => executor.name === "Hermes Agent" && ["Ready", "Online", "Busy"].includes(executor.status));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -1785,11 +1793,13 @@ function HealthCenterPanel({
         <div style={cardStyle}>
           <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 14 }}>Executor Health</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {data.executors.map((executor) => (
+            {data.executors.map((executor) => {
+              const warningOnly = executor.name === "Codex Executor" && executor.status === "Offline" && hermesExecutorReady;
+              return (
               <div key={executor.name} style={{ padding: "11px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid #28324A", borderRadius: 8 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
                   <strong style={{ color: "#F1F4FB", fontSize: 13 }}>{executor.name}</strong>
-                  <span style={badgeStyle(statusColor(executor.status))}>{executor.status}</span>
+                  <span style={badgeStyle(statusColor(warningOnly ? "warning" : executor.status))}>{warningOnly ? "Offline — optional" : executor.status}</span>
                 </div>
                 <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 8 }}>Last Run: {executor.lastRun ? timeAgo(executor.lastRun) : "Never"}</div>
                 {executor.machineName && <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 4 }}>Machine: {executor.machineName}</div>}
@@ -1798,9 +1808,10 @@ function HealthCenterPanel({
                 {executor.workerApiTarget && <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 4, overflowWrap: "anywhere" }}>Worker API Target: <code>{executor.workerApiTarget}</code></div>}
                 {executor.name === "Local Worker" && <div style={{ color: executor.lastFetchError ? "#F87171" : "#94A3B8", fontSize: 11, marginTop: 4, overflowWrap: "anywhere" }}>Last Fetch Error: {executor.lastFetchError ?? "none"}</div>}
                 {executor.capabilities?.length ? <div style={{ color: "#647089", fontSize: 10, marginTop: 4 }}>{executor.capabilities.join(" / ")}</div> : null}
-                <div style={{ color: executor.lastError ? "#F87171" : "#94A3B8", fontSize: 11, marginTop: 4 }}>Last Error: {executor.lastError ?? "none"}</div>
+                <div style={{ color: executor.lastError ? warningOnly ? "#FBBF24" : "#F87171" : "#94A3B8", fontSize: 11, marginTop: 4 }}>Last Error: {executor.lastError ?? "none"}</div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
