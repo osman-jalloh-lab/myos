@@ -1,6 +1,8 @@
 import { prisma } from "./db";
 import { getValidToken } from "./tokens";
 
+const GOOGLE_CALENDAR_API = "https://www.googleapis.com/calendar/v3";
+
 export interface CalendarEvent {
   id: string;
   summary: string;
@@ -30,6 +32,24 @@ interface GCalCalendar {
   accessRole?: string;
 }
 
+export interface CreateCalendarEventInput {
+  summary: string;
+  start: Date;
+  end: Date;
+  timeZone?: string;
+  description?: string;
+  location?: string;
+  /** Stable source id used to make automated creates safe to retry. */
+  sourceMessageId: string;
+  sourceThreadId?: string;
+  sourceType?: string;
+}
+
+export interface CreateCalendarEventResult {
+  created: boolean;
+  event: CalendarEvent;
+}
+
 // Calendars to skip — noise that adds no value to the daily brief.
 const SKIP_CALENDAR_PATTERNS = [
   /holiday/i,
@@ -42,15 +62,124 @@ function shouldSkipCalendar(cal: GCalCalendar): boolean {
   return SKIP_CALENDAR_PATTERNS.some((p) => p.test(cal.summary ?? "") || p.test(cal.id));
 }
 
+function eventFromGoogle(item: GCalEvent, account: { email: string; label: string }): CalendarEvent {
+  const startRaw = item.start?.dateTime ?? item.start?.date ?? "";
+  const endRaw = item.end?.dateTime ?? item.end?.date ?? "";
+  return {
+    id: item.id,
+    summary: item.summary ?? "(no title)",
+    start: startRaw,
+    end: endRaw,
+    allDay: !item.start?.dateTime,
+    description: item.description,
+    location: item.location,
+    htmlLink: item.htmlLink,
+    accountEmail: account.email,
+    accountLabel: account.label,
+  };
+}
+
 /** Lists all calendars on a Google account (shared + owned). */
 async function listCalendars(token: string): Promise<GCalCalendar[]> {
   const res = await fetch(
-    "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=50",
+    `${GOOGLE_CALENDAR_API}/users/me/calendarList?maxResults=50`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
   if (!res.ok) return [{ id: "primary" }]; // fallback to primary if list fails
   const data = (await res.json()) as { items?: GCalCalendar[] };
   return (data.items ?? []).filter((c) => !shouldSkipCalendar(c));
+}
+
+async function getPreferredCalendarAccount(userId: string): Promise<{ id: string; email: string; label: string }> {
+  const accounts = await prisma.googleAccount.findMany({
+    where: { userId },
+    orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+    select: { id: true, email: true, label: true },
+  });
+
+  if (accounts.length === 0) {
+    throw new Error("No connected Google account is available for Calendar.");
+  }
+
+  return accounts[0];
+}
+
+/**
+ * Finds a previously-created Hermes event by the Gmail message that produced it.
+ * Google Calendar stores this in private extended properties, so retries remain
+ * idempotent even if the app restarted before it could write an AgentRun log.
+ */
+async function findAutomatedEventBySource(
+  token: string,
+  account: { email: string; label: string },
+  sourceMessageId: string
+): Promise<CalendarEvent | null> {
+  const params = new URLSearchParams({
+    maxResults: "1",
+    singleEvents: "true",
+    privateExtendedProperty: `hermesSourceMessageId=${sourceMessageId}`,
+  });
+  const res = await fetch(
+    `${GOOGLE_CALENDAR_API}/calendars/primary/events?${params}`,
+    { headers: { Authorization: `Bearer ${token}` } }
+  );
+
+  if (!res.ok) return null;
+  const data = (await res.json()) as { items?: GCalEvent[] };
+  const item = data.items?.[0];
+  return item ? eventFromGoogle(item, account) : null;
+}
+
+/**
+ * Creates an event on the preferred primary calendar, or returns the previously
+ * created event for the same email. Callers must provide a stable source message
+ * id; this prevents duplicate events when a watcher retries a delivery.
+ */
+export async function createCalendarEventOnce(
+  userId: string,
+  input: CreateCalendarEventInput
+): Promise<CreateCalendarEventResult> {
+  const account = await getPreferredCalendarAccount(userId);
+  const token = await getValidToken(account.id);
+  const existing = await findAutomatedEventBySource(token, account, input.sourceMessageId);
+  if (existing) return { created: false, event: existing };
+
+  const timeZone = input.timeZone ?? "America/Chicago";
+  const body = {
+    summary: input.summary,
+    description: input.description,
+    location: input.location,
+    start: { dateTime: input.start.toISOString(), timeZone },
+    end: { dateTime: input.end.toISOString(), timeZone },
+    reminders: { useDefault: true },
+    extendedProperties: {
+      private: {
+        hermesSourceMessageId: input.sourceMessageId,
+        ...(input.sourceThreadId ? { hermesSourceThreadId: input.sourceThreadId } : {}),
+        hermesSourceType: input.sourceType ?? "automation",
+      },
+    },
+  };
+
+  const res = await fetch(
+    `${GOOGLE_CALENDAR_API}/calendars/primary/events?sendUpdates=none`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  if (!res.ok) {
+    const detail = (await res.text()).replace(/\s+/g, " ").slice(0, 300);
+    throw new Error(`Google Calendar event create failed (${res.status}): ${detail}`);
+  }
+
+  const event = eventFromGoogle((await res.json()) as GCalEvent, account);
+  return { created: true, event };
 }
 
 /** Fetches and merges calendar events across all linked accounts for a user.
@@ -87,27 +216,14 @@ export async function fetchCalendarEvents(
       const calResults = await Promise.allSettled(
         calendars.map(async (cal) => {
           const res = await fetch(
-            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events?${params}`,
+            `${GOOGLE_CALENDAR_API}/calendars/${encodeURIComponent(cal.id)}/events?${params}`,
             { headers: { Authorization: `Bearer ${token}` } }
           );
           if (!res.ok) return [];
           const data = (await res.json()) as { items?: GCalEvent[] };
-          return (data.items ?? []).map<CalendarEvent>((item) => {
-            const startRaw = item.start?.dateTime ?? item.start?.date ?? "";
-            const endRaw = item.end?.dateTime ?? item.end?.date ?? "";
-            return {
-              id: item.id,
-              summary: item.summary ?? "(no title)",
-              start: startRaw,
-              end: endRaw,
-              allDay: !item.start?.dateTime,
-              description: item.description,
-              location: item.location,
-              htmlLink: item.htmlLink,
-              accountEmail: account.email,
-              accountLabel: cal.summary ?? account.label,
-            };
-          });
+          return (data.items ?? []).map((item) =>
+            eventFromGoogle(item, { email: account.email, label: cal.summary ?? account.label })
+          );
         })
       );
 
