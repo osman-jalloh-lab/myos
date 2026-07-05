@@ -1,3 +1,6 @@
+import * as path from "node:path";
+import { mkdir } from "node:fs/promises";
+
 export type BrowserQaCheck = {
   key: string;
   label: string;
@@ -9,15 +12,54 @@ export type BrowserQaResult = {
   passed: boolean;
   checks: BrowserQaCheck[];
   consoleErrors: string[];
+  origin?: string | null;
+  hostname?: string | null;
+  screenshotBase?: string | null;
 };
 
 export function browserQaPassed(checks: BrowserQaCheck[]): boolean {
   return !checks.some((check) => check.status === "failed");
 }
 
-export async function runBrowserQa(baseUrl: string): Promise<BrowserQaResult> {
+export const LOCAL_PREVIEW_HOST_RULES = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i;
+
+export class LocalPreviewNavigationError extends Error {
+  constructor(public readonly attemptedUrl: string) {
+    super(`Blocked browser navigation to non-local preview URL: ${attemptedUrl}`);
+  }
+}
+
+export function isLocalPreviewHost(parsed: URL | { hostname?: string }): boolean {
+  const hostname = typeof parsed === "string" ? new URL(parsed).hostname : (parsed as URL).hostname;
+  return LOCAL_PREVIEW_HOST_RULES.test(hostname ?? "");
+}
+
+export async function enforceLocalPreviewOrigin(baseUrl: string, assignedPreviewUrl?: string | null): Promise<{ origin: string; hostname: string }> {
+  let origin: string;
+  try {
+    origin = new URL(baseUrl).origin;
+  } catch {
+    throw new LocalPreviewNavigationError(baseUrl);
+  }
+  const parsedOrigin = new URL(origin);
+  if (!isLocalPreviewHost(parsedOrigin)) {
+    throw new LocalPreviewNavigationError(baseUrl);
+  }
+  if (assignedPreviewUrl) {
+    const assigned = new URL(assignedPreviewUrl);
+    if (parsedOrigin.hostname !== assigned.hostname || parsedOrigin.port !== assigned.port) {
+      throw new LocalPreviewNavigationError(`${baseUrl} is not the assigned preview ${assignedPreviewUrl}`);
+    }
+  }
+  return { origin, hostname: parsedOrigin.hostname };
+}
+
+export async function runBrowserQa(baseUrl: string, assignedPreviewUrl?: string | null): Promise<BrowserQaResult> {
+  const { origin, hostname } = await enforceLocalPreviewOrigin(baseUrl, assignedPreviewUrl);
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
+  const screenshotBase = path.resolve(process.cwd(), "artifacts", "qa", `screenshots-${Date.now()}`);
+  await mkdir(screenshotBase, { recursive: true });
   const consoleErrors: string[] = [];
   const checks: BrowserQaCheck[] = [];
   try {
@@ -28,7 +70,7 @@ export async function runBrowserQa(baseUrl: string): Promise<BrowserQaResult> {
     });
     page.on("pageerror", (error) => consoleErrors.push(error.message.slice(0, 500)));
 
-    const response = await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 30_000 });
+    const response = await page.goto(origin, { waitUntil: "networkidle", timeout: 30_000 });
     const title = await page.title();
     const bodyText = await page.locator("body").innerText().catch(() => "");
     const loaded = Boolean(response?.ok() && bodyText.trim());
@@ -36,7 +78,7 @@ export async function runBrowserQa(baseUrl: string): Promise<BrowserQaResult> {
       key: "browser_homepage_loads",
       label: "Browser homepage loads",
       status: loaded ? "passed" : "failed",
-      detail: loaded ? `Loaded ${baseUrl}${title ? ` (${title})` : ""}.` : `Homepage returned ${response?.status() ?? "no response"} or an empty body.`,
+      detail: loaded ? `Loaded ${origin}${title ? ` (${title})` : ""}.` : `Homepage returned ${response?.status() ?? "no response"} or an empty body.`,
     });
 
     const primary = page.locator('main a[href], main button, a[href].primary, button[type="submit"]');
@@ -61,7 +103,7 @@ export async function runBrowserQa(baseUrl: string): Promise<BrowserQaResult> {
     }
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+    await page.goto(origin, { waitUntil: "domcontentloaded", timeout: 30_000 });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 2);
     checks.push({
       key: "browser_responsive_viewport",
@@ -75,9 +117,12 @@ export async function runBrowserQa(baseUrl: string): Promise<BrowserQaResult> {
       status: consoleErrors.length ? "failed" : "passed",
       detail: consoleErrors.length ? `${consoleErrors.length} console/page error(s): ${consoleErrors.slice(0, 3).join(" | ")}` : "No console or uncaught page errors detected.",
     });
+    await page.screenshot({ path: path.join(screenshotBase, `desktop-${hostname}.png`) }).catch(() => undefined);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: path.join(screenshotBase, `mobile-${hostname}.png`) }).catch(() => undefined);
     await context.close();
   } finally {
     await browser.close();
   }
-  return { passed: browserQaPassed(checks), checks, consoleErrors };
+  return { passed: browserQaPassed(checks), checks, consoleErrors, origin, hostname, screenshotBase };
 }

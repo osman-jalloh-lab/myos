@@ -40,10 +40,21 @@ type Run = { id: string; agentName: string; outputSummary: string | null; status
 type RootInfo = { root: string; exists: boolean; projectCount: number; warning: string | null };
 type CodexStatus = { installed: boolean; available: boolean; version: string | null; message: string };
 type ProviderStatus = { provider: string; configured: boolean; status: "working" | "missing" | "invalid" | "error" | "configured_untested"; safeError: string | null };
-type ExecutorStatus = { name: string; status: "Ready" | "Online" | "Offline" | "Stale" | "Busy" | "Unknown"; lastError: string | null };
+type ExecutorStatus = {
+  name: string;
+  status: "Ready" | "Online" | "Offline" | "Stale" | "Busy" | "Unknown";
+  lastError: string | null;
+  hermesAgentAvailable?: boolean;
+  hermesAgentAuthConfigured?: boolean;
+  hermesAgentModelConfigured?: boolean;
+  lastHermesAgentRun?: string | null;
+  lastHermesAgentError?: string | null;
+  autoStartInstalled?: boolean;
+};
 type BuilderHealth = { apiProviders: ProviderStatus[]; executors: ExecutorStatus[] };
 
 const card: React.CSSProperties = { background: "rgba(26,35,54,.85)", border: "1px solid #28324A", borderRadius: 16, padding: "20px 24px", backdropFilter: "blur(12px)" };
+const WORKER_RECOVERY_COMMAND = 'Set-Location "C:\\Users\\osman\\OneDrive\\Desktop\\my os\\hermes-os"; powershell -ExecutionPolicy Bypass -File .\\scripts\\install-hermes-local-worker-startup.ps1; Start-ScheduledTask -TaskName "Hermes Local Worker"';
 
 function badge(status: string): React.CSSProperties {
   const color = ["completed", "done", "deployed", "qa_passed", "Ready to Build", "Brief Ready", "Dev Server Running", "ready_to_build"].includes(status) ? "#34D399" : ["failed", "blocked", "qa_failed", "Build Failed"].includes(status) ? "#F87171" : ["ready", "qa_pending", "Dev Server Stopped"].includes(status) ? "#60A5FA" : "#A78BFA";
@@ -191,6 +202,7 @@ export default function BuilderOffice() {
   const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
   const [health, setHealth] = useState<BuilderHealth | null>(null);
   const [requestError, setRequestError] = useState<string | null>(null);
+  const [recoveryCommandCopied, setRecoveryCommandCopied] = useState(false);
 
   const refresh = useCallback(async () => {
     const [projectResponse, buildResponse, logResponse, localBuildResponse, healthResponse] = await Promise.all([
@@ -227,7 +239,7 @@ export default function BuilderOffice() {
       const response = await fetch("/api/command-center/local-builds", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ action: "prepare", message, executor: buildExecutor }),
       });
       const payload = await response.json().catch(() => null) as ExecutionResult | { error?: string } | null;
       if (!response.ok) throw new Error(payload && "error" in payload && payload.error ? payload.error : `Local builder returned ${response.status}`);
@@ -329,6 +341,15 @@ export default function BuilderOffice() {
   const latestLog = runs.find((run) => run.agentName === "hermes-local-builder") ?? runs.find((run) => run.agentName === "hermes-execution");
   const fuguProvider = health?.apiProviders.find((provider) => provider.provider === "Sakana / Fugu");
   const localWorker = health?.executors.find((executor) => executor.name === "Local Worker");
+  const hermesAgent = health?.executors.find((executor) => executor.name === "Hermes Agent");
+  const workerOnline = localWorker?.status === "Online" || localWorker?.status === "Busy";
+  const hermesAgentState = !hermesAgent?.hermesAgentAvailable
+    ? "Hermes Agent Missing"
+    : !hermesAgent.hermesAgentAuthConfigured || !hermesAgent.hermesAgentModelConfigured
+      ? "Hermes Agent Needs Login"
+      : workerOnline
+        ? "Hermes Agent Ready"
+        : "Hermes Agent Ready (Worker Offline)";
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.25fr) minmax(300px,.75fr)", gap: 20 }}>
@@ -370,6 +391,27 @@ export default function BuilderOffice() {
             {reviewing ? "Reviewing..." : "Run Fugu Design Review"}
           </button>
           </div>
+        </div>
+
+        <div data-testid="builder-executor-readiness" style={{ marginTop: 12, padding: 12, border: `1px solid ${workerOnline ? "rgba(52,211,153,.35)" : "rgba(248,113,113,.35)"}`, borderRadius: 10, background: workerOnline ? "rgba(52,211,153,.06)" : "rgba(248,113,113,.06)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", color: "#D8DEEB", fontSize: 12 }}>
+            <strong>{workerOnline ? "Local Worker Online" : localWorker?.status === "Stale" ? "Local Worker Stale" : "Local Worker Offline"}</strong>
+            <strong style={{ color: hermesAgentState === "Hermes Agent Ready" ? "#34D399" : "#FBBF24" }}>{hermesAgentState}</strong>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 6, marginTop: 8, color: "#94A3B8", fontSize: 11 }}>
+            <span>Installed: {hermesAgent?.hermesAgentAvailable ? "yes" : "missing"}</span>
+            <span>Authentication: {hermesAgent?.hermesAgentAuthConfigured ? "configured" : "missing"}</span>
+            <span>Model: {hermesAgent?.hermesAgentModelConfigured ? "configured" : "missing"}</span>
+            <span>Last run: {formatDate(hermesAgent?.lastHermesAgentRun) ?? "never"}</span>
+            <span>Auto-start: {localWorker?.autoStartInstalled ? "Installed" : "Missing"}</span>
+            <span>Queue: {workerOnline ? "Ready now" : "Queued until this PC is online"}</span>
+          </div>
+          {hermesAgent?.lastHermesAgentError && <div style={{ color: "#FBBF24", fontSize: 11, marginTop: 7 }}>Last Hermes Agent error: {hermesAgent.lastHermesAgentError}</div>}
+          {!workerOnline && <div style={{ color: "#FBBF24", fontSize: 12, lineHeight: 1.5, marginTop: 8 }}>Hermes Agent requires the local Windows worker. Start the worker or jobs will remain queued.</div>}
+          {!workerOnline && <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 4 }}>Queued until this PC is online.</div>}
+          <button type="button" onClick={() => void navigator.clipboard.writeText(WORKER_RECOVERY_COMMAND).then(() => setRecoveryCommandCopied(true))} style={{ ...previewAction, marginTop: 9 }}>
+            {recoveryCommandCopied ? "Recovery Command Copied" : "Copy Recovery Command"}
+          </button>
         </div>
 
         <div style={{ marginTop: 22, flex: 1 }}>

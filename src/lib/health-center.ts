@@ -47,6 +47,12 @@ export type ExecutorHealthRow = {
   workerApiTarget?: string | null;
   lastFetchError?: string | null;
   capabilities?: string[];
+  hermesAgentAvailable?: boolean;
+  hermesAgentAuthConfigured?: boolean;
+  hermesAgentModelConfigured?: boolean;
+  lastHermesAgentRun?: string | null;
+  lastHermesAgentError?: string | null;
+  autoStartInstalled?: boolean;
 };
 
 export type NotificationHealthRow = {
@@ -117,6 +123,7 @@ type LocalWorkerHeartbeatRow = {
   hermesAgentModelConfigured: number | boolean | null;
   lastHermesAgentRun: string | null;
   lastHermesAgentError: string | null;
+  autoStartInstalled: number | boolean | null;
 };
 
 type AgentRunRow = {
@@ -430,13 +437,11 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
 }
 
 export async function getHealthCenterSnapshot(userId: string): Promise<HealthCenterSnapshot> {
-  const [accounts, runs, queueTasks, workerHeartbeats, trackedCount, jobLeadCount, codexStatus, recentApprovals] = await Promise.all([
+  const [accounts, runs, queueTasks, workerHeartbeats, codexStatus, recentApprovals] = await Promise.all([
     prisma.googleAccount.findMany({ where: { userId }, orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }] }),
     prisma.agentRun.findMany({ orderBy: { createdAt: "desc" }, take: 250 }),
     prisma.$queryRawUnsafe<QueueHealthRow[]>(`SELECT status, assigned_executor FROM AgentTask WHERE userId = ? ORDER BY updatedAt DESC LIMIT 80`, userId).catch(() => []),
     prisma.$queryRawUnsafe<LocalWorkerHeartbeatRow[]>(`SELECT * FROM LocalWorkerHeartbeat ORDER BY lastHeartbeat DESC LIMIT 1`).catch(() => []),
-    prisma.trackedApplication.count({ where: { userId } }).catch(() => 0),
-    prisma.jobLead.count({ where: { userId } }).catch(() => 0),
     getCodexCliStatus().catch(() => ({ installed: false, available: false, version: null, message: "Codex CLI status unavailable." })),
     prisma.approvalAction.findMany({ where: { userId, status: "pending" }, take: 25 }).catch(() => []),
   ]);
@@ -530,15 +535,38 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
   };
   githubRow.score = accountHealthScore(githubRow);
 
+  // The tracker reads job alerts from Gmail, so its connection state must come
+  // from an OAuth account rather than from the presence of historical records.
+  // Prefer a currently usable account, while retaining an expired Gmail account
+  // so the UI can identify it and offer the reconnect flow.
+  const jobTrackerAccount = gmailAccounts.find((account) => account.expiresAt.getTime() > Date.now())
+    ?? gmailAccounts[0]
+    ?? null;
+  const jobTrackerTokenExpired = Boolean(jobTrackerAccount && jobTrackerAccount.expiresAt.getTime() <= Date.now());
+  const jobTrackerLastSync = iso(latestRun(runs, ["job-tracker", "job-scout", "job-scout-gmail"])?.createdAt);
+  const jobTrackerWarnings = [
+    !jobTrackerAccount ? "gmail scope missing" : null,
+    jobTrackerTokenExpired ? "token expired" : null,
+  ].filter((item): item is string => Boolean(item));
   const jobTrackerRow: HealthAccount = {
     name: "Job Tracker",
-    connected: trackedCount + jobLeadCount > 0,
-    lastSuccessfulSync: iso(latestRun(runs, ["job-tracker", "job-scout", "job-scout-gmail"])?.createdAt),
-    lastError: trackedCount + jobLeadCount > 0 ? null : "No tracked applications or job leads found",
-    reconnectRequired: false,
-    warnings: trackedCount + jobLeadCount > 0 ? [] : ["sync failed"],
-    score: trackedCount + jobLeadCount > 0 ? 90 : 65,
+    email: jobTrackerAccount?.email ?? null,
+    label: jobTrackerAccount?.label ?? null,
+    gmailScope: Boolean(jobTrackerAccount),
+    calendarScope: jobTrackerAccount ? hasCalendarScope(jobTrackerAccount.scopes) : false,
+    tokenExpiresAt: jobTrackerAccount?.expiresAt.toISOString() ?? null,
+    connected: Boolean(jobTrackerAccount && !jobTrackerTokenExpired),
+    lastSuccessfulSync: jobTrackerLastSync,
+    lastError: !jobTrackerAccount
+      ? "No Google account with Gmail access"
+      : jobTrackerTokenExpired
+        ? "OAuth token expired"
+        : null,
+    reconnectRequired: !jobTrackerAccount || jobTrackerTokenExpired,
+    warnings: jobTrackerWarnings,
+    score: 0,
   };
+  jobTrackerRow.score = accountHealthScore(jobTrackerRow);
 
   const scheduledDefinitions = [
     { name: "Job Scout", key: "job-scout", terms: ["job-scout", "job-scout-gmail"], schedule: "0 13 * * 1 / 0 14 * * *", enabled: true },
@@ -592,6 +620,12 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
       currentTask: latestLocalWorker?.currentTask ?? null,
       workerApiTarget: latestLocalWorker?.workerApiTarget ?? null,
       lastFetchError: latestLocalWorker?.lastFetchError ?? null,
+      hermesAgentAvailable,
+      hermesAgentAuthConfigured,
+      hermesAgentModelConfigured,
+      lastHermesAgentRun: latestLocalWorker?.lastHermesAgentRun ?? null,
+      lastHermesAgentError: latestLocalWorker?.lastHermesAgentError ?? null,
+      autoStartInstalled: boolish(latestLocalWorker?.autoStartInstalled),
       capabilities: latestLocalWorker ? [
         `Node ${latestLocalWorker.nodeVersion ?? "unknown"}`,
         `npm ${latestLocalWorker.npmVersion ?? "unknown"}`,
@@ -606,6 +640,12 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
       lastRun: latestLocalWorker?.lastHermesAgentRun ?? null,
       lastError: latestLocalWorker?.lastHermesAgentError ?? (latestLocalWorker && !hermesAgentReady ? "Hermes Agent needs Nous OAuth and a selected model/provider" : null),
       machineName: latestLocalWorker?.machineName ?? null,
+      hermesAgentAvailable,
+      hermesAgentAuthConfigured,
+      hermesAgentModelConfigured,
+      lastHermesAgentRun: latestLocalWorker?.lastHermesAgentRun ?? null,
+      lastHermesAgentError: latestLocalWorker?.lastHermesAgentError ?? null,
+      autoStartInstalled: boolish(latestLocalWorker?.autoStartInstalled),
       capabilities: latestLocalWorker ? [
         `Executable ${latestLocalWorker.hermesAgentPath ?? "missing"}`,
         `Version ${latestLocalWorker.hermesAgentVersion ?? "unknown"}`,
