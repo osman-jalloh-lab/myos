@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "worker:local": "tsx scripts/hermes-local-worker.ts",
+    "worker:inbox": "tsx scripts/hermes-inbox-watcher.ts",
+    "worker:inbox:once": "HERMES_INBOX_WATCHER_ONCE=1 tsx scripts/hermes-inbox-watcher.ts",
     "test:hermes-agent:queue": "tsx scripts/queue-hermes-agent-test.ts",
     "worker:install-startup": "powershell -ExecutionPolicy Bypass -File scripts/install-hermes-local-worker-startup.ps1",
     "worker:uninstall-startup": "powershell -ExecutionPolicy Bypass -File scripts/install-hermes-local-worker-startup.ps1 -Uninstall",
