@@ -30,6 +30,9 @@ export type LocalBuildProject = {
   designScore: number | null;
   qaStatus: string | null;
   qaChecklist: LocalBuilderQaItem[] | null;
+  desktopScreenshotPath?: string | null;
+  mobileScreenshotPath?: string | null;
+  visualQaStatus?: "visual_qa_passed" | "visual_qa_failed" | "visual_qa_needs_review" | null;
   files?: string[];
 };
 
