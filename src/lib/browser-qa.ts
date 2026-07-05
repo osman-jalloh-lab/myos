@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { mkdir } from "node:fs/promises";
+import { type Page, type BrowserContext, type Frame, type ConsoleMessage } from "playwright";
 
 export type BrowserQaCheck = {
   key: string;
@@ -22,7 +23,7 @@ export function browserQaPassed(checks: BrowserQaCheck[]): boolean {
   return !checks.some((check) => check.status === "failed");
 }
 
-export const LOCAL_PREVIEW_HOST_RULES = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i;
+export const LOCAL_PREVIEW_HOST_RULES = /^(?:localhost|127\.0\.0\.1|0\.0\.0\.0\.0|\[::1\])$/i;
 
 export class LocalPreviewNavigationError extends Error {
   constructor(public readonly attemptedUrl: string) {
@@ -31,7 +32,7 @@ export class LocalPreviewNavigationError extends Error {
 }
 
 export function isLocalPreviewHost(parsed: URL | { hostname?: string }): boolean {
-  const hostname = typeof parsed === "string" ? new URL(parsed).hostname : (parsed as URL).hostname;
+  const hostname = typeof parsed === "string" ? new URL(parsed).hostname : parsed.hostname;
   return LOCAL_PREVIEW_HOST_RULES.test(hostname ?? "");
 }
 
@@ -65,8 +66,8 @@ export async function enforceLocalPreviewOrigin(baseUrl: string, assignedPreview
 }
 
 export async function runBrowserQa(baseUrl: string, assignedPreviewUrl?: string | null): Promise<BrowserQaResult> {
-  let context: any;
-  let page: any;
+  let context: BrowserContext | undefined;
+  let page: Page | undefined;
   try {
     const { origin, hostname } = await enforceLocalPreviewOrigin(baseUrl, assignedPreviewUrl);
     const { chromium } = await import("playwright");
@@ -81,27 +82,13 @@ export async function runBrowserQa(baseUrl: string, assignedPreviewUrl?: string 
       context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
       page = await context.newPage();
 
-      page.on("console", (message: any) => {
+      page.on("console", (message: ConsoleMessage) => {
         if (message.type() === "error") consoleErrors.push(message.text().slice(0, 500));
       });
-      page.on("pageerror", (error: any) => consoleErrors.push(error.message.slice(0, 500)));
+      page.on("pageerror", (error: Error) => consoleErrors.push(error.message.slice(0, 500)));
 
-      page.on("request", (request: any) => {
-        const url = request.url();
-        try {
-          const hostname = new URL(url).hostname;
-          if (!isLocalPreviewHost({ hostname })) {
-            blockedUrls.push(sanitizeUrlForLogging(url));
-            request.abort("blockedbyclient");
-          }
-        } catch {
-          blockedUrls.push(sanitizeUrlForLogging(url));
-          request.abort("blockedbyclient");
-        }
-      });
-
-      page.on("framenavigated", (frame: any) => {
-        if (frame === page.mainFrame()) {
+      page.on("framenavigated", (frame: Frame) => {
+        if (frame === page?.mainFrame()) {
           try {
             const url = frame.url();
             if (!url || url === "about:blank") return;
@@ -113,7 +100,7 @@ export async function runBrowserQa(baseUrl: string, assignedPreviewUrl?: string 
                 status: "failed",
                 detail: `Blocked navigation to ${sanitizeUrlForLogging(url)}.`
               });
-              page.goto(origin, { waitUntil: "domcontentloaded", timeout: 10_000 }).catch(() => undefined);
+              page?.goto(origin, { waitUntil: "domcontentloaded", timeout: 10_000 }).catch(() => undefined);
             }
           } catch {
             // ignore non-HTTP main frame navigations

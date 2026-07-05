@@ -1,22 +1,25 @@
-import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import {
   generateLocalStarterApp,
   getCodexCliStatus,
   getLocalBuilderRootInfo,
   isServerlessRuntime,
-  type LocalBuildProject,
+  LocalBuildProject,
   openLocalProjectFolder,
   prepareLocalBuildProject,
   queueLocalBuilderWorkerTask,
   rebuildLocalStarterApp,
+  runLocalBuilderQa,
   runLocalCodexExecutor,
   runLocalFuguDesignReview,
-  runLocalBuilderQa,
+  runBrowserQaForProject,
+  saveVisualQaArtifacts,
   startLocalDevServer,
   stopLocalDevServer,
 } from "@/lib/local-builder";
+import { runBrowserQa } from "@/lib/browser-qa";
 import { redactInternalDetails } from "@/lib/hermes-execution/response-formatter";
+import { auth } from "@/lib/auth";
+import { NextResponse } from "next/server";
 
 function projectView(project: LocalBuildProject) {
   return {
