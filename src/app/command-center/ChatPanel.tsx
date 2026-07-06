@@ -28,7 +28,7 @@ function timeAgo(iso: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export default function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
+export default function ChatPanel({ initialMessages = [] }: { initialMessages?: ChatMessage[] } = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);

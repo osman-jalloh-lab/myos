@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import ChatPanel from "./ChatPanel";
-import { VoiceInput } from "./VoiceInput";
+import VoiceInput from "./VoiceInput";
 import { VoiceState, VoiceIntentPreview, intentPreview } from "@/lib/voice";
 
 interface VoiceChatPanelProps {
@@ -18,7 +18,6 @@ interface VoiceChatPanelProps {
 export default function VoiceChatPanel({ initialMessages }: VoiceChatPanelProps) {
   const [sending, setSending] = useState(false);
   const [lastVoiceState, setLastVoiceState] = useState<VoiceState | null>(null);
-  const [lastPreview, setLastPreview] = useState<VoiceIntentPreview | null>(null);
   const [lastResult, setLastResult] = useState<string | null>(null);
 
   const sendText = async (text: string) => {
@@ -32,8 +31,6 @@ export default function VoiceChatPanel({ initialMessages }: VoiceChatPanelProps)
   };
 
   const sendVoice = async (text: string) => {
-    const preview = intentPreview(text);
-    setLastPreview(preview);
     setLastVoiceState("executing");
     const res = await fetch("/api/voice/execute", {
       method: "POST",
