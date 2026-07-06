@@ -254,3 +254,20 @@ own tools — no overlap. This single master spec replaces the old multi-folder 
 Why: earlier all-at-once + scattered-files approach caused loops and fragmentation.
 Owner: Osman Jalloh.
 ```
+
+## 2026-07-05 — DESIGN-AND-BUILD three-stage pipeline addition
+Decision: Add a separate three-stage staged-builder workflow for local app generation,
+distinct from the Hermes OS core phases above: Stage 1 public-web research with isolated
+browser restrictions, Stage 2 local build with terminal/file-only execution, Stage 3 local
+visual QA with localhost-only browser inspection, screenshots, vision review, and a 2-pass
+repair cap. Research browser sessions must not carry personal cookies, must not access
+logged-in accounts or production targets unless explicitly requested, and must not submit
+forms or side effects. Browser QA must stay on assigned localhost previews only. Screenshots
+are stored in gitignored artifact directories by default unless explicit approval enables
+commit. Default research tools: `web_search,browser,vision,file`. Default build tools:
+`terminal,file`. Default QA tools: `browser,vision,terminal,file`. Default build executor
+`web_search` remains disabled for Hermes Nous build tasks unless explicitly approved per
+task. This amendment does not change the Hermes OS agent roster or permissions model; it
+adds a bounded additive pipeline under Local Builder / Hermes Nous.
+Owner: Osman Jalloh.
+```

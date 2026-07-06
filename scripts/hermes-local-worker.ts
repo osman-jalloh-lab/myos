@@ -15,6 +15,7 @@ type QueueTask = {
   projectId: string | null;
   logs: string | null;
   assignedExecutor: string;
+  executionProfile: string | null;
 };
 
 type WorkerCapabilities = {
@@ -27,6 +28,7 @@ type WorkerCapabilities = {
   hermesAgentVersion: string | null;
   hermesAgentAuthConfigured: boolean;
   hermesAgentModelConfigured: boolean;
+  autoStartInstalled: boolean;
 };
 
 const execFileAsync = promisify(execFile);
@@ -85,7 +87,7 @@ function workerApiBaseUrl(): string {
     const normalized = normalizeBaseUrl(value);
     if (normalized) return normalized;
   }
-  return "http://localhost:3000";
+  return "https://www.parawi.com";
 }
 
 function networkFailure(error: unknown): boolean {
@@ -165,6 +167,7 @@ async function ensureWorkerTables(db: Client): Promise<void> {
       hermesAgentVersion TEXT,
       hermesAgentAuthConfigured INTEGER NOT NULL DEFAULT 0,
       hermesAgentModelConfigured INTEGER NOT NULL DEFAULT 0,
+      autoStartInstalled INTEGER NOT NULL DEFAULT 0,
       lastHermesAgentRun TEXT,
       lastHermesAgentError TEXT,
       updatedAt TEXT DEFAULT (datetime('now'))
@@ -177,6 +180,7 @@ async function ensureWorkerTables(db: Client): Promise<void> {
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN hermesAgentVersion TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN hermesAgentAuthConfigured INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN hermesAgentModelConfigured INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
+  await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN autoStartInstalled INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN lastHermesAgentRun TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN lastHermesAgentError TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE AgentTask ADD COLUMN claimed_by_worker_id TEXT`).catch(() => undefined);
@@ -237,12 +241,16 @@ async function commandAvailable(command: string, args: string[]): Promise<{ avai
 }
 
 async function getCapabilities(): Promise<WorkerCapabilities> {
-  const [npm, git, codex, hermesPath] = await Promise.all([
+  const [npm, git, codex, hermesPath, autoStart] = await Promise.all([
     commandAvailable("npm", ["--version"]),
     commandAvailable("git", ["--version"]),
     commandAvailable("codex", ["--version"]),
     commandAvailable("where.exe", ["hermes-agent"]),
+    commandAvailable("schtasks.exe", ["/Query", "/TN", "Hermes Local Worker"]),
   ]);
+  const startupShortcut = process.env.APPDATA
+    ? path.join(process.env.APPDATA, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "Hermes Local Worker.lnk")
+    : "";
   const executablePath = hermesPath.version?.split(/\r?\n/)[0]?.trim() || null;
   const hermesPython = executablePath ? path.join(path.dirname(executablePath), "python.exe") : "python";
   const hermesVersion = executablePath
@@ -262,10 +270,9 @@ async function getCapabilities(): Promise<WorkerCapabilities> {
         return `${result.stdout ?? ""}${result.stderr ?? ""}`;
       }
     };
-    const [authText, modelText] = await Promise.all([captureStatus(["auth"]), captureStatus(["model"])]);
-    hermesAgentAuthConfigured = /nous/i.test(authText) && /oauth/i.test(authText);
-    hermesAgentModelConfigured = /(?:selected|current|active|provider|model)/i.test(modelText)
-      && !/(?:not configured|none selected|missing)/i.test(modelText);
+    const statusText = await captureStatus(["status"]);
+    hermesAgentAuthConfigured = /Nous Portal\s+.*logged in/i.test(statusText);
+    hermesAgentModelConfigured = /Model:\s+\S+/i.test(statusText) && /Provider:\s+Nous Portal/i.test(statusText);
   }
   return {
     nodeVersion: process.version,
@@ -277,6 +284,7 @@ async function getCapabilities(): Promise<WorkerCapabilities> {
     hermesAgentVersion: hermesVersion.version,
     hermesAgentAuthConfigured,
     hermesAgentModelConfigured,
+    autoStartInstalled: autoStart.available || Boolean(startupShortcut && existsSync(startupShortcut)),
   };
 }
 
@@ -292,8 +300,8 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
           workerId, machineName, status, lastHeartbeat, rootPath, nodeVersion, npmVersion,
           gitAvailable, codexAvailable, currentTask, lastError, workerApiTarget, lastFetchError,
           hermesAgentAvailable, hermesAgentPath, hermesAgentVersion, hermesAgentAuthConfigured,
-          hermesAgentModelConfigured, lastHermesAgentRun, lastHermesAgentError, updatedAt
-        ) VALUES (?, ?, 'offline', datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          hermesAgentModelConfigured, autoStartInstalled, lastHermesAgentRun, lastHermesAgentError, updatedAt
+        ) VALUES (?, ?, 'offline', datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(workerId) DO UPDATE SET
           machineName = excluded.machineName,
           status = 'offline',
@@ -306,6 +314,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
           hermesAgentVersion = excluded.hermesAgentVersion,
           hermesAgentAuthConfigured = excluded.hermesAgentAuthConfigured,
           hermesAgentModelConfigured = excluded.hermesAgentModelConfigured,
+          autoStartInstalled = excluded.autoStartInstalled,
           lastHermesAgentRun = excluded.lastHermesAgentRun,
           lastHermesAgentError = excluded.lastHermesAgentError,
           updatedAt = datetime('now')
@@ -316,6 +325,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
         capabilities.codexAvailable ? 1 : 0, currentTask, lastError, apiBaseUrl, lastFetchError,
         capabilities.hermesAgentAvailable ? 1 : 0, capabilities.hermesAgentPath, capabilities.hermesAgentVersion,
         capabilities.hermesAgentAuthConfigured ? 1 : 0, capabilities.hermesAgentModelConfigured ? 1 : 0,
+        capabilities.autoStartInstalled ? 1 : 0,
         lastHermesAgentRun, lastHermesAgentError,
       ],
     }).catch(() => undefined);
@@ -327,8 +337,8 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
         workerId, machineName, status, lastHeartbeat, rootPath, nodeVersion, npmVersion,
         gitAvailable, codexAvailable, currentTask, lastError, workerApiTarget, lastFetchError,
         hermesAgentAvailable, hermesAgentPath, hermesAgentVersion, hermesAgentAuthConfigured,
-        hermesAgentModelConfigured, lastHermesAgentRun, lastHermesAgentError, updatedAt
-      ) VALUES (?, ?, 'online', datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        hermesAgentModelConfigured, autoStartInstalled, lastHermesAgentRun, lastHermesAgentError, updatedAt
+      ) VALUES (?, ?, 'online', datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(workerId) DO UPDATE SET
         machineName = excluded.machineName,
         status = 'online',
@@ -347,6 +357,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
         hermesAgentVersion = excluded.hermesAgentVersion,
         hermesAgentAuthConfigured = excluded.hermesAgentAuthConfigured,
         hermesAgentModelConfigured = excluded.hermesAgentModelConfigured,
+        autoStartInstalled = excluded.autoStartInstalled,
         lastHermesAgentRun = excluded.lastHermesAgentRun,
         lastHermesAgentError = excluded.lastHermesAgentError,
         updatedAt = datetime('now')
@@ -368,6 +379,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
       capabilities.hermesAgentVersion,
       capabilities.hermesAgentAuthConfigured ? 1 : 0,
       capabilities.hermesAgentModelConfigured ? 1 : 0,
+      capabilities.autoStartInstalled ? 1 : 0,
       lastHermesAgentRun,
       lastHermesAgentError,
     ],
@@ -384,7 +396,7 @@ async function markWorkerOffline(db: Client, capabilities: WorkerCapabilities, a
 async function claimTask(db: Client): Promise<QueueTask | null> {
   const res = await db.execute({
     sql: `
-      SELECT id, userId, title, description, status, project_id, logs, assigned_executor
+      SELECT id, userId, title, description, status, project_id, logs, assigned_executor, execution_profile
       FROM AgentTask
       WHERE assigned_executor IN ('local_worker', 'hermes_agent') AND status = 'queued'
       ORDER BY createdAt ASC
@@ -404,6 +416,7 @@ async function claimTask(db: Client): Promise<QueueTask | null> {
     projectId: typeof row.project_id === "string" && row.project_id.trim() ? row.project_id : null,
     logs: typeof row.logs === "string" ? row.logs : null,
     assignedExecutor: String(row.assigned_executor ?? "local_worker"),
+    executionProfile: typeof row.execution_profile === "string" && row.execution_profile.trim() ? row.execution_profile.trim() : null,
   };
 
   const update = await db.execute({
@@ -484,7 +497,7 @@ function taskStatusForProjectStatus(status: string): "completed" | "failed" | "q
   return "completed";
 }
 
-function hermesAgentProcessEnv(cwd?: string): NodeJS.ProcessEnv {
+function hermesAgentProcessEnv(): NodeJS.ProcessEnv {
   const allowed = [
     "SystemRoot", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP",
     "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
@@ -553,7 +566,7 @@ async function runNpm(folder: string, args: string[], timeout: number): Promise<
     windowsHide: true,
     timeout,
     maxBuffer: 2_000_000,
-    env: hermesAgentProcessEnv(folder),
+    env: hermesAgentProcessEnv(),
   });
   return safeHermesOutput(`${result.stdout}${result.stderr}`.trim());
 }
@@ -604,16 +617,29 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
   let agentOutput = "";
   try {
     const hermesCommand = path.join(path.dirname(capabilities.hermesAgentPath), "hermes.exe");
+    const cli = existsSync(hermesCommand) ? hermesCommand : "hermes";
+    const timeout = Number(process.env.HERMES_AGENT_TIMEOUT_MS ?? 20 * 60_000);
+    const maxTurns = String(Number(process.env.HERMES_AGENT_MAX_TURNS ?? 40));
+    const toolsetAllowList = process.env.HERMES_AGENT_TOOLSETS
+      ?? "terminal,file,browser,vision";
     try {
-      const result = await execFileAsync(existsSync(hermesCommand) ? hermesCommand : "hermes", [
-        "--oneshot",
-        `Read the execution packet at ./${promptName} and execute it completely. Use the configured current directory; do not search outside it or ask for confirmation.`,
+      const result = await execFileAsync(cli, [
+        "chat",
+        "-q",
+        packet.prompt,
+        "--max-turns",
+        maxTurns,
+        "--source",
+        "tool",
+        "--cli",
+        "-t",
+        toolsetAllowList,
       ], {
         cwd: folder,
         windowsHide: true,
-        timeout: Number(process.env.HERMES_AGENT_TIMEOUT_MS ?? 20 * 60_000),
+        timeout,
         maxBuffer: 2_000_000,
-        env: hermesAgentProcessEnv(folder),
+        env: hermesAgentProcessEnv(),
       });
       agentOutput = safeHermesOutput(`${result.stdout}${result.stderr}`.trim());
     } catch (error) {
@@ -741,6 +767,9 @@ async function executeTask(db: Client, task: QueueTask): Promise<void> {
 
 async function runLoop(): Promise<void> {
   loadLocalEnv();
+  const pidPath = path.join(process.cwd(), "logs", "hermes-local-worker.pid");
+  await mkdir(path.dirname(pidPath), { recursive: true });
+  await writeFile(pidPath, String(process.pid), "utf8");
   const apiBaseUrl = workerApiBaseUrl();
   const db = createDb();
   const capabilities = await getCapabilities();
@@ -763,6 +792,7 @@ async function runLoop(): Promise<void> {
     if (stopping) return;
     stopping = true;
     await markWorkerOffline(db, capabilities, apiBaseUrl);
+    await rm(pidPath, { force: true }).catch(() => undefined);
     process.exit(0);
   };
   process.on("SIGINT", () => void stop());
@@ -811,6 +841,7 @@ async function runLoop(): Promise<void> {
 
     if (runOnce) {
       await markWorkerOffline(db, capabilities, apiBaseUrl);
+      await rm(pidPath, { force: true }).catch(() => undefined);
       return;
     }
 

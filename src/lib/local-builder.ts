@@ -30,6 +30,9 @@ export type LocalBuildProject = {
   designScore: number | null;
   qaStatus: string | null;
   qaChecklist: LocalBuilderQaItem[] | null;
+  desktopScreenshotPath?: string | null;
+  mobileScreenshotPath?: string | null;
+  visualQaStatus?: "visual_qa_passed" | "visual_qa_failed" | "visual_qa_needs_review" | null;
   files?: string[];
 };
 
@@ -2282,19 +2285,24 @@ export async function runBrowserQaForProject(userId: string, projectId: string):
   }
   if (!url) throw new Error("Browser QA requires a running local preview.");
 
-  const browserQa = await runBrowserQa(url);
+  const browserQa = await runBrowserQa(url, url);
   const latest = await findLocalBuildProject(db, userId, projectId);
   const existingChecklist = parseQaChecklist(latest.localQaChecklist) ?? [];
   const browserKeys = new Set(browserQa.checks.map((check) => check.key));
   const checklist = [...existingChecklist.filter((item) => !browserKeys.has(item.key)), ...browserQa.checks];
   const staticFailed = existingChecklist.some((item) => item.status === "failed" && ["homepage_loads", "primary_buttons_clickable"].includes(item.key));
+  const visualQaStatus = browserQa.passed
+    ? "visual_qa_passed"
+    : browserQa.checks.some((check) => check.status === "failed")
+      ? "visual_qa_needs_review"
+      : "visual_qa_failed";
   const qaStatus = browserQa.passed && !staticFailed ? "qa_passed" : "qa_pending";
   const summary = browserQa.passed
     ? `Browser QA passed at ${url}.`
     : `Browser QA needs review at ${url}: ${browserQa.checks.filter((item) => item.status === "failed").map((item) => item.label).join(", ")}.`;
   await db.execute({
-    sql: `UPDATE Project SET localQaStatus = ?, localQaChecklist = ?, localPreviewStatus = 'online', localPreviewCheckedAt = datetime('now'), localBuildLog = substr(coalesce(localBuildLog, '') || char(10) || ?, -12000), updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
-    args: [qaStatus, JSON.stringify(checklist), summary, projectId, userId],
+    sql: `UPDATE Project SET localQaStatus = ?, localQaChecklist = ?, localPreviewStatus = 'online', localPreviewCheckedAt = datetime('now'), localBuildLog = substr(coalesce(localBuildLog, '') || char(10) || ?, -12000), desktopScreenshotPath = ?, mobileScreenshotPath = ?, visualQaStatus = ?, updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
+    args: [qaStatus, JSON.stringify(checklist), summary, browserQa.desktopScreenshotPath ?? null, browserQa.mobileScreenshotPath ?? null, visualQaStatus, projectId, userId],
   });
   await logLocalBuilderRun(db, browserQa.passed ? "completed" : "failed", `browser_qa project=${rowString(project.projectName)}`, summary);
   const updated = await findLocalBuildProject(db, userId, projectId);
@@ -2317,12 +2325,30 @@ export async function runBrowserQaForProject(userId: string, projectId: string):
     designScore: rowNumber(updated.designScore),
     qaStatus,
     qaChecklist: checklist,
+    desktopScreenshotPath: browserQa.desktopScreenshotPath ?? null,
+    mobileScreenshotPath: browserQa.mobileScreenshotPath ?? null,
+    visualQaStatus,
   };
 }
 
 export async function startPreviewAndRunBrowserQa(userId: string, projectId: string): Promise<LocalBuildProject> {
   await startLocalDevServer(userId, projectId);
   return runBrowserQaForProject(userId, projectId);
+}
+
+export async function saveVisualQaArtifacts(
+  projectFolder: string,
+  browserQa: Awaited<ReturnType<typeof runBrowserQa>>
+): Promise<{ desktopScreenshotPath: string | null; mobileScreenshotPath: string | null }> {
+  const root = path.resolve(projectFolder);
+  const candidate = browserQa.desktopScreenshotPath || browserQa.mobileScreenshotPath;
+  const base = candidate ? path.dirname(candidate) : path.join(root, "artifacts", "qa", `screenshots-${Date.now()}`);
+  await mkdir(base, { recursive: true }).catch(() => undefined);
+  let desktop = browserQa.desktopScreenshotPath;
+  let mobile = browserQa.mobileScreenshotPath;
+  if (!desktop) desktop = path.join(base, "desktop.png");
+  if (!mobile) mobile = path.join(base, "mobile.png");
+  return { desktopScreenshotPath: desktop, mobileScreenshotPath: mobile };
 }
 
 export async function markDeadPreviewsStale(): Promise<number> {

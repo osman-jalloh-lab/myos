@@ -10,6 +10,21 @@ function Write-Status($Message) {
   Write-Host "[Hermes Local Worker] $Message"
 }
 
+function Test-TaskConfiguration($Task, [string]$LauncherScript, [string]$Root) {
+  if (-not $Task) { return $false }
+  $hasLauncher = @($Task.Actions | Where-Object {
+    $_.Execute -eq $LauncherScript -and $_.WorkingDirectory -eq $Root
+  }).Count -gt 0
+  $hasLogonTrigger = @($Task.Triggers | Where-Object { $_.CimClass.CimClassName -eq "MSFT_TaskLogonTrigger" }).Count -gt 0
+  $settings = $Task.Settings
+  return $hasLauncher `
+    -and $hasLogonTrigger `
+    -and $settings.MultipleInstances -eq "IgnoreNew" `
+    -and -not $settings.DisallowStartIfOnBatteries `
+    -and -not $settings.StopIfGoingOnBatteries `
+    -and $settings.RestartCount -ge 3
+}
+
 if ($Uninstall) {
   $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   if ($existing) {
@@ -26,7 +41,12 @@ if ($Uninstall) {
   exit 0
 }
 
+$ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 $npm = $null
+$nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+if (-not $nodeCommand) {
+  throw "Node.js was not found on PATH. Install Node.js or add it to PATH before installing the worker startup task."
+}
 $npmCommand = Get-Command npm.cmd -ErrorAction SilentlyContinue
 if ($npmCommand) {
   $npm = $npmCommand.Source
@@ -63,6 +83,16 @@ $settings = New-ScheduledTaskSettingsSet `
   -RestartCount 3 `
   -RestartInterval (New-TimeSpan -Minutes 1)
 
+$existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+$alreadyConfigured = Test-TaskConfiguration $existing $launcherScript $ProjectRoot
+
+if ($alreadyConfigured) {
+  Write-Status "Scheduled task '$TaskName' is already present and correctly configured."
+  Write-Status "Startup mode: user logon; restart after failure: enabled; battery operation: allowed; duplicate instances: ignored."
+  Write-Status "Worker log: $(Join-Path $ProjectRoot 'logs\hermes-local-worker.log')"
+  exit 0
+}
+
 try {
   Register-ScheduledTask `
     -TaskName $TaskName `
@@ -73,7 +103,9 @@ try {
     -Force `
     -ErrorAction Stop | Out-Null
 
-  Write-Status "Installed scheduled task '$TaskName'."
+  $result = if ($existing) { "Updated" } else { "Installed" }
+  Write-Status "$result scheduled task '$TaskName'."
+  Write-Status "Startup mode: user logon; restart after failure: enabled; battery operation: allowed; duplicate instances: ignored."
 } catch {
   Write-Status "Task Scheduler registration failed: $($_.Exception.Message)"
   Write-Status "Creating current-user Startup shortcut fallback."
@@ -96,3 +128,4 @@ try {
 }
 Write-Status "Project root: $ProjectRoot"
 Write-Status "Command: $launcherScript"
+Write-Status "Worker log: $(Join-Path $ProjectRoot 'logs\hermes-local-worker.log')"

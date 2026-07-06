@@ -1,22 +1,25 @@
-import { NextResponse } from "next/server";
-import { auth } from "@/lib/auth";
 import {
   generateLocalStarterApp,
   getCodexCliStatus,
   getLocalBuilderRootInfo,
   isServerlessRuntime,
-  type LocalBuildProject,
+  LocalBuildProject,
   openLocalProjectFolder,
   prepareLocalBuildProject,
   queueLocalBuilderWorkerTask,
   rebuildLocalStarterApp,
+  runLocalBuilderQa,
   runLocalCodexExecutor,
   runLocalFuguDesignReview,
-  runLocalBuilderQa,
+  runBrowserQaForProject,
+  saveVisualQaArtifacts,
   startLocalDevServer,
   stopLocalDevServer,
 } from "@/lib/local-builder";
+import { runBrowserQa } from "@/lib/browser-qa";
 import { redactInternalDetails } from "@/lib/hermes-execution/response-formatter";
+import { auth } from "@/lib/auth";
+import { NextResponse } from "next/server";
 
 function projectView(project: LocalBuildProject) {
   return {
@@ -56,13 +59,15 @@ function responseFor(project: ReturnType<typeof projectView>, action: string, fa
   }, { status: failed ? 500 : 200 });
 }
 
-function queuedResponse(project: ReturnType<typeof projectView>, action: string) {
+function queuedResponse(project: ReturnType<typeof projectView>, action: string, executor: "local_worker" | "hermes_agent") {
+  const executorLabel = executor === "hermes_agent" ? "Hermes Agent" : "Local Worker";
   const answer = [
-    `Local Builder ${action} queued for ${project.projectName}.`,
+    `${executorLabel} ${action} queued for ${project.projectName}.`,
     `Folder: ${project.localFolderPath}`,
     `Status: ${project.status}`,
     `Worker task: ${project.taskId}`,
     "Vercel/serverless did not touch the local filesystem or start local processes.",
+    "Queued until this PC is online.",
   ].join("\n");
   return NextResponse.json({
     status: "queued",
@@ -100,7 +105,12 @@ export async function POST(req: Request) {
 
   if (action !== "prepare" && !projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
 
-  const selectedExecutor = body?.executor === "hermes_agent" ? "hermes_agent" : "local_worker";
+  const selectedExecutor =
+    action === "prepare" || !body?.executor
+      ? "local_worker"
+      : body.executor === "hermes_agent"
+        ? "hermes_agent"
+        : "local_worker";
   if (isServerlessRuntime() || selectedExecutor === "hermes_agent") {
     const queued = await queueLocalBuilderWorkerTask(session.user.id, action, message ?? "", projectId, selectedExecutor);
     if (!queued) {
@@ -109,7 +119,7 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    return queuedResponse(projectView(queued), action);
+    return queuedResponse(projectView(queued), action, selectedExecutor);
   }
 
   if (action === "generate") {
