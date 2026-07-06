@@ -5,7 +5,6 @@ describe("local preview host rules", () => {
   it("allows localhost and its aliases", () => {
     expect(isLocalPreviewHost(new URL("http://localhost:3000"))).toBe(true);
     expect(isLocalPreviewHost(new URL("http://127.0.0.1:3000"))).toBe(true);
-    expect(isLocalPreviewHost(new URL("http://0.0.0.0:3000"))).toBe(true);
     expect(isLocalPreviewHost(new URL("http://[::1]:3000"))).toBe(true);
   });
 

@@ -15,6 +15,7 @@ type QueueTask = {
   projectId: string | null;
   logs: string | null;
   assignedExecutor: string;
+  executionProfile: string | null;
 };
 
 type WorkerCapabilities = {
@@ -395,7 +396,7 @@ async function markWorkerOffline(db: Client, capabilities: WorkerCapabilities, a
 async function claimTask(db: Client): Promise<QueueTask | null> {
   const res = await db.execute({
     sql: `
-      SELECT id, userId, title, description, status, project_id, logs, assigned_executor
+      SELECT id, userId, title, description, status, project_id, logs, assigned_executor, execution_profile
       FROM AgentTask
       WHERE assigned_executor IN ('local_worker', 'hermes_agent') AND status = 'queued'
       ORDER BY createdAt ASC
@@ -415,6 +416,7 @@ async function claimTask(db: Client): Promise<QueueTask | null> {
     projectId: typeof row.project_id === "string" && row.project_id.trim() ? row.project_id : null,
     logs: typeof row.logs === "string" ? row.logs : null,
     assignedExecutor: String(row.assigned_executor ?? "local_worker"),
+    executionProfile: typeof row.execution_profile === "string" && row.execution_profile.trim() ? row.execution_profile.trim() : null,
   };
 
   const update = await db.execute({
@@ -495,7 +497,7 @@ function taskStatusForProjectStatus(status: string): "completed" | "failed" | "q
   return "completed";
 }
 
-function hermesAgentProcessEnv(cwd?: string): NodeJS.ProcessEnv {
+function hermesAgentProcessEnv(): NodeJS.ProcessEnv {
   const allowed = [
     "SystemRoot", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP",
     "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
@@ -564,7 +566,7 @@ async function runNpm(folder: string, args: string[], timeout: number): Promise<
     windowsHide: true,
     timeout,
     maxBuffer: 2_000_000,
-    env: hermesAgentProcessEnv(folder),
+    env: hermesAgentProcessEnv(),
   });
   return safeHermesOutput(`${result.stdout}${result.stderr}`.trim());
 }
@@ -637,7 +639,7 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
         windowsHide: true,
         timeout,
         maxBuffer: 2_000_000,
-        env: hermesAgentProcessEnv(folder),
+        env: hermesAgentProcessEnv(),
       });
       agentOutput = safeHermesOutput(`${result.stdout}${result.stderr}`.trim());
     } catch (error) {

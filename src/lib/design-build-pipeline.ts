@@ -2,8 +2,7 @@ export type ToolProfile =
   | "research"
   | "build"
   | "qa"
-  | "local_qa"
-  | "visual_qa"
+  | "visual_review"
   | "noop";
 
 export type Stage =
@@ -57,11 +56,10 @@ export type BuildArtifacts = {
 };
 
 export const TOOL_PROFILES: Record<ToolProfile, string[]> = {
-  research: ["web_search", "browser", "vision", "file"],
+  research: ["terminal", "file", "browser", "vision", "web_search"],
   build: ["terminal", "file"],
-  qa: ["terminal", "file", "browser", "vision"],
-  local_qa: ["browser", "vision", "terminal", "file"],
-  visual_qa: ["browser", "vision", "terminal", "file"],
+  qa: ["terminal", "file", "vision"],
+  visual_review: ["terminal", "file", "vision"],
   noop: [],
 };
 
@@ -84,25 +82,64 @@ export function defaultRepairPassCap(): number {
   return 2;
 }
 
-export function resolveResearchToolProfile(): { stage: Stage; tools: string[] } {
+export function resolveResearchToolProfile(): { stage: Stage; tools: string[]; profile: ToolProfile } {
   return {
     stage: "stage_1_research",
+    profile: "research",
     tools: TOOL_PROFILES.research,
   };
 }
 
-export function resolveBuildToolProfile(): { stage: Stage; tools: string[] } {
+export function resolveBuildToolProfile(): { stage: Stage; tools: string[]; profile: ToolProfile } {
   return {
     stage: "stage_2_build",
+    profile: "build",
     tools: TOOL_PROFILES.build,
   };
 }
 
-export function resolveQaToolProfile(): { stage: Stage; tools: string[] } {
+export function resolveQaToolProfile(): { stage: Stage; tools: string[]; profile: ToolProfile } {
   return {
     stage: "stage_3_qa",
-    tools: TOOL_PROFILES.local_qa,
+    profile: "qa",
+    tools: TOOL_PROFILES.qa,
   };
+}
+
+export function resolveVisualReviewProfile(): { stage: Stage; tools: string[]; profile: ToolProfile } {
+  return {
+    stage: "stage_3_qa",
+    profile: "visual_review",
+    tools: TOOL_PROFILES.visual_review,
+  };
+}
+
+export function resolveProfileForAction(action?: string | null, executionProfile?: string | null): { stage: Stage; tools: string[]; profile: ToolProfile } {
+  const normalizedAction = typeof action === "string" ? action.trim().toLowerCase() : "";
+  const explicitProfile =
+    typeof executionProfile === "string" && executionProfile.trim().length > 0
+      ? executionProfile.trim().toLowerCase()
+      : null;
+
+  if (explicitProfile && explicitProfile in TOOL_PROFILES) {
+    const profile = explicitProfile as ToolProfile;
+    if (profile === "research") return resolveResearchToolProfile();
+    if (profile === "qa") return resolveQaToolProfile();
+    if (profile === "visual_review") return resolveVisualReviewProfile();
+    if (profile === "build") return resolveBuildToolProfile();
+  }
+
+  if (["research", "asset research", "web research", "inspiration"].includes(normalizedAction)) {
+    return resolveResearchToolProfile();
+  }
+  if (["generate", "fix", "rebuild", "build", "prepare"].includes(normalizedAction)) {
+    return resolveBuildToolProfile();
+  }
+  if (["browserqa", "runqa", "local qa", "browser qa", "screenshot review"].includes(normalizedAction)) {
+    return resolveQaToolProfile();
+  }
+
+  return resolveBuildToolProfile();
 }
 
 export const browserQaPolicy = Object.freeze({
@@ -151,7 +188,8 @@ export function browserQaPassed(checks: ArtifactQaCheck[]): boolean {
 }
 
 export function isLocalPreviewHost(hostname: string | URL | { hostname?: string }): boolean {
-  const resolved = typeof hostname === "string" ? new URL(hostname).hostname : hostname.hostname ?? "";
+  const resolved =
+    typeof hostname === "string" ? new URL(hostname).hostname : (hostname as { hostname?: string }).hostname ?? "";
   return browserQaPolicy.allowedHostRegex.test(resolved);
 }
 
@@ -203,5 +241,5 @@ export function isBuildProfile(profile: ToolProfile): boolean {
 }
 
 export function isQaProfile(profile: ToolProfile): boolean {
-  return profile === "qa" || profile === "local_qa" || profile === "visual_qa";
+  return profile === "qa" || profile === "visual_review";
 }

@@ -13,13 +13,15 @@ import {
 describe("design-build-pipeline tool profiles", () => {
   it("returns research stage and tools", () => {
     expect(resolveResearchToolProfile()).toEqual({
+      profile: "research",
       stage: "stage_1_research",
-      tools: ["web_search", "browser", "vision", "file"],
+      tools: ["terminal", "file", "browser", "vision", "web_search"],
     });
   });
 
   it("returns build stage and tools", () => {
     expect(resolveBuildToolProfile()).toEqual({
+      profile: "build",
       stage: "stage_2_build",
       tools: ["terminal", "file"],
     });
@@ -27,8 +29,9 @@ describe("design-build-pipeline tool profiles", () => {
 
   it("returns QA stage and tools", () => {
     expect(resolveQaToolProfile()).toEqual({
+      profile: "qa",
       stage: "stage_3_qa",
-      tools: ["browser", "vision", "terminal", "file"],
+      tools: ["terminal", "file", "vision"],
     });
   });
 });
