@@ -336,6 +336,11 @@ async function runBuildAndPush(message: string, ctx: ToolContext) {
     if (queued) {
       const decision = "route=local_worker_queue reason=serverless_cannot_write_local_files";
       console.log(`[hermes-execution] ${decision} task=${queued.taskId ?? "unknown"} project=${queued.projectName}`);
+      // Say so explicitly when the worker is down instead of replying as if
+      // the build is in motion (fix-and-harden brief 2.2).
+      const { getLocalWorkerLiveness, workerOfflineNotice } = await import("@/lib/worker-watch");
+      const liveness = await getLocalWorkerLiveness().catch(() => null);
+      const notice = liveness ? workerOfflineNotice(liveness) : null;
       return {
         answer: [
           "Queued for Local Worker.",
@@ -343,7 +348,7 @@ async function runBuildAndPush(message: string, ctx: ToolContext) {
           decision,
           `Project: ${queued.projectName}`,
           queued.taskId ? `Task: ${queued.taskId}` : null,
-          "Local Worker required: run `npm run worker:local` on the Windows machine to claim and execute it.",
+          notice ?? "Local worker is online — it will claim this task on its next poll.",
         ].filter(Boolean).join("\n"),
         artifacts: [{
           type: "text" as const,

@@ -17,6 +17,7 @@ import {
   stopLocalDevServer,
 } from "@/lib/local-builder";
 import { redactInternalDetails } from "@/lib/hermes-execution/response-formatter";
+import { getLocalWorkerLiveness, workerOfflineNotice } from "@/lib/worker-watch";
 
 function projectView(project: LocalBuildProject) {
   return {
@@ -56,14 +57,15 @@ function responseFor(project: ReturnType<typeof projectView>, action: string, fa
   }, { status: failed ? 500 : 200 });
 }
 
-function queuedResponse(project: ReturnType<typeof projectView>, action: string) {
+function queuedResponse(project: ReturnType<typeof projectView>, action: string, workerNotice?: string | null) {
   const answer = [
     `Local Builder ${action} queued for ${project.projectName}.`,
     `Folder: ${project.localFolderPath}`,
     `Status: ${project.status}`,
     `Worker task: ${project.taskId}`,
     "Vercel/serverless did not touch the local filesystem or start local processes.",
-  ].join("\n");
+    workerNotice ?? null,
+  ].filter(Boolean).join("\n");
   return NextResponse.json({
     status: "queued",
     answer: redactInternalDetails(answer),
@@ -109,7 +111,11 @@ export async function POST(req: Request) {
         { status: 400 }
       );
     }
-    return queuedResponse(projectView(queued), action);
+    // Tell Osman explicitly when the queued task has no live worker to run it,
+    // instead of replying as if the build is in motion.
+    const liveness = await getLocalWorkerLiveness().catch(() => null);
+    const notice = liveness ? workerOfflineNotice(liveness) : null;
+    return queuedResponse(projectView(queued), action, notice);
   }
 
   if (action === "generate") {

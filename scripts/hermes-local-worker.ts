@@ -5,6 +5,9 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+// Dependency-free on purpose — safe to import before loadLocalEnv() runs,
+// unlike ../src/lib/local-builder which is only ever imported dynamically.
+import { DEFAULT_LOCAL_PROJECTS_ROOT, resolveLocalProjectsRoot } from "../src/lib/local-projects-root";
 
 type QueueTask = {
   id: string;
@@ -34,7 +37,6 @@ const POLL_MS = Number(process.env.HERMES_LOCAL_WORKER_POLL_MS ?? 15_000);
 const HEARTBEAT_MS = Number(process.env.HERMES_LOCAL_WORKER_HEARTBEAT_MS ?? 15_000);
 const LEASE_MS = 5 * 60_000;
 const WORKER_ID = process.env.HERMES_LOCAL_WORKER_ID?.trim() || `local-worker:${os.hostname()}:${process.pid}`;
-const LOCAL_ROOT = "C:\\Users\\osman\\OneDrive\\Desktop\\HermesProject";
 const ALLOWED_ACTIONS = new Set(["prepare", "generate", "runQa", "rebuild", "build", "npmBuild", "startDev", "stopDev"]);
 
 let currentTask: string | null = null;
@@ -64,7 +66,7 @@ function loadLocalEnv(): void {
   const cwd = process.cwd();
   loadEnvFile(path.join(cwd, ".env.local"));
   loadEnvFile(path.join(cwd, ".env"));
-  process.env.HERMES_LOCAL_PROJECTS_ROOT = process.env.HERMES_LOCAL_PROJECTS_ROOT?.trim() || LOCAL_ROOT;
+  process.env.HERMES_LOCAL_PROJECTS_ROOT = process.env.HERMES_LOCAL_PROJECTS_ROOT?.trim() || DEFAULT_LOCAL_PROJECTS_ROOT;
 }
 
 function normalizeBaseUrl(value: string): string | null {
@@ -311,7 +313,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
           updatedAt = datetime('now')
       `,
       args: [
-        WORKER_ID, os.hostname(), process.env.HERMES_LOCAL_PROJECTS_ROOT ?? LOCAL_ROOT,
+        WORKER_ID, os.hostname(), resolveLocalProjectsRoot(),
         capabilities.nodeVersion, capabilities.npmVersion, capabilities.gitAvailable ? 1 : 0,
         capabilities.codexAvailable ? 1 : 0, currentTask, lastError, apiBaseUrl, lastFetchError,
         capabilities.hermesAgentAvailable ? 1 : 0, capabilities.hermesAgentPath, capabilities.hermesAgentVersion,
@@ -354,7 +356,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
     args: [
       WORKER_ID,
       os.hostname(),
-      process.env.HERMES_LOCAL_PROJECTS_ROOT ?? LOCAL_ROOT,
+      resolveLocalProjectsRoot(),
       capabilities.nodeVersion,
       capabilities.npmVersion,
       capabilities.gitAvailable ? 1 : 0,
@@ -505,7 +507,7 @@ function safeHermesOutput(value: string): string {
 }
 
 async function assertSafeHermesProjectFolder(folder: string): Promise<string> {
-  const root = path.resolve(process.env.HERMES_LOCAL_PROJECTS_ROOT ?? LOCAL_ROOT);
+  const root = path.resolve(resolveLocalProjectsRoot());
   const resolved = path.resolve(folder);
   const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
   if (resolved === root || !resolved.startsWith(rootWithSep)) {
