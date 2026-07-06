@@ -686,9 +686,44 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
 async function executeTask(db: Client, task: QueueTask): Promise<void> {
   if (task.assignedExecutor === "hermes_agent") {
     const capabilities = await getCapabilities();
-    await executeHermesAgentTask(db, task, capabilities);
-    return;
+    try {
+      await executeHermesAgentTask(db, task, capabilities);
+      return;
+    } catch (error) {
+      // Hermes Nous is primary; Codex CLI is the automatic fallback. A task is
+      // only truly failed when BOTH fail (fix-and-harden brief 2.4).
+      const hermesReason = safeError(error);
+      lastHermesAgentError = hermesReason;
+      const { action } = parseTaskPayload(task);
+      if (!capabilities.codexAvailable || !ALLOWED_ACTIONS.has(action)) {
+        throw new Error(
+          `Hermes Nous failed (${hermesReason}); Codex CLI fallback unavailable (${!capabilities.codexAvailable ? "codex is not installed" : `unsupported action: ${action}`}).`
+        );
+      }
+      const fallbackNote = `Hermes Nous failed (${hermesReason}) — falling back to Codex CLI.`;
+      console.warn(fallbackNote);
+      await updateTask(db, task, { log: fallbackNote }).catch(() => undefined);
+      try {
+        // Re-dispatch through the existing Codex/local-worker path so the
+        // build log and Project.assignedAgent reflect who actually ran it.
+        await executeLocalWorkerTask(db, { ...task, assignedExecutor: "codex_cli" });
+        if (task.projectId) {
+          await db.execute({
+            sql: `UPDATE Project SET assignedAgent = 'codex_cli', updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
+            args: [task.projectId, task.userId],
+          }).catch(() => undefined);
+        }
+        await updateTask(db, task, { log: "Codex CLI fallback completed after Hermes Nous failure." }).catch(() => undefined);
+        return;
+      } catch (codexError) {
+        throw new Error(`Hermes Nous failed (${hermesReason}); Codex CLI fallback also failed (${safeError(codexError)}).`);
+      }
+    }
   }
+  await executeLocalWorkerTask(db, task);
+}
+
+async function executeLocalWorkerTask(db: Client, task: QueueTask): Promise<void> {
   const { action, message } = parseTaskPayload(task);
   if (!ALLOWED_ACTIONS.has(action)) {
     throw new Error(`Unsupported local worker action: ${action}`);

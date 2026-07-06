@@ -17,7 +17,13 @@ import {
   stopLocalDevServer,
 } from "@/lib/local-builder";
 import { redactInternalDetails } from "@/lib/hermes-execution/response-formatter";
-import { getLocalWorkerLiveness, workerOfflineNotice } from "@/lib/worker-watch";
+import { getHermesAgentReadiness, getLocalWorkerLiveness, workerOfflineNotice } from "@/lib/worker-watch";
+
+// Build-shaped actions default to Hermes Nous (hermes_agent) when it is
+// installed + authed + has a model on the worker machine; Codex CLI via
+// local_worker is the fallback. Non-build actions (prepare, dev servers,
+// QA-only) stay on the local_worker path — hermes_agent tasks need a project.
+const HERMES_PRIMARY_ACTIONS = new Set(["generate", "rebuild", "build", "npmBuild", "runCodex"]);
 
 function projectView(project: LocalBuildProject) {
   return {
@@ -57,14 +63,14 @@ function responseFor(project: ReturnType<typeof projectView>, action: string, fa
   }, { status: failed ? 500 : 200 });
 }
 
-function queuedResponse(project: ReturnType<typeof projectView>, action: string, workerNotice?: string | null) {
+function queuedResponse(project: ReturnType<typeof projectView>, action: string, notices: Array<string | null> = []) {
   const answer = [
     `Local Builder ${action} queued for ${project.projectName}.`,
     `Folder: ${project.localFolderPath}`,
     `Status: ${project.status}`,
     `Worker task: ${project.taskId}`,
     "Vercel/serverless did not touch the local filesystem or start local processes.",
-    workerNotice ?? null,
+    ...notices,
   ].filter(Boolean).join("\n");
   return NextResponse.json({
     status: "queued",
@@ -102,7 +108,27 @@ export async function POST(req: Request) {
 
   if (action !== "prepare" && !projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
 
-  const selectedExecutor = body?.executor === "hermes_agent" ? "hermes_agent" : "local_worker";
+  // Hermes Nous is the primary executor; Codex CLI (local_worker) is the
+  // fallback. An explicit `executor` in the request always wins. Either way
+  // the response says which executor was actually assigned — never a silent swap.
+  let selectedExecutor: "hermes_agent" | "local_worker";
+  let executorNote: string | null = null;
+  if (body?.executor === "hermes_agent" || body?.executor === "local_worker") {
+    selectedExecutor = body.executor;
+    executorNote = `Executor: ${selectedExecutor === "hermes_agent" ? "Hermes Nous" : "Codex CLI (local worker)"} — explicitly requested.`;
+  } else if (HERMES_PRIMARY_ACTIONS.has(action)) {
+    const readiness = await getHermesAgentReadiness().catch(() => ({ ready: false, reason: "readiness check failed" }));
+    if (readiness.ready) {
+      selectedExecutor = "hermes_agent";
+      executorNote = "Executor: Hermes Nous (primary). Codex CLI runs automatically if it fails.";
+    } else {
+      selectedExecutor = "local_worker";
+      executorNote = `Executor: Codex CLI (local worker) — Hermes Nous unavailable: ${readiness.reason}.`;
+    }
+  } else {
+    selectedExecutor = "local_worker";
+  }
+
   if (isServerlessRuntime() || selectedExecutor === "hermes_agent") {
     const queued = await queueLocalBuilderWorkerTask(session.user.id, action, message ?? "", projectId, selectedExecutor);
     if (!queued) {
@@ -115,7 +141,7 @@ export async function POST(req: Request) {
     // instead of replying as if the build is in motion.
     const liveness = await getLocalWorkerLiveness().catch(() => null);
     const notice = liveness ? workerOfflineNotice(liveness) : null;
-    return queuedResponse(projectView(queued), action, notice);
+    return queuedResponse(projectView(queued), action, [executorNote, notice]);
   }
 
   if (action === "generate") {

@@ -66,6 +66,36 @@ export function workerOfflineNotice(liveness: WorkerLiveness): string | null {
   return `⚠️ Local worker is ${liveness.status} (last heartbeat: ${last}) — this task is queued but nothing is building right now. Start it on the HP laptop with: npm run worker:local`;
 }
 
+// ── Hermes Nous (hermes_agent) readiness ─────────────────────────────────────
+// Read from the capability flags the worker already reports on every heartbeat
+// (getCapabilities() in scripts/hermes-local-worker.ts) — do not re-detect.
+
+export type HermesAgentReadiness = { ready: boolean; reason: string | null };
+
+type CapabilityRow = {
+  hermesAgentAvailable: number | bigint | boolean | null;
+  hermesAgentAuthConfigured: number | bigint | boolean | null;
+  hermesAgentModelConfigured: number | bigint | boolean | null;
+};
+
+function flag(value: number | bigint | boolean | null): boolean {
+  return value === true || Number(value ?? 0) === 1;
+}
+
+export async function getHermesAgentReadiness(): Promise<HermesAgentReadiness> {
+  const rows = await prisma
+    .$queryRawUnsafe<CapabilityRow[]>(
+      `SELECT hermesAgentAvailable, hermesAgentAuthConfigured, hermesAgentModelConfigured FROM LocalWorkerHeartbeat ORDER BY lastHeartbeat DESC LIMIT 1`
+    )
+    .catch(() => [] as CapabilityRow[]);
+  const row = rows[0];
+  if (!row) return { ready: false, reason: "no local worker has ever reported in" };
+  if (!flag(row.hermesAgentAvailable)) return { ready: false, reason: "Hermes Nous is not installed on the worker machine" };
+  if (!flag(row.hermesAgentAuthConfigured)) return { ready: false, reason: "Hermes Nous auth is not configured (run `hermes auth` on the worker machine)" };
+  if (!flag(row.hermesAgentModelConfigured)) return { ready: false, reason: "Hermes Nous has no model/provider selected (run `hermes model` on the worker machine)" };
+  return { ready: true, reason: null };
+}
+
 /**
  * Cron entry point: alert Osman on Telegram when the worker goes offline, once
  * per offline episode (deduped via worker-watch AgentRun records), and record
