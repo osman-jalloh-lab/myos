@@ -389,10 +389,15 @@ export async function runSkillScout(userId: string, inputUrl: string): Promise<S
   );
   const treeItems = (tree.tree ?? []).slice(0, MAX_TREE_ITEMS);
   const candidates = buildCandidates(repo.full_name, parsed.repoUrl, treeItems);
-  const highValue = candidates.filter((candidate) => candidate.scores.priority === "high");
+  // High and medium priority both queue approvals (still capped at MAX_APPROVALS
+  // by buildCandidates) — a scan whose top candidates all score medium should
+  // still surface them for review instead of reporting "nothing to add".
+  const approvalWorthy = candidates.filter(
+    (candidate) => candidate.scores.priority === "high" || candidate.scores.priority === "medium"
+  );
 
   const approvals = [];
-  for (const candidate of highValue) {
+  for (const candidate of approvalWorthy) {
     const approval = await createApproval(userId, "skill_scout_import", approvalPayload(candidate));
     approvals.push({
       id: approval.id,
