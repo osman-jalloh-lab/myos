@@ -681,7 +681,11 @@ export async function fetchJobAlertMessages(
   });
 
   const senderQuery = JOB_ALERT_SENDERS.map((s) => `from:${s}`).join(" OR ");
-  const query = `(${senderQuery}) newer_than:1d -label:CATEGORY_PROMOTIONS`;
+  // No CATEGORY_PROMOTIONS exclusion here: Gmail routinely auto-labels
+  // LinkedIn/Indeed/ZipRecruiter job alerts as Promotions, and this query is
+  // already restricted to the trusted JOB_ALERT_SENDERS allowlist, so the
+  // exclusion only dropped the exact emails this pipeline exists to catch.
+  const query = `(${senderQuery}) newer_than:1d`;
 
   const results = await Promise.allSettled(
     accounts.map(async (account) => {

@@ -527,7 +527,9 @@ async function listDirectories(root: string): Promise<Set<string>> {
   const found = new Set<string>();
   async function walk(folder: string): Promise<void> {
     for (const entry of await readdir(folder, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === "node_modules" || entry.name === ".git") continue;
+      // .next is regenerated build output — hash-named folders vanish on every
+      // rebuild and must not trip the deleted-folder safety check.
+      if (!entry.isDirectory() || entry.name === "node_modules" || entry.name === ".git" || entry.name === ".next") continue;
       const full = path.join(folder, entry.name);
       found.add(path.relative(root, full));
       await walk(full);
