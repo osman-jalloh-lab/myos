@@ -225,7 +225,14 @@ async function renewTaskLease(db: Client, taskId: string): Promise<boolean> {
 
 async function commandAvailable(command: string, args: string[]): Promise<{ available: boolean; version: string | null }> {
   try {
-    const result = await execFileAsync(command, args, {
+    // Route through cmd.exe on Windows (same pattern as runNpm): npm and codex
+    // are .cmd shims, which Node's execFile refuses to spawn without a shell —
+    // detecting them directly always reported "unavailable".
+    const isWindows = process.platform === "win32";
+    const quote = (value: string) => (/[\s;]/.test(value) ? `"${value}"` : value);
+    const executable = isWindows ? (process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe") : command;
+    const executableArgs = isWindows ? ["/d", "/s", "/c", [command, ...args].map(quote).join(" ")] : args;
+    const result = await execFileAsync(executable, executableArgs, {
       cwd: process.cwd(),
       windowsHide: true,
       timeout: 10_000,
@@ -788,7 +795,12 @@ async function runLoop(): Promise<void> {
   const builder = await import("../src/lib/local-builder");
   await builder.markDeadPreviewsStale().catch((error) => { lastError = safeError(error); });
   console.log(`Worker API Base URL: ${apiBaseUrl}`);
-  await heartbeat(db, capabilities, apiBaseUrl);
+  // A failing health endpoint must not crash-loop the worker — record the
+  // error and keep polling; the loop retries the heartbeat every cycle.
+  await heartbeat(db, capabilities, apiBaseUrl).catch((error) => {
+    lastError = safeError(error);
+    console.error(`Initial heartbeat failed (${lastError}); continuing to poll.`);
+  });
 
   console.log(`Hermes Local Worker ${WORKER_ID} online on ${os.hostname()}.`);
   console.log(`Root: ${process.env.HERMES_LOCAL_PROJECTS_ROOT}`);
