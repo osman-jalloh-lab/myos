@@ -44,6 +44,15 @@ async function main() {
       localDevUrl       TEXT,
       localDevPid       INTEGER,
       localResearchBrief TEXT,
+      localDesignReview TEXT,
+      localPolishReview TEXT,
+      designScore       INTEGER,
+      fuguGateStatus    TEXT,
+      fuguGateScore     INTEGER,
+      fuguGateReview    TEXT,
+      fuguGateReviewedAt TEXT,
+      fuguGateOverrideReason TEXT,
+      fuguPolishStatus  TEXT,
       status            TEXT NOT NULL DEFAULT 'planning',
       latestInstruction TEXT,
       assignedAgent     TEXT,
@@ -57,6 +66,15 @@ async function main() {
   await db.execute(`ALTER TABLE Project ADD COLUMN localDevUrl TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localDevPid INTEGER`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localResearchBrief TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localDesignReview TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN localPolishReview TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN designScore INTEGER`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateStatus TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateScore INTEGER`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateReview TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateReviewedAt TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateOverrideReason TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguPolishStatus TEXT`).catch(() => undefined);
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_project_user ON Project(userId, status)`);
   console.log("  Project — ok");
 

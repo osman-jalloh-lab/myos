@@ -4,7 +4,17 @@ import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promi
 import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
-import { runFuguDesignCritique } from "@/lib/fugu-design-critic";
+import {
+  formatFuguDesignGate,
+  getFuguDesignGateMode,
+  getFuguDesignPassScore,
+  runFuguDesignCritique,
+  runFuguDesignGate,
+  type FuguDesignGate,
+  type FuguDesignGateInput,
+  type FuguGateMode,
+  type FuguGateVerdict,
+} from "@/lib/fugu-design-critic";
 import { createExecutionQueueTask, updateExecutionQueueTask } from "@/lib/execution-queue";
 import { loadAgentKnowledgeContext, type KnowledgeCard } from "@/lib/knowledge-cards";
 import { runBrowserQa } from "@/lib/browser-qa";
@@ -36,6 +46,12 @@ export type LocalBuildProject = {
   designReview: string | null;
   polishReview: string | null;
   designScore: number | null;
+  fuguGateStatus?: FuguGateVerdict | null;
+  fuguGateScore?: number | null;
+  fuguGateReview?: FuguDesignGate | null;
+  fuguGateReviewedAt?: string | null;
+  fuguGateOverrideReason?: string | null;
+  fuguPolishStatus?: string | null;
   qaStatus: string | null;
   qaChecklist: LocalBuilderQaItem[] | null;
   files?: string[];
@@ -207,6 +223,12 @@ async function ensureLocalBuilderColumns(db: Db): Promise<void> {
   await db.execute(`ALTER TABLE Project ADD COLUMN localDesignReview TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localPolishReview TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN designScore INTEGER`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateStatus TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateScore INTEGER`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateReview TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateReviewedAt TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateOverrideReason TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE Project ADD COLUMN fuguPolishStatus TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localQaStatus TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localQaChecklist TEXT`).catch(() => undefined);
 }
@@ -259,6 +281,137 @@ function parseQaChecklist(value: unknown): LocalBuilderQaItem[] | null {
   } catch {
     return null;
   }
+}
+
+function parseFuguGateReview(value: unknown): FuguDesignGate | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as FuguDesignGate;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (!["pass", "revise", "unavailable", "error"].includes(String(parsed.verdict))) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function fuguGateStatus(value: unknown): FuguGateVerdict | null {
+  const status = rowString(value);
+  return status === "pass" || status === "revise" || status === "unavailable" || status === "error" ? status : null;
+}
+
+export function canStartBuildWithFuguGate(
+  project: { fuguGateStatus?: unknown; fuguGateOverrideReason?: unknown },
+  mode: FuguGateMode = getFuguDesignGateMode()
+): { allowed: boolean; reason: string } {
+  if (mode === "off" || mode === "recommended") return { allowed: true, reason: `Fugu gate mode is ${mode}.` };
+  const status = fuguGateStatus(project.fuguGateStatus);
+  if (status === "pass") return { allowed: true, reason: "Fugu approved the design direction." };
+  if (rowString(project.fuguGateOverrideReason).trim()) return { allowed: true, reason: "Fugu gate override reason is recorded." };
+  return {
+    allowed: false,
+    reason: status
+      ? `Fugu design gate is ${status}; required mode blocks normal build until pass or override.`
+      : "Fugu design gate has not passed; required mode blocks normal build until pass or override.",
+  };
+}
+
+function projectGateFields(project: Record<string, unknown>) {
+  return {
+    fuguGateStatus: fuguGateStatus(project.fuguGateStatus),
+    fuguGateScore: rowNumber(project.fuguGateScore),
+    fuguGateReview: parseFuguGateReview(project.fuguGateReview),
+    fuguGateReviewedAt: rowString(project.fuguGateReviewedAt) || null,
+    fuguGateOverrideReason: rowString(project.fuguGateOverrideReason) || null,
+    fuguPolishStatus: rowString(project.fuguPolishStatus) || null,
+  };
+}
+
+function fuguGateInputFromProject(
+  projectName: string,
+  message: string,
+  researchBrief: string,
+  project?: Record<string, unknown>
+): FuguDesignGateInput {
+  const latestInstruction = rowString(project?.latestInstruction) || message;
+  return {
+    originalIdea: latestInstruction || projectName,
+    buildBrief: message || latestInstruction || projectName,
+    intendedUsers: researchBrief.match(/audience[^\n]*\n([\s\S]{0,500})/i)?.[1]?.trim() || "Inferred from the Athena research brief.",
+    firstReleaseGoal: researchBrief.match(/goal[^\n]*\n([\s\S]{0,500})/i)?.[1]?.trim() || "Ship a polished first local web experience.",
+    featurePriorities: researchBrief.match(/feature[^\n]*\n([\s\S]{0,700})/i)?.[1]?.trim() || "Use the Athena feature plan and prioritize complete working flows.",
+    visualDirection: researchBrief.match(/visual[^\n]*\n([\s\S]{0,700})/i)?.[1]?.trim() || "Use the Athena design brief.",
+    pagesAndComponents: researchBrief.match(/page|component/i) ? researchBrief.slice(0, 2000) : "Use the pages and components implied by the build brief.",
+    athenaResearchBrief: researchBrief,
+    existingProjectContext: [
+      project ? `Status: ${rowString(project.status) || "unknown"}` : null,
+      project ? `Existing design review: ${rowString(project.localDesignReview) ? "yes" : "no"}` : null,
+      project ? `Existing polish review: ${rowString(project.localPolishReview) ? "yes" : "no"}` : null,
+    ].filter(Boolean).join("\n"),
+  };
+}
+
+async function persistFuguDesignGate(
+  db: Db,
+  projectId: string,
+  currentLog: string,
+  gate: FuguDesignGate,
+  status?: string
+): Promise<string> {
+  const review = formatFuguDesignGate(gate);
+  const nextLog = [
+    currentLog,
+    `Fugu Design Gate: ${gate.verdict}${typeof gate.score === "number" ? ` (${gate.score}/10)` : ""}.`,
+    gate.summary,
+  ].filter(Boolean).join("\n").trim().slice(-12000);
+  await db.execute({
+    sql: `UPDATE Project SET ${status ? "status = ?, " : ""}localDesignReview = ?, designScore = ?, fuguGateStatus = ?, fuguGateScore = ?, fuguGateReview = ?, fuguGateReviewedAt = ?, fuguGateOverrideReason = NULL, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
+    args: [
+      ...(status ? [status] : []),
+      review,
+      gate.score,
+      gate.verdict,
+      gate.score,
+      JSON.stringify(gate),
+      gate.reviewedAt,
+      nextLog,
+      projectId,
+    ],
+  });
+  return nextLog;
+}
+
+function fuguGateProjectResult(
+  project: Record<string, unknown>,
+  projectId: string,
+  projectName: string,
+  folder: string,
+  createdAt: string,
+  currentTask: string,
+  taskId: string,
+  overrides: Partial<LocalBuildProject> = {}
+): LocalBuildProject {
+  return {
+    id: projectId,
+    projectName,
+    localFolderPath: folder,
+    status: rowString(project.status) || "Brief Ready",
+    createdAt,
+    currentTask,
+    taskId,
+    buildLog: rowString(project.localBuildLog) || null,
+    buildError: rowString(project.localBuildError) || null,
+    localDevUrl: rowString(project.localDevUrl) || null,
+    localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
+    researchBrief: rowString(project.localResearchBrief) || null,
+    designReview: rowString(project.localDesignReview) || null,
+    polishReview: rowString(project.localPolishReview) || null,
+    designScore: rowNumber(project.designScore),
+    ...projectGateFields(project),
+    qaStatus: rowString(project.localQaStatus) || null,
+    qaChecklist: parseQaChecklist(project.localQaChecklist),
+    ...overrides,
+  };
 }
 
 function packageName(projectName: string): string {
@@ -1361,15 +1514,20 @@ export async function runLocalFuguDesignReview(userId: string, projectId: string
   const nextLog = `${currentLog}\nFugu Design Review: ${result.connected ? "completed" : "not connected"}${result.score ? ` (${result.score}/10)` : ""}.\n${review}`.trim();
 
   if (target === "polish") {
+    const polishStatus = typeof result.score === "number" && result.score >= getFuguDesignPassScore() ? "pass" : result.connected ? "revise" : "unavailable";
     await db.execute({
-      sql: `UPDATE Project SET localPolishReview = ?, designScore = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
-      args: [review, result.score, nextLog.slice(-12000), projectId],
+      sql: `UPDATE Project SET localPolishReview = ?, designScore = ?, fuguPolishStatus = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
+      args: [review, result.score, polishStatus, nextLog.slice(-12000), projectId],
     });
   } else {
-    await db.execute({
-      sql: `UPDATE Project SET localDesignReview = ?, designScore = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
-      args: [review, result.score, nextLog.slice(-12000), projectId],
-    });
+    const gate = await runFuguDesignGate(fuguGateInputFromProject(projectName, rowString(project.latestInstruction), rowString(project.localResearchBrief), project));
+    await persistFuguDesignGate(
+      db,
+      projectId,
+      currentLog,
+      gate,
+      gate.verdict === "pass" ? "Design Ready" : gate.verdict === "revise" ? "Design Revision Needed" : gate.verdict === "unavailable" ? "Fugu Unavailable" : "Fugu Error"
+    );
   }
 
   await logFuguRun(db, projectName, target, review);
@@ -1399,9 +1557,86 @@ export async function runLocalFuguDesignReview(userId: string, projectId: string
     designReview: target === "design" ? review : rowString(project.localDesignReview) || null,
     polishReview: target === "polish" ? review : rowString(project.localPolishReview) || null,
     designScore: result.score,
+    ...projectGateFields(project),
+    fuguPolishStatus: target === "polish"
+      ? (typeof result.score === "number" && result.score >= getFuguDesignPassScore() ? "pass" : result.connected ? "revise" : "unavailable")
+      : rowString(project.fuguPolishStatus) || null,
     qaStatus: rowString(project.localQaStatus) || null,
     qaChecklist: parseQaChecklist(project.localQaChecklist),
   };
+}
+
+export async function runLocalFuguDesignGate(userId: string, projectId: string): Promise<LocalBuildProject> {
+  const db = getDb();
+  await ensureLocalBuilderColumns(db);
+  const project = await findLocalBuildProject(db, userId, projectId);
+  const { projectName, folder, createdAt } = await resolveProjectFolder(project);
+  const researchBrief = rowString(project.localResearchBrief) || await createAthenaResearchBrief(projectName, rowString(project.latestInstruction) || projectName);
+  if (!rowString(project.localResearchBrief)) {
+    await db.execute({
+      sql: `UPDATE Project SET localResearchBrief = ?, updatedAt = datetime('now') WHERE id = ?`,
+      args: [researchBrief, projectId],
+    });
+  }
+  const gate = await runFuguDesignGate(fuguGateInputFromProject(projectName, rowString(project.latestInstruction), researchBrief, project));
+  const status = gate.verdict === "pass"
+    ? "Design Ready"
+    : gate.verdict === "revise"
+      ? "Design Revision Needed"
+      : gate.verdict === "unavailable"
+        ? "Fugu Unavailable"
+        : "Fugu Error";
+  const nextLog = await persistFuguDesignGate(db, projectId, rowString(project.localBuildLog), gate, status);
+
+  await upsertSkillTask(
+    db,
+    projectId,
+    userId,
+    `Fugu design gate for ${projectName}`,
+    "Read-only pre-build Fugu gate for design direction, UX completeness, and Builder constraints.",
+    gate.verdict === "pass" ? "done" : "pending",
+    gate.verdict === "pass" ? "Design gate passed; normal build is allowed" : "Review Fugu feedback or record an explicit override"
+  );
+  await logFuguRun(db, projectName, "design", formatFuguDesignGate(gate));
+
+  const updated = {
+    ...project,
+    status,
+    localResearchBrief: researchBrief,
+    localDesignReview: formatFuguDesignGate(gate),
+    designScore: gate.score,
+    fuguGateStatus: gate.verdict,
+    fuguGateScore: gate.score,
+    fuguGateReview: JSON.stringify(gate),
+    fuguGateReviewedAt: gate.reviewedAt,
+    localBuildLog: nextLog,
+  };
+
+  return fuguGateProjectResult(
+    updated,
+    projectId,
+    projectName,
+    folder,
+    createdAt,
+    `Run Fugu Design Gate for ${projectName}`,
+    crypto.randomUUID()
+  );
+}
+
+export async function overrideFuguDesignGate(userId: string, projectId: string, reason: string): Promise<LocalBuildProject> {
+  const trimmed = reason.trim();
+  if (trimmed.length < 12) throw new Error("Fugu override requires a specific reason.");
+  const db = getDb();
+  await ensureLocalBuilderColumns(db);
+  const project = await findLocalBuildProject(db, userId, projectId);
+  const { projectName, folder, createdAt } = await resolveProjectFolder(project);
+  const nextLog = `${rowString(project.localBuildLog)}\nFugu Gate Override: ${trimmed}`.trim().slice(-12000);
+  await db.execute({
+    sql: `UPDATE Project SET status = 'Design Ready', fuguGateOverrideReason = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
+    args: [trimmed.slice(0, 1000), nextLog, projectId, userId],
+  });
+  const updated = { ...project, status: "Design Ready", fuguGateOverrideReason: trimmed, localBuildLog: nextLog };
+  return fuguGateProjectResult(updated, projectId, projectName, folder, createdAt, `Override Fugu gate for ${projectName}`, crypto.randomUUID());
 }
 
 export async function prepareLocalBuildProject(userId: string, message: string): Promise<LocalBuildProject | null> {
@@ -1441,7 +1676,7 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     projectId = rowString(row.id);
     createdAt = rowString(row.createdAt) || now;
     await db.execute({
-      sql: `UPDATE Project SET projectName = ?, status = 'Researching', latestInstruction = ?, assignedAgent = ?, localFolderPath = ?, localBuildLog = ?, localBuildError = NULL, localPolishReview = NULL, updatedAt = datetime('now') WHERE id = ?`,
+      sql: `UPDATE Project SET projectName = ?, status = 'Researching', latestInstruction = ?, assignedAgent = ?, localFolderPath = ?, localBuildLog = ?, localBuildError = NULL, localDesignReview = NULL, localPolishReview = NULL, designScore = NULL, fuguGateStatus = NULL, fuguGateScore = NULL, fuguGateReview = NULL, fuguGateReviewedAt = NULL, fuguGateOverrideReason = NULL, fuguPolishStatus = NULL, updatedAt = datetime('now') WHERE id = ?`,
       args: [parsed.projectName, message.slice(0, 500), ATHENA_RESEARCH_AGENT, localFolderPath, "Researching: Athena is creating a build brief.\n", projectId],
     });
   } else {
@@ -1471,8 +1706,8 @@ export async function prepareLocalBuildProject(userId: string, message: string):
   }
 
   await db.execute({
-    sql: `UPDATE Project SET status = 'Brief Ready', assignedAgent = ?, localResearchBrief = ?, localDesignReview = NULL, designScore = NULL, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
-    args: [LOCAL_BUILDER_AGENT, researchBrief, `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief. Run Fugu Design Review when the app needs critique.\n\n${researchBrief}`, projectId],
+    sql: `UPDATE Project SET status = 'Brief Ready', assignedAgent = ?, localResearchBrief = ?, localDesignReview = NULL, designScore = NULL, fuguGateStatus = NULL, fuguGateScore = NULL, fuguGateReview = NULL, fuguGateReviewedAt = NULL, fuguGateOverrideReason = NULL, fuguPolishStatus = NULL, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
+    args: [LOCAL_BUILDER_AGENT, researchBrief, `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief. Fugu Design Gate runs before normal build.\n\n${researchBrief}`, projectId],
   });
 
   await logAthenaResearchRun(db, parsed.projectName, researchBrief);
@@ -1482,7 +1717,7 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     ["Design brief", "Define visual direction, typography, spacing, layout, motion, and asset rules."],
     ["Feature plan", "Define catalog, cards, filters, detail views, saved/compare, and checkout or concierge flow."],
     ["Build plan", "Define implementation steps for responsive, stateful, testable UI."],
-    ["Fugu design critique", "Optional read-only review for UX structure, visual direction, missing interactions, realism, and required improvements."],
+    ["Fugu design gate", "Read-only pre-build review for UX structure, visual direction, missing interactions, realism, and required improvements."],
     ["QA checklist", "Verify build, navigation, buttons, filters, localStorage, responsive layout, and no copied assets."],
     ["Visual polish review", "Confirm the app feels like a real product before completion."],
   ] as const;
@@ -1522,22 +1757,58 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     ],
   }).catch(() => undefined);
 
+  let preparedStatus = "Brief Ready";
+  let preparedLog = `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief. Fugu Design Gate runs before normal build.\n\n${researchBrief}`;
+  let preparedGateFields: Pick<LocalBuildProject, "fuguGateStatus" | "fuguGateScore" | "fuguGateReview" | "fuguGateReviewedAt" | "fuguGateOverrideReason" | "fuguPolishStatus"> = {
+    fuguGateStatus: null,
+    fuguGateScore: null,
+    fuguGateReview: null,
+    fuguGateReviewedAt: null,
+    fuguGateOverrideReason: null,
+    fuguPolishStatus: null,
+  };
+  let preparedDesignReview: string | null = null;
+  let preparedDesignScore: number | null = null;
+
+  if (getFuguDesignGateMode() !== "off") {
+    const gate = await runFuguDesignGate(fuguGateInputFromProject(parsed.projectName, message, researchBrief));
+    preparedStatus = gate.verdict === "pass"
+      ? "Design Ready"
+      : gate.verdict === "revise"
+        ? "Design Revision Needed"
+        : gate.verdict === "unavailable"
+          ? "Fugu Unavailable"
+          : "Fugu Error";
+    preparedLog = await persistFuguDesignGate(db, projectId, preparedLog, gate, preparedStatus);
+    preparedDesignReview = formatFuguDesignGate(gate);
+    preparedDesignScore = gate.score;
+    preparedGateFields = {
+      fuguGateStatus: gate.verdict,
+      fuguGateScore: gate.score,
+      fuguGateReview: gate,
+      fuguGateReviewedAt: gate.reviewedAt,
+      fuguGateOverrideReason: null,
+      fuguPolishStatus: null,
+    };
+  }
+
   return {
     id: projectId,
     projectName: parsed.projectName,
     localFolderPath,
-    status: "Brief Ready",
+    status: preparedStatus,
     createdAt,
     currentTask,
     taskId,
-    buildLog: `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief. Run Fugu Design Review when the app needs critique.\n\n${researchBrief}`,
+    buildLog: preparedLog,
     buildError: null,
     localDevUrl: null,
     localDevPid: null,
     researchBrief,
-    designReview: null,
+    designReview: preparedDesignReview,
     polishReview: null,
-    designScore: null,
+    designScore: preparedDesignScore,
+    ...preparedGateFields,
     qaStatus: null,
     qaChecklist: null,
   };
@@ -1602,6 +1873,11 @@ export async function queueLocalBuilderWorkerTask(
     }
   }
 
+  if (project && ["generate", "rebuild", "build", "npmBuild", "runCodex"].includes(action)) {
+    const gate = canStartBuildWithFuguGate(project);
+    if (!gate.allowed) throw new Error(gate.reason);
+  }
+
   const task = await createExecutionQueueTask({
     userId,
     title: `${queuedActionLabel(action)} for ${projectName}`,
@@ -1656,6 +1932,7 @@ export async function queueLocalBuilderWorkerTask(
     designReview: rowString(project?.localDesignReview) || null,
     polishReview: rowString(project?.localPolishReview) || null,
     designScore: rowNumber(project?.designScore),
+    ...(project ? projectGateFields(project) : {}),
     qaStatus: rowString(project?.localQaStatus) || null,
     qaChecklist: parseQaChecklist(project?.localQaChecklist),
   };
@@ -1664,6 +1941,8 @@ export async function queueLocalBuilderWorkerTask(
 export async function generateLocalStarterApp(userId: string, projectId: string, message: string): Promise<LocalBuildProject> {
   const db = getDb();
   const project = await findLocalBuildProject(db, userId, projectId);
+  const gate = canStartBuildWithFuguGate(project);
+  if (!gate.allowed) throw new Error(gate.reason);
   const { projectName, folder: resolvedFolder, createdAt } = await resolveProjectFolder(project);
   const researchBrief = rowString(project.localResearchBrief) || await createAthenaResearchBrief(projectName, message);
   const builderKnowledge = await loadBuilderKnowledgeContext(projectName, message);
@@ -1858,6 +2137,8 @@ export async function runLocalBuilderQa(userId: string, projectId: string): Prom
 export async function runLocalCodexExecutor(userId: string, projectId: string, improvementPrompt: string): Promise<LocalBuildProject> {
   const db = getDb();
   const project = await findLocalBuildProject(db, userId, projectId);
+  const gate = canStartBuildWithFuguGate(project);
+  if (!gate.allowed) throw new Error(gate.reason);
   const { projectName, folder, createdAt } = await resolveProjectFolder(project);
   const root = path.resolve(await getLocalProjectsRoot());
   const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
@@ -2038,6 +2319,8 @@ export async function runLocalCodexExecutor(userId: string, projectId: string, i
 export async function rebuildLocalStarterApp(userId: string, projectId: string): Promise<LocalBuildProject> {
   const db = getDb();
   const project = await findLocalBuildProject(db, userId, projectId);
+  const gate = canStartBuildWithFuguGate(project);
+  if (!gate.allowed) throw new Error(gate.reason);
   const { projectName, folder, createdAt } = await resolveProjectFolder(project);
   const taskId = crypto.randomUUID();
   let log = `${rowString(project.localBuildLog)}\nRebuild requested\n`.trim();

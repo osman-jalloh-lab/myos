@@ -21,6 +21,16 @@ function parseJsonArray(value: unknown): unknown[] | null {
   }
 }
 
+function parseJsonObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function GET() {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -74,6 +84,12 @@ export async function GET() {
         designReview: (p.localDesignReview as string | null) ?? null,
         polishReview: (p.localPolishReview as string | null) ?? null,
         designScore: (p.designScore as number | null) ?? null,
+        fuguGateStatus: (p.fuguGateStatus as string | null) ?? null,
+        fuguGateScore: (p.fuguGateScore as number | null) ?? null,
+        fuguGateReview: parseJsonObject(p.fuguGateReview),
+        fuguGateReviewedAt: (p.fuguGateReviewedAt as string | null) ?? null,
+        fuguGateOverrideReason: (p.fuguGateOverrideReason as string | null) ?? null,
+        fuguPolishStatus: (p.fuguPolishStatus as string | null) ?? null,
         qaStatus: (p.localQaStatus as string | null) ?? null,
         qaChecklist: parseJsonArray(p.localQaChecklist),
         status: (p.status as string) ?? "planning",

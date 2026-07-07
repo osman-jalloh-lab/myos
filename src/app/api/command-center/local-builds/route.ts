@@ -7,10 +7,12 @@ import {
   isServerlessRuntime,
   type LocalBuildProject,
   openLocalProjectFolder,
+  overrideFuguDesignGate,
   prepareLocalBuildProject,
   queueLocalBuilderWorkerTask,
   rebuildLocalStarterApp,
   runLocalCodexExecutor,
+  runLocalFuguDesignGate,
   runLocalFuguDesignReview,
   runLocalBuilderQa,
   startLocalDevServer,
@@ -41,6 +43,7 @@ function responseFor(project: ReturnType<typeof projectView>, action: string, fa
     `Status: ${project.status}`,
     project.researchBrief ? "Athena brief: ready" : null,
     project.designReview ? `Fugu design review: ready${project.designScore ? ` (${project.designScore}/10)` : ""}` : null,
+    project.fuguGateStatus ? `Fugu gate: ${project.fuguGateStatus}${project.fuguGateScore ? ` (${project.fuguGateScore}/10)` : ""}` : null,
     project.polishReview ? "Fugu polish review: ready" : null,
     project.qaStatus ? `QA: ${project.qaStatus}` : null,
     project.buildError ? `First error: ${project.buildError}` : null,
@@ -130,7 +133,12 @@ export async function POST(req: Request) {
   }
 
   if (isServerlessRuntime() || selectedExecutor === "hermes_agent") {
-    const queued = await queueLocalBuilderWorkerTask(session.user.id, action, message ?? "", projectId, selectedExecutor);
+    let queued: LocalBuildProject | null;
+    try {
+      queued = await queueLocalBuilderWorkerTask(session.user.id, action, message ?? "", projectId, selectedExecutor);
+    } catch (error) {
+      return NextResponse.json({ error: redactInternalDetails(error instanceof Error ? error.message : String(error)) }, { status: 409 });
+    }
     if (!queued) {
       return NextResponse.json(
         { error: "Not a local build request. Try: Build a website called MyProject" },
@@ -146,7 +154,12 @@ export async function POST(req: Request) {
 
   if (action === "generate") {
     if (!message) return NextResponse.json({ error: "message is required" }, { status: 400 });
-    const project = await generateLocalStarterApp(session.user.id, projectId!, message);
+    let project: LocalBuildProject;
+    try {
+      project = await generateLocalStarterApp(session.user.id, projectId!, message);
+    } catch (error) {
+      return NextResponse.json({ error: redactInternalDetails(error instanceof Error ? error.message : String(error)) }, { status: 409 });
+    }
     const failed = project.status === "Build Failed";
     const view = projectView(project);
     return NextResponse.json({
@@ -184,13 +197,28 @@ export async function POST(req: Request) {
   }
 
   if (action === "rebuild") {
-    const project = await rebuildLocalStarterApp(session.user.id, projectId!);
+    let project: LocalBuildProject;
+    try {
+      project = await rebuildLocalStarterApp(session.user.id, projectId!);
+    } catch (error) {
+      return NextResponse.json({ error: redactInternalDetails(error instanceof Error ? error.message : String(error)) }, { status: 409 });
+    }
     return responseFor(projectView(project), "rebuild", project.status === "Build Failed");
   }
 
   if (action === "fuguDesignReview") {
     const project = await runLocalFuguDesignReview(session.user.id, projectId!);
     return responseFor(projectView(project), "fuguDesignReview");
+  }
+
+  if (action === "fuguGate") {
+    const project = await runLocalFuguDesignGate(session.user.id, projectId!);
+    return responseFor(projectView(project), "fuguGate", project.fuguGateStatus === "error");
+  }
+
+  if (action === "fuguGateOverride") {
+    const project = await overrideFuguDesignGate(session.user.id, projectId!, message ?? "");
+    return responseFor(projectView(project), "fuguGateOverride");
   }
 
   if (action === "runQa") {
@@ -200,7 +228,12 @@ export async function POST(req: Request) {
 
   if (action === "runCodex") {
     const improvementPrompt = message || "Improve this local app so it feels complete, polished, interactive, and ready to pass the Builder QA checklist.";
-    const project = await runLocalCodexExecutor(session.user.id, projectId!, improvementPrompt);
+    let project: LocalBuildProject;
+    try {
+      project = await runLocalCodexExecutor(session.user.id, projectId!, improvementPrompt);
+    } catch (error) {
+      return NextResponse.json({ error: redactInternalDetails(error instanceof Error ? error.message : String(error)) }, { status: 409 });
+    }
     return responseFor(projectView(project), "runCodex", project.status === "failed");
   }
 
@@ -229,9 +262,11 @@ export async function POST(req: Request) {
       `Current task: ${project.currentTask}`,
       "",
       "Athena research brief is ready.",
-      "Fugu design review is optional. Run Fugu Design Review when the app feels too basic.",
+      project.fuguGateStatus === "pass"
+        ? "Fugu Design Gate passed. Ready for build."
+        : "Fugu Design Gate must pass or be explicitly overridden before a required-mode build.",
       "",
-      "Ready for Generate app.",
+      project.fuguGateStatus === "pass" ? "Ready for Generate app." : "Review Fugu feedback before Generate app.",
     ].join("\n")),
     project: view,
     toolCalls: [
