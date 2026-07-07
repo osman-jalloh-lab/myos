@@ -63,8 +63,14 @@ export async function GET(req: Request) {
   let disconnectedUsers = 0;
 
   for (const user of users) {
+    // Usable = refresh token present OR access token still live — the access
+    // token rotating hourly is normal OAuth, not a disconnected account.
     const gmailAccountCount = await prisma.googleAccount.count({
-      where: { userId: user.id, scopes: { contains: "gmail" }, expiresAt: { gt: now } },
+      where: {
+        userId: user.id,
+        scopes: { contains: "gmail" },
+        OR: [{ refreshToken: { not: null } }, { expiresAt: { gt: now } }],
+      },
     });
     if (gmailAccountCount === 0) {
       disconnectedUsers += 1;

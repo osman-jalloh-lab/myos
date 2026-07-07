@@ -5,6 +5,9 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+// Dependency-free on purpose — safe to import before loadLocalEnv() runs,
+// unlike ../src/lib/local-builder which is only ever imported dynamically.
+import { DEFAULT_LOCAL_PROJECTS_ROOT, resolveLocalProjectsRoot } from "../src/lib/local-projects-root";
 
 type QueueTask = {
   id: string;
@@ -34,7 +37,6 @@ const POLL_MS = Number(process.env.HERMES_LOCAL_WORKER_POLL_MS ?? 15_000);
 const HEARTBEAT_MS = Number(process.env.HERMES_LOCAL_WORKER_HEARTBEAT_MS ?? 15_000);
 const LEASE_MS = 5 * 60_000;
 const WORKER_ID = process.env.HERMES_LOCAL_WORKER_ID?.trim() || `local-worker:${os.hostname()}:${process.pid}`;
-const LOCAL_ROOT = "C:\\Users\\osman\\OneDrive\\Desktop\\HermesProject";
 const ALLOWED_ACTIONS = new Set(["prepare", "generate", "runQa", "rebuild", "build", "npmBuild", "startDev", "stopDev"]);
 
 let currentTask: string | null = null;
@@ -64,7 +66,7 @@ function loadLocalEnv(): void {
   const cwd = process.cwd();
   loadEnvFile(path.join(cwd, ".env.local"));
   loadEnvFile(path.join(cwd, ".env"));
-  process.env.HERMES_LOCAL_PROJECTS_ROOT = process.env.HERMES_LOCAL_PROJECTS_ROOT?.trim() || LOCAL_ROOT;
+  process.env.HERMES_LOCAL_PROJECTS_ROOT = process.env.HERMES_LOCAL_PROJECTS_ROOT?.trim() || DEFAULT_LOCAL_PROJECTS_ROOT;
 }
 
 function normalizeBaseUrl(value: string): string | null {
@@ -223,7 +225,14 @@ async function renewTaskLease(db: Client, taskId: string): Promise<boolean> {
 
 async function commandAvailable(command: string, args: string[]): Promise<{ available: boolean; version: string | null }> {
   try {
-    const result = await execFileAsync(command, args, {
+    // Route through cmd.exe on Windows (same pattern as runNpm): npm and codex
+    // are .cmd shims, which Node's execFile refuses to spawn without a shell —
+    // detecting them directly always reported "unavailable".
+    const isWindows = process.platform === "win32";
+    const quote = (value: string) => (/[\s;]/.test(value) ? `"${value}"` : value);
+    const executable = isWindows ? (process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe") : command;
+    const executableArgs = isWindows ? ["/d", "/s", "/c", [command, ...args].map(quote).join(" ")] : args;
+    const result = await execFileAsync(executable, executableArgs, {
       cwd: process.cwd(),
       windowsHide: true,
       timeout: 10_000,
@@ -311,7 +320,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
           updatedAt = datetime('now')
       `,
       args: [
-        WORKER_ID, os.hostname(), process.env.HERMES_LOCAL_PROJECTS_ROOT ?? LOCAL_ROOT,
+        WORKER_ID, os.hostname(), resolveLocalProjectsRoot(),
         capabilities.nodeVersion, capabilities.npmVersion, capabilities.gitAvailable ? 1 : 0,
         capabilities.codexAvailable ? 1 : 0, currentTask, lastError, apiBaseUrl, lastFetchError,
         capabilities.hermesAgentAvailable ? 1 : 0, capabilities.hermesAgentPath, capabilities.hermesAgentVersion,
@@ -354,7 +363,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
     args: [
       WORKER_ID,
       os.hostname(),
-      process.env.HERMES_LOCAL_PROJECTS_ROOT ?? LOCAL_ROOT,
+      resolveLocalProjectsRoot(),
       capabilities.nodeVersion,
       capabilities.npmVersion,
       capabilities.gitAvailable ? 1 : 0,
@@ -505,7 +514,7 @@ function safeHermesOutput(value: string): string {
 }
 
 async function assertSafeHermesProjectFolder(folder: string): Promise<string> {
-  const root = path.resolve(process.env.HERMES_LOCAL_PROJECTS_ROOT ?? LOCAL_ROOT);
+  const root = path.resolve(resolveLocalProjectsRoot());
   const resolved = path.resolve(folder);
   const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
   if (resolved === root || !resolved.startsWith(rootWithSep)) {
@@ -525,7 +534,9 @@ async function listDirectories(root: string): Promise<Set<string>> {
   const found = new Set<string>();
   async function walk(folder: string): Promise<void> {
     for (const entry of await readdir(folder, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === "node_modules" || entry.name === ".git") continue;
+      // .next is regenerated build output — hash-named folders vanish on every
+      // rebuild and must not trip the deleted-folder safety check.
+      if (!entry.isDirectory() || entry.name === "node_modules" || entry.name === ".git" || entry.name === ".next") continue;
       const full = path.join(folder, entry.name);
       found.add(path.relative(root, full));
       await walk(full);
@@ -684,9 +695,44 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
 async function executeTask(db: Client, task: QueueTask): Promise<void> {
   if (task.assignedExecutor === "hermes_agent") {
     const capabilities = await getCapabilities();
-    await executeHermesAgentTask(db, task, capabilities);
-    return;
+    try {
+      await executeHermesAgentTask(db, task, capabilities);
+      return;
+    } catch (error) {
+      // Hermes Nous is primary; Codex CLI is the automatic fallback. A task is
+      // only truly failed when BOTH fail (fix-and-harden brief 2.4).
+      const hermesReason = safeError(error);
+      lastHermesAgentError = hermesReason;
+      const { action } = parseTaskPayload(task);
+      if (!capabilities.codexAvailable || !ALLOWED_ACTIONS.has(action)) {
+        throw new Error(
+          `Hermes Nous failed (${hermesReason}); Codex CLI fallback unavailable (${!capabilities.codexAvailable ? "codex is not installed" : `unsupported action: ${action}`}).`
+        );
+      }
+      const fallbackNote = `Hermes Nous failed (${hermesReason}) — falling back to Codex CLI.`;
+      console.warn(fallbackNote);
+      await updateTask(db, task, { log: fallbackNote }).catch(() => undefined);
+      try {
+        // Re-dispatch through the existing Codex/local-worker path so the
+        // build log and Project.assignedAgent reflect who actually ran it.
+        await executeLocalWorkerTask(db, { ...task, assignedExecutor: "codex_cli" });
+        if (task.projectId) {
+          await db.execute({
+            sql: `UPDATE Project SET assignedAgent = 'codex_cli', updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
+            args: [task.projectId, task.userId],
+          }).catch(() => undefined);
+        }
+        await updateTask(db, task, { log: "Codex CLI fallback completed after Hermes Nous failure." }).catch(() => undefined);
+        return;
+      } catch (codexError) {
+        throw new Error(`Hermes Nous failed (${hermesReason}); Codex CLI fallback also failed (${safeError(codexError)}).`);
+      }
+    }
   }
+  await executeLocalWorkerTask(db, task);
+}
+
+async function executeLocalWorkerTask(db: Client, task: QueueTask): Promise<void> {
   const { action, message } = parseTaskPayload(task);
   if (!ALLOWED_ACTIONS.has(action)) {
     throw new Error(`Unsupported local worker action: ${action}`);
@@ -749,7 +795,12 @@ async function runLoop(): Promise<void> {
   const builder = await import("../src/lib/local-builder");
   await builder.markDeadPreviewsStale().catch((error) => { lastError = safeError(error); });
   console.log(`Worker API Base URL: ${apiBaseUrl}`);
-  await heartbeat(db, capabilities, apiBaseUrl);
+  // A failing health endpoint must not crash-loop the worker — record the
+  // error and keep polling; the loop retries the heartbeat every cycle.
+  await heartbeat(db, capabilities, apiBaseUrl).catch((error) => {
+    lastError = safeError(error);
+    console.error(`Initial heartbeat failed (${lastError}); continuing to poll.`);
+  });
 
   console.log(`Hermes Local Worker ${WORKER_ID} online on ${os.hostname()}.`);
   console.log(`Root: ${process.env.HERMES_LOCAL_PROJECTS_ROOT}`);

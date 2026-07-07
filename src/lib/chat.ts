@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { routeMessage, routeToAgent, type RouteResult } from "@/agents/hermes";
 import { handleMercuryRequest } from "@/agents/mercury";
-import { autoCaptureUserMemory } from "@/lib/auto-memory";
+import { autoCaptureUserMemory, rememberedTag } from "@/lib/auto-memory";
 import { buildContextBlock, updateSessionAfterResponse } from "@/lib/memory-context";
 import { contextStateFromContextBlock, resolveMessageWithContext } from "@/lib/context-persistence";
 
@@ -84,7 +84,7 @@ export async function sendMessage(
   const userRow = await prisma.chatMessage.create({
     data: { userId, role: "user", content: text, channel, targetAgent },
   });
-  await autoCaptureUserMemory(userId, text).catch(() => []);
+  const remembered = await autoCaptureUserMemory(userId, text).catch(() => [] as string[]);
   const resolvedContext = chatContext ?? await buildContextBlock(contextChatId, userId, text).catch(() => "");
   const contextResolution = resolveMessageWithContext(text, contextStateFromContextBlock(resolvedContext || undefined));
   const routingText = contextResolution.resolvedText;
@@ -101,6 +101,10 @@ export async function sendMessage(
       : await routeMessage(userId, routingText, channel, resolvedContext || undefined);
   }
 
+  // Instant feedback when a fact auto-saved, so Osman never wonders whether it landed.
+  const memoryTag = rememberedTag(remembered);
+  if (memoryTag) route.reply = `${route.reply}\n\n${memoryTag}`;
+
   const replyRow = await prisma.chatMessage.create({
     data: { userId, role: "assistant", content: route.reply, channel, targetAgent },
   });
@@ -111,7 +115,9 @@ export async function sendMessage(
 
 /** Persist an already-executed reply without routing the prompt through Hermes again. */
 export async function persistExecutedMessage(userId: string, text: string, reply: string, channel: ChatChannel = "dashboard"): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView }> {
-  await autoCaptureUserMemory(userId, text).catch(() => []);
+  const remembered = await autoCaptureUserMemory(userId, text).catch(() => [] as string[]);
+  const memoryTag = rememberedTag(remembered);
+  if (memoryTag) reply = `${reply}\n\n${memoryTag}`;
   const [userRow, replyRow] = await prisma.$transaction([
     prisma.chatMessage.create({ data: { userId, role: "user", content: text, channel, targetAgent: null } }),
     prisma.chatMessage.create({ data: { userId, role: "assistant", content: reply, channel, targetAgent: null } }),

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { readdir, readFile, stat } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
+import { getLocalProjectsRoot } from "@/lib/local-builder";
 import { runSkillScout } from "@/lib/skill-scout/github";
 
 type SkillView = {
@@ -59,12 +61,13 @@ export async function GET() {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const userRoot = process.env.USERPROFILE ?? "C:\\Users\\osman";
-  const agentSkills = path.join(userRoot, ".agents", "skills");
-  const localSkills = path.join("C:\\Users\\osman\\OneDrive\\Desktop\\HermesProject", "skills");
+  // Same root the local builder uses — one definition of where skills live.
+  const projectsRoot = await getLocalProjectsRoot();
+  const agentSkills = path.join(os.homedir(), ".agents", "skills");
+  const localSkills = path.join(projectsRoot, "skills");
   const [agent, local] = await Promise.all([
     readSkillDir(agentSkills, ".agents/skills"),
-    readSkillDir(localSkills, "HermesProject/skills"),
+    readSkillDir(localSkills, `${path.basename(projectsRoot)}/skills`),
   ]);
 
   return NextResponse.json({ skills: [...agent, ...local].sort((a, b) => a.name.localeCompare(b.name)) });

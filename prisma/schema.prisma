@@ -10,25 +10,25 @@ datasource db {
 }
 
 model User {
-  id            String          @id @default(cuid())
-  primaryEmail  String          @unique
-  name          String?
-  picture       String?
-  createdAt     DateTime        @default(now())
-  accounts      GoogleAccount[]
-  briefs        DailyBrief[]
-  tasks         Task[]
-  approvals     ApprovalAction[]
-  usage         ModelUsage[]
-  memories      Memory[]
-  financeEntries FinanceEntry[]
-  jobListings    JobListing[]
-  jobLeads       JobLead[]
-  masterResume   MasterResume?
-  chatMessages   ChatMessage[]
-  trackedApps    TrackedApplication[]
-  auditLogs      AuditLog[]
-  agentTasks     AgentTask[]
+  id               String               @id @default(cuid())
+  primaryEmail     String               @unique
+  name             String?
+  picture          String?
+  createdAt        DateTime             @default(now())
+  accounts         GoogleAccount[]
+  briefs           DailyBrief[]
+  tasks            Task[]
+  approvals        ApprovalAction[]
+  usage            ModelUsage[]
+  memories         Memory[]
+  financeEntries   FinanceEntry[]
+  jobListings      JobListing[]
+  jobLeads         JobLead[]
+  masterResume     MasterResume?
+  chatMessages     ChatMessage[]
+  trackedApps      TrackedApplication[]
+  auditLogs        AuditLog[]
+  agentTasks       AgentTask[]
   engineeringTasks EngineeringTask[]
 }
 
@@ -42,20 +42,22 @@ model GoogleAccount {
   accessToken  String
   refreshToken String?
   expiresAt    DateTime
-  scopes       String   @default("")       // space-separated
+  scopes       String   @default("") // space-separated
   isDefault    Boolean  @default(false)
   createdAt    DateTime @default(now())
+
   @@unique([userId, googleSub])
 }
 
 model AgentRun {
   id            String   @id @default(cuid())
-  agentName     String   // hermes|iris|kairos|argus|plutus|athena|mnemosyne
+  agentName     String // hermes|iris|kairos|argus|plutus|athena|mnemosyne
   inputSummary  String?
   outputSummary String?
   modelProvider String?
   status        String   @default("completed")
   createdAt     DateTime @default(now())
+
   @@index([agentName, createdAt])
   @@index([createdAt])
 }
@@ -65,64 +67,67 @@ model DailyBrief {
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   briefDate DateTime
-  content   String   // JSON
+  content   String // JSON
   createdAt DateTime @default(now())
+
   @@unique([userId, briefDate])
 }
 
 model Task {
-  id          String   @id @default(cuid())
-  userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  source      String?
-  sourceRef   String?
-  title       String
-  description String?
-  dueAt       DateTime?
-  status      String   @default("open")
-  priority    String   @default("medium")
-  assignedAgent String?  // hermes|iris|kairos|argus|plutus|athena|mnemosyne|sophos
-  delegatedBy   String?  // "osman" if user-assigned, or the agent name that handed it off
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source        String?
+  sourceRef     String?
+  title         String
+  description   String?
+  dueAt         DateTime?
+  status        String    @default("open")
+  priority      String    @default("medium")
+  assignedAgent String? // hermes|iris|kairos|argus|plutus|athena|mnemosyne|sophos
+  delegatedBy   String? // "osman" if user-assigned, or the agent name that handed it off
   resolvedAt    DateTime?
-  createdAt   DateTime @default(now())
+  createdAt     DateTime  @default(now())
 }
 
 model ApprovalAction {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  actionType String   // draft_email|send_email|create_event|create_task|label_email
-  payload    String   // JSON
-  status     String   @default("pending") // pending|approved|rejected|executed
-  createdAt  DateTime @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actionType String // draft_email|send_email|create_event|create_task|label_email
+  payload    String // JSON
+  status     String    @default("pending") // pending|approved|rejected|executed
+  createdAt  DateTime  @default(now())
   resolvedAt DateTime?
+
   @@index([userId, status])
   @@index([userId, createdAt])
 }
 
 model ModelUsage {
-  id          String   @id @default(cuid())
-  userId      String?
-  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  provider    String
-  taskType    String?
-  dataClass   String?  // PUBLIC|PERSONAL|PRIVATE|SECRET
-  inputTokens Int?
+  id           String   @id @default(cuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     String
+  taskType     String?
+  dataClass    String? // PUBLIC|PERSONAL|PRIVATE|SECRET
+  inputTokens  Int?
   outputTokens Int?
-  estCostUsd  Float?
-  createdAt   DateTime @default(now())
+  estCostUsd   Float?
+  createdAt    DateTime @default(now())
+
   @@index([userId, createdAt])
   @@index([provider, createdAt])
 }
 
 model Memory {
-  id         String   @id @default(cuid())
+  id         String    @id @default(cuid())
   userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   fact       String
   source     String?
   approvedAt DateTime?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime  @default(now())
 }
 
 // Plutus's own ledger — manual entries Osman logs himself. Plutus only ever
@@ -132,7 +137,7 @@ model FinanceEntry {
   id          String   @id @default(cuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  kind        String   // income|expense|debt_balance|debt_payment
+  kind        String // income|expense|debt_balance|debt_payment
   category    String?
   amountUsd   Float
   description String?
@@ -178,13 +183,13 @@ model JobLead {
   id             String          @id @default(cuid())
   userId         String
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  fingerprint    String          // SHA-256(company:title:url) — dedupe key
+  fingerprint    String // SHA-256(company:title:url) — dedupe key
   company        String
   title          String
   location       String?
   url            String?
-  rawSnippet     String?         // email snippet that surfaced this lead
-  jdText         String?         // full job description fetched from the posting URL
+  rawSnippet     String? // email snippet that surfaced this lead
+  jdText         String? // full job description fetched from the posting URL
   source         String          @default("gmail-alert") // gmail-alert|manual
   fitScore       Int?
   fitReason      String?
@@ -201,12 +206,12 @@ model ApplicationKit {
   id             String   @id @default(cuid())
   jobLeadId      String   @unique
   jobLead        JobLead  @relation(fields: [jobLeadId], references: [id], onDelete: Cascade)
-  resumeBullets  String?  // LLM-tailored bullet points
-  coverLetter    String?  // LLM-drafted cover letter (never auto-sent)
-  recruiterEmail String?  // Hunter.io enriched email
-  gmailDraftId   String?  // set after approval executes the Gmail draft
+  resumeBullets  String? // LLM-tailored bullet points
+  coverLetter    String? // LLM-drafted cover letter (never auto-sent)
+  recruiterEmail String? // Hunter.io enriched email
+  gmailDraftId   String? // set after approval executes the Gmail draft
   atsScore       Int?
-  atsFeedback    String?  // missing keywords
+  atsFeedback    String? // missing keywords
   status         String   @default("pending") // pending|ready|draft_queued
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -216,7 +221,7 @@ model MasterResume {
   id        String   @id @default(cuid())
   userId    String   @unique
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  content   String   // JSON blob — seed master resume
+  content   String // JSON blob — seed master resume
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 }
@@ -229,7 +234,7 @@ model JobScoutRun {
   kitsBuilt     Int      @default(0)
   draftsQueued  Int      @default(0)
   digestSent    Boolean  @default(false)
-  errors        String?  // JSON array of error strings
+  errors        String? // JSON array of error strings
   createdAt     DateTime @default(now())
 }
 
@@ -239,14 +244,14 @@ model JobScoutRun {
 // Pure log; Hermes does not load this as model context — each message is
 // routed independently via routeMessage's own keyword-matched data lookups.
 model ChatMessage {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role      String   // "user" | "assistant"
-  content   String
-  channel   String   @default("dashboard") // "dashboard" | "telegram"
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role        String // "user" | "assistant"
+  content     String
+  channel     String   @default("dashboard") // "dashboard" | "telegram"
   targetAgent String? // null = general Hermes thread; else iris|kairos|argus|plutus|athena|mnemosyne|sophos
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([userId, targetAgent, createdAt])
@@ -260,25 +265,25 @@ model ChatMessage {
 // Detection: Gmail sweep (daily cron + backfill) + manual "log this job" command.
 
 model TrackedApplication {
-  id              String    @id @default(cuid())
-  userId          String
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  fingerprint     String    // SHA-256(company.lower + title.lower) — dedupe key
-  companyName     String
-  jobTitle        String
-  applicationDate DateTime  @default(now())
-  source          String    @default("Other") // Gmail|Manual Entry|Handshake|Indeed|LinkedIn|Company Website|Other
-  status          String    @default("Unknown") // Applied|Needs Reply|Interview|Waiting|Rejected|Offer|Unknown
-  contactName     String?
-  contactEmail    String?
-  emailSubject    String?
-  jobUrl          String?
-  location        String?
-  notes           String?
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fingerprint      String // SHA-256(company.lower + title.lower) — dedupe key
+  companyName      String
+  jobTitle         String
+  applicationDate  DateTime  @default(now())
+  source           String    @default("Other") // Gmail|Manual Entry|Handshake|Indeed|LinkedIn|Company Website|Other
+  status           String    @default("Unknown") // Applied|Needs Reply|Interview|Waiting|Rejected|Offer|Unknown
+  contactName      String?
+  contactEmail     String?
+  emailSubject     String?
+  jobUrl           String?
+  location         String?
+  notes            String?
   nextFollowUpDate DateTime?
-  gmailMessageId  String?   // source Gmail message id for linkback
-  lastUpdatedAt   DateTime  @updatedAt
-  createdAt       DateTime  @default(now())
+  gmailMessageId   String? // source Gmail message id for linkback
+  lastUpdatedAt    DateTime  @updatedAt
+  createdAt        DateTime  @default(now())
 
   @@unique([userId, fingerprint])
   @@index([userId, status])
@@ -295,11 +300,12 @@ model AgentTask {
   title       String
   description String
   status      String   @default("queued") // queued | running | blocked | completed | failed
-  files       String?  // JSON array of file paths involved
-  result      String?  // summary of the outcome, set on completed/failed
-  error       String?  // error message, set on failed
+  files       String? // JSON array of file paths involved
+  result      String? // summary of the outcome, set on completed/failed
+  error       String? // error message, set on failed
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
   @@index([userId, status])
   @@index([userId, createdAt])
 }
@@ -341,6 +347,7 @@ model EngineeringTask {
   deployStartedAt       DateTime?
   deployCompletedAt     DateTime?
   rollbackReference     String?
+
   @@index([userId, status])
   @@index([userId, createdAt])
 }
@@ -351,12 +358,13 @@ model AuditLog {
   id           String   @id @default(cuid())
   userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  action       String   // "approved" | "rejected" | "executed" | "rate_limited" | "auth_failed"
-  resourceType String   // "ApprovalAction" | "Task" | "ChatMessage" | "MemoryFact"
-  resourceId   String?  // ID of the affected row
-  detail       String?  // Human-readable summary, max 500 chars
-  ipHash       String?  // SHA-256 of IP for abuse detection (not raw IP — privacy)
+  action       String // "approved" | "rejected" | "executed" | "rate_limited" | "auth_failed"
+  resourceType String // "ApprovalAction" | "Task" | "ChatMessage" | "MemoryFact"
+  resourceId   String? // ID of the affected row
+  detail       String? // Human-readable summary, max 500 chars
+  ipHash       String? // SHA-256 of IP for abuse detection (not raw IP — privacy)
   createdAt    DateTime @default(now())
+
   @@index([userId, createdAt])
   @@index([action, createdAt])
 }

@@ -64,5 +64,18 @@ export async function GET(req: Request) {
     .map((r, i) => (r.status === "rejected" ? users[i].primaryEmail : null))
     .filter((email): email is string => email !== null);
 
+  // Health Center finds this job by "daily-brief" in agentName/summaries —
+  // without this row the dashboard reports the cron as "Never Ran".
+  await prisma.agentRun
+    .create({
+      data: {
+        agentName: "argus",
+        inputSummary: "daily-brief cron",
+        outputSummary: `Morning brief generated for ${generated.length} user(s)${failed.length ? `, failed for ${failed.length}: ${failed.join(", ")}` : ""}.`,
+        status: failed.length && !generated.length ? "failed" : "completed",
+      },
+    })
+    .catch((err) => console.error("[daily-brief] AgentRun log failed:", err));
+
   return Response.json({ ok: true, job: "daily-brief", generated, failed });
 }

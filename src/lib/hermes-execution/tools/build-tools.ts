@@ -332,10 +332,19 @@ async function llmTypeCheck(files: GeneratedFile[], userId: string): Promise<str
 async function runBuildAndPush(message: string, ctx: ToolContext) {
   if (isServerlessRuntime() && isUserAppOrWebsiteGeneration(message) && !explicitlyRequestsRepoOrPullRequest(message)) {
     const { queueLocalBuilderWorkerTask } = await import("@/lib/local-builder");
-    const queued = await queueLocalBuilderWorkerTask(ctx.userId, "generate", message);
+    // Hermes Nous is the primary builder when the worker reports it ready;
+    // Codex CLI via local_worker is the fallback (fix-and-harden brief 2.4).
+    const { getHermesAgentReadiness, getLocalWorkerLiveness, workerOfflineNotice } = await import("@/lib/worker-watch");
+    const readiness = await getHermesAgentReadiness().catch(() => ({ ready: false, reason: "readiness check failed" }));
+    const executor = readiness.ready ? ("hermes_agent" as const) : ("local_worker" as const);
+    const queued = await queueLocalBuilderWorkerTask(ctx.userId, "generate", message, undefined, executor);
     if (queued) {
-      const decision = "route=local_worker_queue reason=serverless_cannot_write_local_files";
+      const decision = `route=local_worker_queue executor=${executor} reason=serverless_cannot_write_local_files`;
       console.log(`[hermes-execution] ${decision} task=${queued.taskId ?? "unknown"} project=${queued.projectName}`);
+      // Say so explicitly when the worker is down instead of replying as if
+      // the build is in motion (fix-and-harden brief 2.2).
+      const liveness = await getLocalWorkerLiveness().catch(() => null);
+      const notice = liveness ? workerOfflineNotice(liveness) : null;
       return {
         answer: [
           "Queued for Local Worker.",
@@ -343,7 +352,10 @@ async function runBuildAndPush(message: string, ctx: ToolContext) {
           decision,
           `Project: ${queued.projectName}`,
           queued.taskId ? `Task: ${queued.taskId}` : null,
-          "Local Worker required: run `npm run worker:local` on the Windows machine to claim and execute it.",
+          readiness.ready
+            ? "Executor: Hermes Nous (primary). Codex CLI runs automatically if it fails."
+            : `Executor: Codex CLI (local worker) — Hermes Nous unavailable: ${readiness.reason}.`,
+          notice ?? "Local worker is online — it will claim this task on its next poll.",
         ].filter(Boolean).join("\n"),
         artifacts: [{
           type: "text" as const,
@@ -352,7 +364,7 @@ async function runBuildAndPush(message: string, ctx: ToolContext) {
           metadata: {
             route: "local_worker_queue",
             reason: "serverless_cannot_write_local_files",
-            assignedExecutor: "local_worker",
+            assignedExecutor: executor,
             projectId: queued.id,
             taskId: queued.taskId,
             status: "queued",

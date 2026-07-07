@@ -13,6 +13,8 @@ export interface EmailMessage {
   labels: string[];
   isUnread: boolean;
   isImportant: boolean;
+  /** True when bulk-sender headers are present (List-Unsubscribe, Precedence: bulk/list, Auto-Submitted). */
+  isBulk: boolean;
   accountEmail: string;
   accountLabel: string;
 }
@@ -60,6 +62,22 @@ function header(msg: GmailMessage, name: string): string {
       (h) => h.name.toLowerCase() === name.toLowerCase()
     )?.value ?? ""
   );
+}
+
+/**
+ * Detects bulk/automated mail from standard headers instead of a sender
+ * allowlist, so new job boards and marketing senders demote themselves:
+ * List-Unsubscribe (RFC 2369) is required of legitimate bulk senders,
+ * Precedence: bulk/list/junk marks mailing-list traffic, and
+ * Auto-Submitted (RFC 3834) marks machine-generated mail.
+ */
+function detectBulkHeaders(getHeader: (name: string) => string): boolean {
+  if (getHeader("List-Unsubscribe")) return true;
+  const precedence = getHeader("Precedence").toLowerCase();
+  if (precedence === "bulk" || precedence === "list" || precedence === "junk") return true;
+  const autoSubmitted = getHeader("Auto-Submitted").toLowerCase();
+  if (autoSubmitted && autoSubmitted !== "no") return true;
+  return false;
 }
 
 function maskEmail(email: string): string {
@@ -153,6 +171,9 @@ export async function syncGmailInbox(
               const params = new URLSearchParams({ format: "metadata" });
               params.append("metadataHeaders", "Subject");
               params.append("metadataHeaders", "From");
+              params.append("metadataHeaders", "List-Unsubscribe");
+              params.append("metadataHeaders", "Precedence");
+              params.append("metadataHeaders", "Auto-Submitted");
               const res = await fetch(`${GMAIL_API}/messages/${id}?${params}`, { headers });
               if (!res.ok) throw new Error(`Gmail get ${res.status} for ${id}`);
               const msg = (await res.json()) as GmailMessage;
@@ -169,6 +190,7 @@ export async function syncGmailInbox(
                 labels,
                 isUnread: labels.includes("UNREAD"),
                 isImportant: labels.includes("IMPORTANT"),
+                isBulk: detectBulkHeaders((name) => header(msg, name)),
                 accountEmail: account.email,
                 accountLabel: account.label,
               } satisfies EmailMessage;
@@ -252,7 +274,25 @@ export async function syncGmailInbox(
 }
 
 const NEWSLETTER_HINTS = ["unsubscribe", "newsletter", "digest"];
-const NOTIFICATION_SENDERS = ["no-reply", "noreply", "notifications@", "notification@"];
+// Automated-sender address patterns. Demote-only: a match moves mail out of
+// action_needed, never into it, so a false positive just files noise lower.
+const NOTIFICATION_SENDERS = [
+  "no-reply",
+  "noreply",
+  "do-not-reply",
+  "donotreply",
+  "do_not_reply",
+  "notifications@",
+  "notification@",
+  "mailer-daemon",
+  "postmaster@",
+  "alerts@",
+  "alert@",
+  "notify@",
+  "updates@",
+  "marketing@",
+  "newsletter@",
+];
 
 // Senders that push marketing, job-spam, or social blasts. These must never be
 // treated as action_needed even when Gmail fails to tag them PROMOTIONS/SOCIAL.
@@ -308,10 +348,43 @@ export function classify(message: EmailMessage): EmailCategory {
   if (NEWSLETTER_HINTS.some((h) => subject.includes(h) || snippet.includes(h))) {
     return "newsletter";
   }
-  if (message.isImportant || labels.includes("CATEGORY_PERSONAL")) {
-    return message.isUnread ? "action_needed" : "personal";
+  // Bulk-sender headers catch automated senders the category labels and sender
+  // lists above missed — new job boards and marketing blasts demote here
+  // without anyone maintaining an allowlist.
+  if (message.isBulk) {
+    return "newsletter";
   }
-  return message.isUnread ? "action_needed" : "personal";
+  // action_needed requires positive evidence of a real correspondent: Gmail
+  // importance, the personal category, or (by elimination above) a non-bulk,
+  // non-automated From address. Unread mail with no such evidence files as a
+  // notification instead of flooding the priority list.
+  if (message.isUnread) {
+    return message.isImportant || labels.includes("CATEGORY_PERSONAL") || isLikelyHumanSender(from)
+      ? "action_needed"
+      : "notification";
+  }
+  return "personal";
+}
+
+// Common ESP/bounce subdomains and automated locals that survive the earlier
+// checks. Demote-only, same rule as NOTIFICATION_SENDERS.
+const AUTOMATED_FROM_HINTS = [
+  "@e.",
+  "@em.",
+  "@mail.",
+  "@email.",
+  "@mailer.",
+  "@bounce",
+  "@news.",
+  "@marketing.",
+  "@mktg.",
+  "info@",
+  "hello@",
+  "team@",
+];
+
+function isLikelyHumanSender(from: string): boolean {
+  return !AUTOMATED_FROM_HINTS.some((h) => from.includes(h));
 }
 
 export interface TriageResult {
@@ -572,6 +645,7 @@ export async function fetchApplicationEmails(
             labels,
             isUnread: labels.includes("UNREAD"),
             isImportant: labels.includes("IMPORTANT"),
+            isBulk: detectBulkHeaders(getHeader),
             accountEmail: account.email,
             accountLabel: account.label,
             body: body.slice(0, 6000),
@@ -607,7 +681,11 @@ export async function fetchJobAlertMessages(
   });
 
   const senderQuery = JOB_ALERT_SENDERS.map((s) => `from:${s}`).join(" OR ");
-  const query = `(${senderQuery}) newer_than:1d -label:CATEGORY_PROMOTIONS`;
+  // No CATEGORY_PROMOTIONS exclusion here: Gmail routinely auto-labels
+  // LinkedIn/Indeed/ZipRecruiter job alerts as Promotions, and this query is
+  // already restricted to the trusted JOB_ALERT_SENDERS allowlist, so the
+  // exclusion only dropped the exact emails this pipeline exists to catch.
+  const query = `(${senderQuery}) newer_than:1d`;
 
   const results = await Promise.allSettled(
     accounts.map(async (account) => {
@@ -655,6 +733,7 @@ export async function fetchJobAlertMessages(
             labels,
             isUnread: labels.includes("UNREAD"),
             isImportant: labels.includes("IMPORTANT"),
+            isBulk: detectBulkHeaders(getHeader),
             accountEmail: account.email,
             accountLabel: account.label,
             body: body.slice(0, 8000),

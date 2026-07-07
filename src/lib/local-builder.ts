@@ -8,6 +8,14 @@ import { runFuguDesignCritique } from "@/lib/fugu-design-critic";
 import { createExecutionQueueTask, updateExecutionQueueTask } from "@/lib/execution-queue";
 import { loadAgentKnowledgeContext, type KnowledgeCard } from "@/lib/knowledge-cards";
 import { runBrowserQa } from "@/lib/browser-qa";
+import {
+  DEFAULT_LOCAL_PROJECTS_ROOT,
+  isWindowsAbsolute,
+  resolveLocalPath,
+  resolveLocalProjectsRoot,
+} from "@/lib/local-projects-root";
+
+export { DEFAULT_LOCAL_PROJECTS_ROOT };
 
 type Db = ReturnType<typeof createClient>;
 
@@ -69,19 +77,9 @@ const FUGU_DESIGN_AGENT = "fugu";
 const CODEX_CLI_EXECUTOR = "codex_cli";
 const DEFAULT_CODEX_CLI_MODEL = "gpt-5.4";
 const devServers = new Map<string, { child: ReturnType<typeof spawn>; url: string; pid: number | null }>();
-const DEFAULT_LOCAL_PROJECTS_ROOT = "C:\\Users\\osman\\OneDrive\\Desktop\\HermesProject";
 
 export function isServerlessRuntime(): boolean {
   return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
-}
-
-function isWindowsAbsolute(value: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\/.test(value);
-}
-
-function resolveLocalPath(value: string): string {
-  if (isWindowsAbsolute(value)) return path.win32.normalize(value);
-  return path.resolve(value);
 }
 
 function joinLocalProjectPath(root: string, folderName: string): string {
@@ -104,23 +102,7 @@ async function exists(dir: string): Promise<boolean> {
 }
 
 export async function getLocalProjectsRoot(): Promise<string> {
-  if (process.env.HERMES_LOCAL_PROJECTS_ROOT?.trim()) {
-    return resolveLocalPath(process.env.HERMES_LOCAL_PROJECTS_ROOT.trim());
-  }
-
-  const candidates = [
-    DEFAULT_LOCAL_PROJECTS_ROOT,
-    "C:\\Users\\osman\\OneDrive\\Desktop\\Hermes Project",
-  ];
-
-  if (isServerlessRuntime()) return DEFAULT_LOCAL_PROJECTS_ROOT;
-
-  for (const candidate of candidates) {
-    const resolved = resolveLocalPath(candidate);
-    if (await exists(resolved)) return resolved;
-  }
-
-  return resolveLocalPath(candidates[0]);
+  return resolveLocalProjectsRoot();
 }
 
 export async function getLocalBuilderRootInfo(): Promise<LocalBuilderRootInfo> {
