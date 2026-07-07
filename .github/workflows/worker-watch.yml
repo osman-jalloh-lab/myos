@@ -1,0 +1,20 @@
+# Vercel Hobby only allows daily crons (deploys with */30 in vercel.json are
+# rejected with cron_jobs_limits_reached), so the 30-minute worker-offline
+# check runs here instead. The daily Vercel cron remains as a backup.
+name: worker-watch
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger worker-watch
+        run: |
+          status=$(curl -s -o /tmp/body -w "%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://www.parawi.com/api/cron/worker-watch)
+          cat /tmp/body
+          [ "$status" = "200" ] || exit 1
