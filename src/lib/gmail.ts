@@ -15,6 +15,8 @@ export interface EmailMessage {
   isImportant: boolean;
   /** True when bulk-sender headers are present (List-Unsubscribe, Precedence: bulk/list, Auto-Submitted). */
   isBulk: boolean;
+  /** Authentication-Results header, used only for scam demotion heuristics. */
+  authenticationResults: string;
   accountEmail: string;
   accountLabel: string;
 }
@@ -174,6 +176,7 @@ export async function syncGmailInbox(
               params.append("metadataHeaders", "List-Unsubscribe");
               params.append("metadataHeaders", "Precedence");
               params.append("metadataHeaders", "Auto-Submitted");
+              params.append("metadataHeaders", "Authentication-Results");
               const res = await fetch(`${GMAIL_API}/messages/${id}?${params}`, { headers });
               if (!res.ok) throw new Error(`Gmail get ${res.status} for ${id}`);
               const msg = (await res.json()) as GmailMessage;
@@ -191,6 +194,7 @@ export async function syncGmailInbox(
                 isUnread: labels.includes("UNREAD"),
                 isImportant: labels.includes("IMPORTANT"),
                 isBulk: detectBulkHeaders((name) => header(msg, name)),
+                authenticationResults: header(msg, "Authentication-Results"),
                 accountEmail: account.email,
                 accountLabel: account.label,
               } satisfies EmailMessage;
@@ -320,6 +324,36 @@ const LOW_PRIORITY_SUBJECT_HINTS = [
   "view your matches",
 ];
 
+const FINANCIAL_SCAM_HINTS = [
+  "loan",
+  "credit",
+  "pre-approved",
+  "pre approved",
+  "wire transfer",
+  "urgent transfer",
+  "cash advance",
+  "debt relief",
+  "funding offer",
+  "funding",
+  "funds",
+  "business funding",
+  "personal funding",
+  "approval in",
+];
+
+function hasAuthenticationFailure(authenticationResults?: string): boolean {
+  const value = authenticationResults?.toLowerCase() ?? "";
+  if (!value) return false;
+  return /\b(spf|dkim|dmarc)=(?:fail|softfail|permerror|temperror|neutral|none)\b/.test(value)
+    || /\bdoes not designate permitted sender\b/.test(value)
+    || /\bauthentication.*fail/.test(value);
+}
+
+function hasFinancialScamLanguage(subject: string, snippet: string): boolean {
+  const text = `${subject} ${snippet}`;
+  return FINANCIAL_SCAM_HINTS.some((hint) => text.includes(hint));
+}
+
 /** Heuristic, metadata-only classification — no LLM call needed for Lean Mode. */
 export function classify(message: EmailMessage): EmailCategory {
   const labels = message.labels;
@@ -333,6 +367,9 @@ export function classify(message: EmailMessage): EmailCategory {
   }
   if (LOW_PRIORITY_SUBJECT_HINTS.some((h) => subject.includes(h))) {
     return "notification";
+  }
+  if (hasAuthenticationFailure(message.authenticationResults) && hasFinancialScamLanguage(subject, snippet)) {
+    return "promotion";
   }
 
   if (labels.includes("CATEGORY_PROMOTIONS")) return "promotion";
@@ -646,6 +683,7 @@ export async function fetchApplicationEmails(
             isUnread: labels.includes("UNREAD"),
             isImportant: labels.includes("IMPORTANT"),
             isBulk: detectBulkHeaders(getHeader),
+            authenticationResults: getHeader("Authentication-Results"),
             accountEmail: account.email,
             accountLabel: account.label,
             body: body.slice(0, 6000),
@@ -734,6 +772,7 @@ export async function fetchJobAlertMessages(
             isUnread: labels.includes("UNREAD"),
             isImportant: labels.includes("IMPORTANT"),
             isBulk: detectBulkHeaders(getHeader),
+            authenticationResults: getHeader("Authentication-Results"),
             accountEmail: account.email,
             accountLabel: account.label,
             body: body.slice(0, 8000),

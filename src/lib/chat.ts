@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { routeMessage, routeToAgent, type RouteResult } from "@/agents/hermes";
 import { handleMercuryRequest } from "@/agents/mercury";
-import { autoCaptureUserMemory, rememberedTag } from "@/lib/auto-memory";
+import { autoCaptureUserMemory, logAutoMemoryFailure, rememberedTag } from "@/lib/auto-memory";
 import { buildContextBlock, updateSessionAfterResponse } from "@/lib/memory-context";
 import { contextStateFromContextBlock, resolveMessageWithContext } from "@/lib/context-persistence";
 
@@ -84,7 +84,10 @@ export async function sendMessage(
   const userRow = await prisma.chatMessage.create({
     data: { userId, role: "user", content: text, channel, targetAgent },
   });
-  const remembered = await autoCaptureUserMemory(userId, text).catch(() => [] as string[]);
+  const remembered = await autoCaptureUserMemory(userId, text).catch(async (error) => {
+    await logAutoMemoryFailure(userId, text, error);
+    return [] as string[];
+  });
   const resolvedContext = chatContext ?? await buildContextBlock(contextChatId, userId, text).catch(() => "");
   const contextResolution = resolveMessageWithContext(text, contextStateFromContextBlock(resolvedContext || undefined));
   const routingText = contextResolution.resolvedText;
@@ -115,7 +118,10 @@ export async function sendMessage(
 
 /** Persist an already-executed reply without routing the prompt through Hermes again. */
 export async function persistExecutedMessage(userId: string, text: string, reply: string, channel: ChatChannel = "dashboard"): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView }> {
-  const remembered = await autoCaptureUserMemory(userId, text).catch(() => [] as string[]);
+  const remembered = await autoCaptureUserMemory(userId, text).catch(async (error) => {
+    await logAutoMemoryFailure(userId, text, error);
+    return [] as string[];
+  });
   const memoryTag = rememberedTag(remembered);
   if (memoryTag) reply = `${reply}\n\n${memoryTag}`;
   const [userRow, replyRow] = await prisma.$transaction([

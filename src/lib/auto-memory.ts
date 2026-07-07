@@ -19,7 +19,7 @@ export function extractUserMemoryFacts(message: string): string[] {
   const text = message.trim();
   const facts = new Set<string>();
 
-  const explicit = text.match(/^(?:remember|remember that|note that|log this|capture this|keep in mind)\s+(.{8,240})$/i)?.[1];
+  const explicit = text.match(/^(?:remember that|remember|note that|log this|capture this|keep in mind)\s+(.{8,240})$/i)?.[1];
   if (explicit) facts.add(cleanFact(explicit));
 
   const preference = text.match(/\b(?:i prefer|my preference is|from now on)\b.{4,220}/i)?.[0];
@@ -115,17 +115,36 @@ export async function autoCaptureUserMemory(userId: string, message: string, sou
   const facts = extractUserMemoryFacts(message);
   const saved: string[] = [];
   for (const fact of facts) {
-    if (await rememberUserFact(userId, fact, source).catch(() => false)) saved.push(fact);
+    if (await rememberUserFact(userId, fact, source)) saved.push(fact);
   }
   // LLM pass only when the fast-path patterns found nothing, so explicit
   // "remember that ..." stays instant and cheap.
   if (saved.length === 0 && facts.length === 0 && worthClassifying(message)) {
-    const llmFacts = await extractFactsWithLlm(userId, message).catch(() => [] as string[]);
+    const llmFacts = await extractFactsWithLlm(userId, message);
     for (const fact of llmFacts) {
-      if (await rememberUserFact(userId, fact, "auto-memory:llm-extracted").catch(() => false)) saved.push(fact);
+      if (await rememberUserFact(userId, fact, "auto-memory:llm-extracted")) saved.push(fact);
     }
   }
   return saved;
+}
+
+export async function logAutoMemoryFailure(userId: string, message: string, error: unknown): Promise<void> {
+  const detail = error instanceof Error ? error.message : String(error);
+  console.error(JSON.stringify({
+    event: "auto_memory_capture_failed",
+    userId,
+    messagePreview: message.slice(0, 160),
+    error: detail.slice(0, 500),
+  }));
+  await prisma.agentRun.create({
+    data: {
+      agentName: "mnemosyne",
+      inputSummary: `auto_memory_capture user=${userId} message=${message.slice(0, 160)}`,
+      outputSummary: detail.slice(0, 1000),
+      modelProvider: "auto-memory",
+      status: "failed",
+    },
+  }).catch(() => undefined);
 }
 
 /** Chat-reply tag so Osman gets instant feedback that a fact landed. */
