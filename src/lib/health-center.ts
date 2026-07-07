@@ -442,12 +442,19 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
   ]);
 
   const gmailSync = latestRun(runs, ["gmail_sync_completed", "gmail", "email-watcher"]);
+  // "Connected" means we can obtain a valid token: a refresh token exists (the
+  // access token rotating hourly is normal OAuth, not breakage) or the current
+  // access token is still live. Measuring raw expiresAt scored working
+  // accounts 0 every hour — see fix-and-harden brief 7.2.
+  const canObtainToken = (account: { refreshToken: string | null; expiresAt: Date }) =>
+    Boolean(account.refreshToken?.trim()) || account.expiresAt.getTime() > Date.now();
   const linkedGoogleRows: HealthAccount[] = accounts.map((account, index) => {
-    const expired = account.expiresAt.getTime() <= Date.now();
+    const connected = canObtainToken(account);
     const gmailScope = hasGmailScope(account.scopes);
     const calendarScope = hasCalendarScope(account.scopes);
     const warnings = [
-      expired ? "token expired" : null,
+      !connected ? "reconnect required (no refresh token, access token expired)" : null,
+      connected && !account.refreshToken?.trim() ? "no refresh token — will disconnect when the access token expires" : null,
       !gmailScope ? "gmail scope missing" : null,
       !calendarScope ? "calendar scope missing" : null,
     ].filter((item): item is string => Boolean(item));
@@ -458,10 +465,10 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
       gmailScope,
       calendarScope,
       tokenExpiresAt: account.expiresAt.toISOString(),
-      connected: !expired,
+      connected,
       lastSuccessfulSync: gmailSync && !/fail|error/i.test(gmailSync.status) ? iso(gmailSync.createdAt) : null,
-      lastError: expired ? "OAuth token expired" : warnings.length ? warnings.join(", ") : null,
-      reconnectRequired: expired || !gmailScope || !calendarScope,
+      lastError: !connected ? "OAuth reconnect required (no valid refresh token)" : warnings.length ? warnings.join(", ") : null,
+      reconnectRequired: !connected || !gmailScope || !calendarScope,
       warnings,
       score: 0,
     };
@@ -486,9 +493,9 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
 
   const calendarAccount = accounts.find((account) => /calendar/i.test(account.scopes));
   const gmailAccounts = accounts.filter((account) => hasGmailScope(account.scopes));
-  const hasUsableGmail = gmailAccounts.some((account) => account.expiresAt.getTime() > Date.now());
-  const hasUsableCalendar = Boolean(calendarAccount && calendarAccount.expiresAt.getTime() > Date.now());
-  const calendarExpired = calendarAccount ? calendarAccount.expiresAt.getTime() <= Date.now() : false;
+  const hasUsableGmail = gmailAccounts.some(canObtainToken);
+  const hasUsableCalendar = Boolean(calendarAccount && canObtainToken(calendarAccount));
+  const calendarExpired = calendarAccount ? !canObtainToken(calendarAccount) : false;
   const calendarRow: HealthAccount = {
     name: "Google Calendar",
     email: calendarAccount?.email ?? null,
