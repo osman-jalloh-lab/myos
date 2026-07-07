@@ -10,8 +10,7 @@ describe("provider health safety", () => {
     expect(apiProviderSeverity({ provider: "Sakana / Fugu", status: "configured_untested" })).toBe("healthy");
   });
 
-  it("treats optional missing providers as warnings", () => {
-    expect(apiProviderSeverity({ provider: "Amadeus Travel Fallback", status: "missing" })).toBe("warning");
-    expect(apiProviderSeverity({ provider: "Google APIs", status: "missing" })).toBe("warning");
+  it("treats missing providers as warnings, not failures", () => {
+    expect(apiProviderSeverity({ provider: "Hunter.io", status: "missing" })).toBe("warning");
   });
 });

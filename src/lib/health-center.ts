@@ -295,11 +295,8 @@ function providerEnvConfigured(name: string): boolean {
   return SANITIZED_PROVIDER_ENV.has(name) ? Boolean(providerCredential(name)) : hasEnv(name);
 }
 
-const OPTIONAL_PROVIDERS = new Set(["Amadeus Travel Fallback", "Google APIs"]);
-
 export function apiProviderSeverity(provider: Pick<ApiProviderHealth, "provider" | "status">): HealthSeverity {
   if (provider.status === "working" || provider.status === "configured_untested") return "healthy";
-  if (provider.status === "missing" && OPTIONAL_PROVIDERS.has(provider.provider)) return "warning";
   if (provider.status === "missing") return "warning";
   return "failure";
 }
@@ -362,8 +359,6 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
     providerRow({ provider: "Sakana / Fugu", env: ["SAKANA_API_KEY"], runs, component: providerComponent("Sakana / Fugu") }),
     providerRow({ provider: "Firecrawl Web Search", env: ["FIRECRAWL_API_KEY"], runs, component: providerComponent("Firecrawl Web Search") }),
     providerRow({ provider: "SerpAPI Google Flights", env: ["SERPAPI_API_KEY"], runs, component: providerComponent("SerpAPI Google Flights") }),
-    providerRow({ provider: "Amadeus Travel Fallback", env: ["AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET"], runs, component: providerComponent("Amadeus Travel Fallback") }),
-    providerRow({ provider: "Google APIs", env: ["GOOGLE_MAPS_API_KEY"], runs, component: providerComponent("Google APIs") }),
     providerRow({ provider: "Gmail", env: [], runs, component: providerComponent("Gmail"), configured: accounts.some((account) => /gmail|mail\.google/i.test(account.scopes)) }),
     providerRow({ provider: "Calendar", env: [], runs, component: providerComponent("Calendar"), configured: accounts.some((account) => /calendar/i.test(account.scopes)) }),
     providerRow({ provider: "Telegram", env: ["TELEGRAM_BOT_TOKEN", "TELEGRAM_OWNER_CHAT_ID"], runs, component: providerComponent("Telegram") }),
@@ -385,17 +380,6 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
       result = await testJsonEndpoint("https://api.anthropic.com/v1/models", { headers: { "x-api-key": cleanProviderCredential(process.env.ANTHROPIC_API_KEY), "anthropic-version": "2023-06-01" } });
     } else if (row.provider === "SerpAPI Google Flights") {
       result = await testJsonEndpoint(`https://serpapi.com/account?api_key=${encodeURIComponent(providerCredential("SERPAPI_API_KEY"))}`, {}, "Invalid key or provider rejected request", [400, 401, 403]);
-    } else if (row.provider === "Amadeus Travel Fallback") {
-      const params = new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: providerCredential("AMADEUS_CLIENT_ID"),
-        client_secret: providerCredential("AMADEUS_CLIENT_SECRET"),
-      });
-      result = await testJsonEndpoint("https://test.api.amadeus.com/v1/security/oauth2/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: params.toString(),
-      });
     } else if (row.provider === "Telegram") {
       result = await testJsonEndpoint(`https://api.telegram.org/bot${providerCredential("TELEGRAM_BOT_TOKEN")}/getMe`, {});
     } else if (row.provider === "GitHub") {

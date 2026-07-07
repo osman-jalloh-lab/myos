@@ -399,7 +399,6 @@ function calculateSystemHealthScore(health: HealthCenterData | null, queue: Exec
     ? average(health.apiProviders.map((provider) => {
       if (provider.status === "working") return 100;
       if (provider.status === "configured_untested") return 80;
-      if (provider.status === "missing" && ["Amadeus Travel Fallback", "Google APIs"].includes(provider.provider)) return 70;
       if (provider.status === "missing") return 55;
       return 15;
     }))
