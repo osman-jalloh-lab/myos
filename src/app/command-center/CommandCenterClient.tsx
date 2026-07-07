@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import BuilderOffice from "./BuilderOffice";
 import LiveBuildConsole from "./LiveBuildConsole";
+import HermesNousChatPanel from "@/components/HermesNousChatPanel";
 import AgentRoster, { type RosterAgent } from "@/components/AgentRoster";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -963,15 +964,18 @@ const ROSTER_AGENTS: RosterAgent[] = [
 
 function AgentTalkPanel() {
   return (
-    <div style={cardStyle}>
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Talk to your agents</div>
-        <h2 style={{ margin: "6px 0 0", fontSize: 24, fontFamily: "Fraunces, serif" }}>Agent Roster</h2>
-        <div style={{ marginTop: 4, color: "#647089", fontSize: 12 }}>Click an agent to open its private thread. Replies come from the agent&apos;s own read tools; anything outbound still goes through approvals.</div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: 14, alignItems: "stretch" }}>
+      <div style={cardStyle}>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Talk to your agents</div>
+          <h2 style={{ margin: "6px 0 0", fontSize: 24, fontFamily: "Fraunces, serif" }}>Agent Roster</h2>
+          <div style={{ marginTop: 4, color: "#647089", fontSize: 12 }}>Click an agent to open its private thread. Replies come from the agent&apos;s own read tools; anything outbound still goes through approvals.</div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 6 }}>
+          <AgentRoster agents={ROSTER_AGENTS} />
+        </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 6 }}>
-        <AgentRoster agents={ROSTER_AGENTS} />
-      </div>
+      <HermesNousChatPanel />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { createClient, type Client } from "@libsql/client";
 import { execFile } from "node:child_process";
+import crypto from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -7,6 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 // Dependency-free on purpose — safe to import before loadLocalEnv() runs,
 // unlike ../src/lib/local-builder which is only ever imported dynamically.
+import { parseHermesChatOutput, sanitizeHermesOutput } from "../src/lib/hermes-nous-cli";
 import { DEFAULT_LOCAL_PROJECTS_ROOT, resolveLocalProjectsRoot } from "../src/lib/local-projects-root";
 
 type QueueTask = {
@@ -234,7 +236,7 @@ async function recoverStaleTasks(db: Client): Promise<number> {
   const stale = await db.execute({
     sql: `SELECT id, logs FROM AgentTask
           WHERE status = 'executing'
-            AND assigned_executor IN ('local_worker', 'hermes_agent')
+            AND assigned_executor IN ('local_worker', 'hermes_agent', 'hermes_chat')
             AND (lease_expires_at < datetime('now')
               OR (lease_expires_at IS NULL AND updatedAt < datetime('now', '-5 minutes')))`,
     args: [],
@@ -439,7 +441,7 @@ async function claimTask(db: Client): Promise<QueueTask | null> {
     sql: `
       SELECT id, userId, title, description, status, project_id, logs, assigned_executor
       FROM AgentTask
-      WHERE assigned_executor IN ('local_worker', 'hermes_agent') AND status = 'queued'
+      WHERE assigned_executor IN ('local_worker', 'hermes_agent', 'hermes_chat') AND status = 'queued'
       ORDER BY createdAt ASC
       LIMIT 1
     `,
@@ -537,7 +539,7 @@ function taskStatusForProjectStatus(status: string): "completed" | "failed" | "q
   return "completed";
 }
 
-function hermesAgentProcessEnv(cwd?: string): NodeJS.ProcessEnv {
+function hermesAgentProcessEnv(): NodeJS.ProcessEnv {
   const allowed = [
     "SystemRoot", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP",
     "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
@@ -551,10 +553,35 @@ function hermesAgentProcessEnv(cwd?: string): NodeJS.ProcessEnv {
 }
 
 function safeHermesOutput(value: string): string {
-  return value
-    .replace(/^.*Using API key:.*$/gim, "[Hermes credential configured]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
-    .replace(/([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)\s*[=:]\s*\S+/gi, "$1=[redacted]");
+  return sanitizeHermesOutput(value);
+}
+
+function parseHermesChatPayload(task: QueueTask): { message: string; chatMessageId: string | null; hermesSessionId: string | null } {
+  try {
+    const parsed = JSON.parse(task.description) as { message?: unknown; chatMessageId?: unknown; hermesSessionId?: unknown };
+    const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+    if (!message) throw new Error("Hermes Nous chat task is missing a message.");
+    return {
+      message,
+      chatMessageId: typeof parsed.chatMessageId === "string" && parsed.chatMessageId.trim() ? parsed.chatMessageId : null,
+      hermesSessionId: typeof parsed.hermesSessionId === "string" && parsed.hermesSessionId.trim() ? parsed.hermesSessionId : null,
+    };
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error("Hermes Nous chat task payload is not valid JSON.");
+    throw error;
+  }
+}
+
+async function ensureHermesNousChatSessionTable(db: Client): Promise<void> {
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS HermesNousChatSession (
+      userId TEXT PRIMARY KEY,
+      hermesSessionId TEXT,
+      lastTaskId TEXT,
+      createdAt TEXT DEFAULT (datetime('now')),
+      updatedAt TEXT DEFAULT (datetime('now'))
+    )
+  `);
 }
 
 async function assertSafeHermesProjectFolder(folder: string): Promise<string> {
@@ -608,7 +635,7 @@ async function runNpm(folder: string, args: string[], timeout: number): Promise<
     windowsHide: true,
     timeout,
     maxBuffer: 2_000_000,
-    env: hermesAgentProcessEnv(folder),
+    env: hermesAgentProcessEnv(),
   });
   return safeHermesOutput(`${result.stdout}${result.stderr}`.trim());
 }
@@ -668,7 +695,7 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
         windowsHide: true,
         timeout: Number(process.env.HERMES_AGENT_TIMEOUT_MS ?? 20 * 60_000),
         maxBuffer: 2_000_000,
-        env: hermesAgentProcessEnv(folder),
+        env: hermesAgentProcessEnv(),
       });
       agentOutput = safeHermesOutput(`${result.stdout}${result.stderr}`.trim());
     } catch (error) {
@@ -736,7 +763,95 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
   });
 }
 
+async function executeHermesChatTask(db: Client, task: QueueTask, capabilities: WorkerCapabilities): Promise<void> {
+  if (!capabilities.hermesAgentAvailable || !capabilities.hermesAgentPath) {
+    throw new Error("Hermes Nous is not installed or is unavailable on the Local Worker machine.");
+  }
+  if (!capabilities.hermesAgentAuthConfigured || !capabilities.hermesAgentModelConfigured) {
+    throw new Error("Hermes Nous is not ready: run `hermes auth` and `hermes model` on the Local Worker machine.");
+  }
+
+  const payload = parseHermesChatPayload(task);
+  const hermesCommand = path.join(path.dirname(capabilities.hermesAgentPath), "hermes.exe");
+  const command = existsSync(hermesCommand) ? hermesCommand : "hermes";
+  const args = [
+    "chat",
+    "-q",
+    payload.message,
+    "--quiet",
+    "--source",
+    "tool",
+    "--max-turns",
+    String(Number(process.env.HERMES_CHAT_MAX_TURNS ?? 20)),
+  ];
+  if (payload.hermesSessionId) args.push("--resume", payload.hermesSessionId);
+
+  currentTask = `hermes_chat: ${task.title}`;
+  lastHermesAgentRun = new Date().toISOString();
+  lastHermesAgentError = null;
+  await updateTask(db, task, {
+    log: payload.hermesSessionId
+      ? `Launching Hermes Nous chat on session ${payload.hermesSessionId}.`
+      : "Launching Hermes Nous chat in a new native session.",
+  });
+
+  let output = "";
+  try {
+    const result = await execFileAsync(command, args, {
+      cwd: process.cwd(),
+      windowsHide: true,
+      timeout: Number(process.env.HERMES_CHAT_TIMEOUT_MS ?? 4 * 60_000),
+      maxBuffer: 1_000_000,
+      env: hermesAgentProcessEnv(),
+    });
+    output = `${result.stdout}${result.stderr}`;
+  } catch (error) {
+    const processError = error as Error & { stdout?: string; stderr?: string };
+    const detail = safeHermesOutput(`${processError.stdout ?? ""}\n${processError.stderr ?? ""}`.trim());
+    throw new Error(detail || safeError(error));
+  }
+
+  const parsed = parseHermesChatOutput(output);
+  const hermesSessionId = parsed.sessionId ?? payload.hermesSessionId;
+  await db.execute({
+    sql: `INSERT INTO ChatMessage (id, userId, role, content, channel, targetAgent, createdAt)
+          VALUES (?, ?, 'assistant', ?, 'dashboard', 'hermes_nous', ?)`,
+    args: [crypto.randomUUID(), task.userId, parsed.reply.slice(0, 12000), new Date().toISOString()],
+  });
+  await ensureHermesNousChatSessionTable(db);
+  await db.execute({
+    sql: `INSERT INTO HermesNousChatSession (userId, hermesSessionId, lastTaskId, createdAt, updatedAt)
+          VALUES (?, ?, ?, datetime('now'), datetime('now'))
+          ON CONFLICT(userId) DO UPDATE SET
+            hermesSessionId = coalesce(excluded.hermesSessionId, HermesNousChatSession.hermesSessionId),
+            lastTaskId = excluded.lastTaskId,
+            updatedAt = datetime('now')`,
+    args: [task.userId, hermesSessionId, task.id],
+  });
+  await updateTask(db, task, {
+    status: "completed",
+    result: [
+      "Hermes Nous chat completed.",
+      hermesSessionId ? `Native session: ${hermesSessionId}` : null,
+      payload.chatMessageId ? `User message: ${payload.chatMessageId}` : null,
+      `Reply: ${parsed.reply.slice(0, 500)}`,
+    ].filter(Boolean).join("\n"),
+    error: null,
+    log: hermesSessionId ? `Hermes Nous replied on session ${hermesSessionId}.` : "Hermes Nous replied.",
+  });
+}
+
 async function executeTask(db: Client, task: QueueTask): Promise<void> {
+  if (task.assignedExecutor === "hermes_chat") {
+    const capabilities = await getCapabilities();
+    try {
+      await executeHermesChatTask(db, task, capabilities);
+      return;
+    } catch (error) {
+      lastHermesAgentError = safeError(error);
+      throw error;
+    }
+  }
   if (task.assignedExecutor === "hermes_agent") {
     const capabilities = await getCapabilities();
     try {
