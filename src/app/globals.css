@@ -45,6 +45,8 @@
   --sophos:  #7DD3FC;   /* light cyan      */
   --themis:  #FB7185;   /* rose (work/law) */
   --mercury: #EAB308;   /* gold (external tools / travel) */
+  --tyche:   #A3E635;   /* lime (income / fortune) */
+  --prometheus: #F97316; /* orange (fire / builder) */
 
   /* ── Typography — resolved from Next.js next/font/google variables ── */
   --cc-sans:  var(--font-sans,  "Hanken Grotesk", system-ui, sans-serif);
@@ -149,6 +151,8 @@ html, body {
 .glow-mnemo:hover,  .glow-mnemo.is-active  { box-shadow: 0 0 24px color-mix(in srgb, var(--mnemo)  40%, transparent); }
 .glow-sophos:hover, .glow-sophos.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--sophos) 40%, transparent); }
 .glow-themis:hover, .glow-themis.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--themis) 40%, transparent); }
+.glow-tyche:hover,  .glow-tyche.is-active  { box-shadow: 0 0 24px color-mix(in srgb, var(--tyche)  40%, transparent); }
+.glow-prometheus:hover, .glow-prometheus.is-active { box-shadow: 0 0 24px color-mix(in srgb, var(--prometheus) 40%, transparent); }
 
 /* ── Responsive breakpoints ───────────────────────────────────────────────── */
 /* Tablet — collapse rail to icon-only; Telegram mirror drops below content */

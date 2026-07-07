@@ -10,10 +10,10 @@ export interface RosterAgent {
   name: string;
   role: string;
   color: string;
-  phase: number;
 }
 
 const AGENT_EMPTY_STATE: Record<string, string> = {
+  hermes: "Talk to Hermes — the orchestrator. Ask for anything; it routes to the right agent or answers itself.",
   iris: "Ask Iris about your inbox — unread counts, what needs a reply, or to draft a response (drafts only, never sends).",
   kairos: "Ask Kairos about your week — what's on the calendar, scheduling conflicts, or where to block focus time.",
   argus: "Ask Argus what's worth your attention today — synthesized signals and risk-flagged items across your accounts.",
@@ -21,39 +21,41 @@ const AGENT_EMPTY_STATE: Record<string, string> = {
   athena: "Ask Athena about your job search — pipeline status, fit scores, or what to tighten on your resume.",
   mnemo: "Ask Mnemosyne what it remembers — approved facts and context cards relevant to what you're working on.",
   sophos: "Ask Sophos what's new — recent Anthropic releases or repos worth a look for your stack.",
+  tyche: "Ask Tyche about income opportunities — side income leads, gigs, and what's worth your hours right now.",
+  themis: "Ask Themis about work and I-9 questions — answers grounded only in your loaded workplace knowledge files.",
+  prometheus: "Ask Prometheus to build something — an idea, a website, an app. It can push builds live to GitHub Pages.",
 };
 
 const AGENT_KEY: Record<string, string> = { mnemo: "mnemosyne" };
 
-export default function AgentRoster({ agents, currentPhase }: { agents: RosterAgent[]; currentPhase: number }) {
+// The Hermes card targets the general thread — ChatPanel omits the agent
+// param entirely so the message goes through routeMessage(), not routeToAgent().
+function chatAgentName(id: string): string | undefined {
+  return id === "hermes" ? undefined : AGENT_KEY[id] ?? id;
+}
+
+export default function AgentRoster({ agents }: { agents: RosterAgent[] }) {
   const [openAgent, setOpenAgent] = useState<RosterAgent | null>(null);
 
   return (
     <>
-      {agents.map((a) => {
-        const built = a.phase <= currentPhase;
-        return (
-          <button
-            key={a.id}
-            onClick={() => built && setOpenAgent(a)}
-            className={built ? `glass-interactive glow-${a.id === "mnemo" ? "mnemo" : a.id}${openAgent?.id === a.id ? " is-active" : ""}` : undefined}
-            style={{ ...agentRow, opacity: built ? 1 : 0.45, cursor: built ? "pointer" : "default", borderRadius: 12 }}
-            disabled={!built}
-          >
-            <div style={{ ...av, background: `color-mix(in srgb, ${a.color} 16%, transparent)`, color: a.color, position: "relative" }}>
-              {a.letter}
-              <span style={{ ...dot, background: built ? "var(--plutus)" : "var(--faint)", animation: built ? "blip 2.6s infinite" : "none" }} />
-            </div>
-            <div style={{ textAlign: "left" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.1 }}>{a.name}</div>
-              <div style={{ fontSize: 10.5, color: "var(--faint)", marginTop: 1 }}>{a.role}</div>
-            </div>
-            <span style={{ ...phaseChip, marginLeft: "auto", background: built ? "rgba(95,182,163,.13)" : "rgba(255,255,255,.06)", color: built ? "var(--plutus)" : "var(--faint)" }}>
-              P{a.phase}
-            </span>
-          </button>
-        );
-      })}
+      {agents.map((a) => (
+        <button
+          key={a.id}
+          onClick={() => setOpenAgent(a)}
+          className={`glass-interactive glow-${a.id}${openAgent?.id === a.id ? " is-active" : ""}`}
+          style={{ ...agentRow, cursor: "pointer", borderRadius: 12 }}
+        >
+          <div style={{ ...av, background: `color-mix(in srgb, ${a.color} 16%, transparent)`, color: a.color, position: "relative" }}>
+            {a.letter}
+            <span style={{ ...dot, background: "var(--plutus)", animation: "blip 2.6s infinite" }} />
+          </div>
+          <div style={{ textAlign: "left" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.1 }}>{a.name}</div>
+            <div style={{ fontSize: 10.5, color: "var(--faint)", marginTop: 1 }}>{a.role}</div>
+          </div>
+        </button>
+      ))}
 
       {openAgent && (
         <div style={overlayBackdrop} onClick={() => setOpenAgent(null)}>
@@ -72,7 +74,7 @@ export default function AgentRoster({ agents, currentPhase }: { agents: RosterAg
             </div>
             <div style={{ padding: 14, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 0 }}>
               <ChatPanel
-                agentName={AGENT_KEY[openAgent.id] ?? openAgent.id}
+                agentName={chatAgentName(openAgent.id)}
                 displayName={openAgent.name}
                 accentColor={openAgent.color}
                 emptyStateText={AGENT_EMPTY_STATE[openAgent.id]}
@@ -103,11 +105,6 @@ const dot: React.CSSProperties = {
   position: "absolute", right: -2, bottom: -2,
   width: 9, height: 9, borderRadius: "50%",
   border: "2px solid #0a0a0d",
-};
-
-const phaseChip: React.CSSProperties = {
-  fontFamily: "var(--mono)", fontSize: 9, letterSpacing: ".4px",
-  padding: "2px 7px", borderRadius: 6,
 };
 
 const overlayBackdrop: React.CSSProperties = {

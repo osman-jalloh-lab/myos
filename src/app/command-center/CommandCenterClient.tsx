@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import BuilderOffice from "./BuilderOffice";
 import LiveBuildConsole from "./LiveBuildConsole";
+import AgentRoster, { type RosterAgent } from "@/components/AgentRoster";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -787,7 +788,7 @@ function AgentCommandPanel({ runs, health, projects, memoryDebug, onTabSwitch, o
         <div>
           <div style={{ color: "#F1F4FB", fontSize: 15, fontWeight: 850, fontFamily: "Fraunces, serif" }}>Agent Deck</div>
         </div>
-        <button onClick={() => onTabSwitch("agents")} style={{ padding: "6px 9px", borderRadius: 8, border: "1px solid rgba(167,139,250,0.35)", background: "rgba(167,139,250,0.12)", color: "#C4B5FD", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>Open Offices</button>
+        <button onClick={() => onTabSwitch("agents")} style={{ padding: "6px 9px", borderRadius: 8, border: "1px solid rgba(167,139,250,0.35)", background: "rgba(167,139,250,0.12)", color: "#C4B5FD", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>Talk to Agents</button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(108px, 1fr))", gap: 7 }}>
         {agentInfo.map((agent) => (
@@ -942,6 +943,38 @@ function CompactHermesConsole({ initialMessages }: { initialMessages: ChatMessag
 }
 
 // ── Projects panel ────────────────────────────────────────────────────────────
+
+// Every agent with a chat profile in AGENT_PROFILES (src/agents/hermes.ts),
+// plus the Hermes card which targets the general thread. Mercury has no chat
+// profile — it's a delegated tool agent reached through the Hermes thread.
+const ROSTER_AGENTS: RosterAgent[] = [
+  { id: "hermes", letter: "H", name: "Hermes", role: "orchestrator — ask anything", color: "#A78BFA" },
+  { id: "iris", letter: "I", name: "Iris", role: "email & communication", color: "#60A5FA" },
+  { id: "kairos", letter: "K", name: "Kairos", role: "calendar & time", color: "#A78BFA" },
+  { id: "argus", letter: "A", name: "Argus", role: "daily brief & signals", color: "#FBBF24" },
+  { id: "plutus", letter: "P", name: "Plutus", role: "finance (read-only)", color: "#34D399" },
+  { id: "athena", letter: "Λ", name: "Athena", role: "jobs & resume", color: "#FBBF24" },
+  { id: "mnemo", letter: "M", name: "Mnemosyne", role: "memory", color: "#2DD4BF" },
+  { id: "sophos", letter: "S", name: "Sophos", role: "skills & capability scout", color: "#7DD3FC" },
+  { id: "tyche", letter: "Y", name: "Tyche", role: "income opportunities", color: "#A3E635" },
+  { id: "themis", letter: "Θ", name: "Themis", role: "workplace knowledge (I-9)", color: "#FB7185" },
+  { id: "prometheus", letter: "Π", name: "Prometheus", role: "idea forge & builder", color: "#F97316" },
+];
+
+function AgentTalkPanel() {
+  return (
+    <div style={cardStyle}>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Talk to your agents</div>
+        <h2 style={{ margin: "6px 0 0", fontSize: 24, fontFamily: "Fraunces, serif" }}>Agent Roster</h2>
+        <div style={{ marginTop: 4, color: "#647089", fontSize: 12 }}>Click an agent to open its private thread. Replies come from the agent&apos;s own read tools; anything outbound still goes through approvals.</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 6 }}>
+        <AgentRoster agents={ROSTER_AGENTS} />
+      </div>
+    </div>
+  );
+}
 
 function AgentOfficesPanel({
   selectedOffice,
@@ -2026,6 +2059,7 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
 export default function CommandCenterClient() {
   const [tab, setTab] = useState<Tab>("overview");
   const [selectedOffice, setSelectedOffice] = useState<AgentOffice>("hermes");
+  const [agentsView, setAgentsView] = useState<"talk" | "offices">("talk");
   const [projects, setProjects] = useState<Project[]>([]);
   const [builds, setBuilds] = useState<Build[]>([]);
   const [approvals, setApprovals] = useState<ApprovalAction[]>([]);
@@ -2195,22 +2229,48 @@ export default function CommandCenterClient() {
                 onApprove={handleApprove}
                 onReject={handleReject}
                 onTabSwitch={setTab}
-                onOfficeSelect={setSelectedOffice}
+                onOfficeSelect={(office) => { setSelectedOffice(office); setAgentsView("offices"); }}
               />
             )}
             {tab === "health" && <HealthCenterPanel data={healthCenter} busyAction={healthAction} onAction={runHealthAction} />}
             {tab === "agents" && (
-              <AgentOfficesPanel
-                selectedOffice={selectedOffice}
-                onOfficeSelect={setSelectedOffice}
-                projects={projects}
-                builds={builds}
-                approvals={approvals}
-                queue={executionQueue}
-                runs={runs}
-                memoryOffice={memoryOffice}
-                memoryDebug={memoryContextDebug}
-              />
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {(["talk", "offices"] as const).map((view) => (
+                    <button
+                      key={view}
+                      onClick={() => setAgentsView(view)}
+                      style={{
+                        padding: "6px 14px",
+                        borderRadius: 8,
+                        border: agentsView === view ? "1px solid rgba(167,139,250,0.5)" : "1px solid rgba(93,111,143,0.25)",
+                        background: agentsView === view ? "rgba(167,139,250,0.14)" : "rgba(8,13,24,0.38)",
+                        color: agentsView === view ? "#C4B5FD" : "#94A3B8",
+                        fontSize: 12,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {view === "talk" ? "Talk" : "Offices"}
+                    </button>
+                  ))}
+                </div>
+                {agentsView === "talk" ? (
+                  <AgentTalkPanel />
+                ) : (
+                  <AgentOfficesPanel
+                    selectedOffice={selectedOffice}
+                    onOfficeSelect={setSelectedOffice}
+                    projects={projects}
+                    builds={builds}
+                    approvals={approvals}
+                    queue={executionQueue}
+                    runs={runs}
+                    memoryOffice={memoryOffice}
+                    memoryDebug={memoryContextDebug}
+                  />
+                )}
+              </div>
             )}
             {tab === "memory" && <MemoryOfficePanel data={memoryOffice} debug={memoryContextDebug} onCreateTestMemory={createTestMemory} />}
             {tab === "skills" && (
