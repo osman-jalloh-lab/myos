@@ -45,6 +45,50 @@ let lastFetchError: string | null = null;
 let lastHermesAgentRun: string | null = null;
 let lastHermesAgentError: string | null = null;
 
+// The always-on laptop supplies the polling frequency that Vercel's
+// once-daily email-watcher cron can't. The route does the actual triage and
+// already dedupes per email (4h window), so frequent calls are safe.
+const EMAIL_POLL_DEFAULT_MS = 3 * 60_000;
+let lastEmailPoll = 0;
+let emailPollInFlight = false;
+
+// Read lazily (not at module load) — CRON_SECRET and the override come from
+// .env.local, which loadLocalEnv() only applies once runLoop() starts.
+function emailPollIntervalMs(): number {
+  const raw = process.env.HERMES_WORKER_EMAIL_POLL_MS?.trim();
+  if (!raw) return EMAIL_POLL_DEFAULT_MS;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : EMAIL_POLL_DEFAULT_MS;
+}
+
+async function maybePollEmailWatcher(apiBaseUrl: string): Promise<void> {
+  const interval = emailPollIntervalMs();
+  if (interval === 0) return; // HERMES_WORKER_EMAIL_POLL_MS=0 disables the poll
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  if (!cronSecret) return;
+  const now = Date.now();
+  if (emailPollInFlight || now - lastEmailPoll < interval) return;
+  emailPollInFlight = true;
+  lastEmailPoll = now;
+  try {
+    const response = await fetch(new URL("/api/cron/email-watcher", apiBaseUrl), {
+      headers: { authorization: `Bearer ${cronSecret}` },
+      signal: AbortSignal.timeout(55_000),
+      cache: "no-store",
+    });
+    const payload = (await response.json().catch(() => null)) as { notified?: string[] } | null;
+    if (!response.ok) {
+      console.error(`Email poll failed: HTTP ${response.status} ${response.statusText}`.trim());
+    } else if (payload?.notified?.length) {
+      console.log(`Email poll: ${payload.notified.length} action-needed email(s) notified.`);
+    }
+  } catch (error) {
+    console.error(`Email poll failed: ${safeError(error)}`);
+  } finally {
+    emailPollInFlight = false;
+  }
+}
+
 function loadEnvFile(filePath: string): void {
   if (!existsSync(filePath)) return;
   const content = readFileSync(filePath, "utf8");
@@ -833,6 +877,10 @@ async function runLoop(): Promise<void> {
       lastRecovery = now;
     }
 
+    // Fire-and-forget — the interval/in-flight guards live inside, and a slow
+    // or failing poll must never block task claiming.
+    void maybePollEmailWatcher(apiBaseUrl);
+
     const task = await claimTask(db).catch((error) => {
       lastError = safeError(error);
       return null;
@@ -843,6 +891,9 @@ async function runLoop(): Promise<void> {
         void Promise.all([
           renewTaskLease(db, task.id),
           heartbeat(db, capabilities, apiBaseUrl),
+          // Long builds block the main loop for minutes — keep the inbox
+          // poll alive from here too (internally throttled).
+          maybePollEmailWatcher(apiBaseUrl),
         ]).catch((error) => { lastError = safeError(error); });
       }, HEARTBEAT_MS);
       try {
