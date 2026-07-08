@@ -11,7 +11,23 @@ type HealthAction =
   | "runJobScout"
   | "runEmailScout"
   | "runSkillScout"
-  | "testApiKeys";
+  | "testApiKeys"
+  | "testModelProviders";
+
+const providerTestRateLimit = new Map<string, number[]>();
+
+function providerTestAllowed(userId: string): boolean {
+  const now = Date.now();
+  const windowMs = 60_000;
+  const recent = (providerTestRateLimit.get(userId) ?? []).filter((time) => now - time < windowMs);
+  if (recent.length >= 4) {
+    providerTestRateLimit.set(userId, recent);
+    return false;
+  }
+  recent.push(now);
+  providerTestRateLimit.set(userId, recent);
+  return true;
+}
 
 function cronRequest(path: string): Request {
   return new Request(`http://localhost${path}`, {
@@ -79,9 +95,12 @@ export async function POST(req: Request) {
     }, { status: result.ok ? 200 : 500 });
   }
 
-  if (action === "testApiKeys") {
+  if (action === "testApiKeys" || action === "testModelProviders") {
+    if (!providerTestAllowed(session.user.id)) {
+      return NextResponse.json({ error: "Provider connection tests are rate-limited. Try again in a minute." }, { status: 429 });
+    }
     const runs = await import("@/lib/db").then(({ prisma }) => prisma.agentRun.findMany({ orderBy: { createdAt: "desc" }, take: 250 }));
-    const apiProviders = await getApiProviderHealth(session.user.id, runs, true);
+    const apiProviders = await getApiProviderHealth(session.user.id, runs, true, { onlyModelProviders: action === "testModelProviders" });
     await createHealthLog(
       "api-providers",
       apiProviders.some((provider) => apiProviderSeverity(provider) === "failure") ? "failure" : apiProviders.some((provider) => apiProviderSeverity(provider) === "warning") ? "warning" : "healthy",
@@ -92,7 +111,9 @@ export async function POST(req: Request) {
       apiProviders,
       actionResult: {
         ok: true,
-        message: "API key tests completed. Restart npm run dev after local .env.local changes; redeploy after Vercel env changes.",
+        message: action === "testModelProviders"
+          ? "Model provider tests completed. Ollama remains deferred to the Hermes local worker path."
+          : "API key tests completed. Restart npm run dev after local .env.local changes; redeploy after Vercel env changes.",
       },
     });
   }

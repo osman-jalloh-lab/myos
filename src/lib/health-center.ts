@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { getCodexCliStatus } from "@/lib/local-builder";
+import { MODEL_PROVIDER_REGISTRY, providerComponent, selectedProviderModel, type ProviderEnvironment, type ProviderFamily, type ProviderRole } from "@/lib/model-provider-registry";
 
 type HealthSeverity = "healthy" | "warning" | "failure";
 
@@ -61,6 +62,14 @@ export type ApiProviderStatus = "working" | "missing" | "invalid" | "error" | "c
 
 export type ApiProviderHealth = {
   provider: string;
+  family?: ProviderFamily;
+  role?: ProviderRole;
+  roleLabel?: string;
+  selectedModel?: string;
+  environment?: ProviderEnvironment;
+  routePreview?: string;
+  council?: boolean;
+  testable?: boolean;
   configured: boolean;
   requiredEnvVars: string[];
   source: "local env" | "Vercel/runtime";
@@ -285,6 +294,7 @@ export function cleanProviderCredential(value: string | undefined): string {
 const SANITIZED_PROVIDER_ENV = new Set([
   "GITHUB_TOKEN", "VERCEL_TOKEN", "FIRECRAWL_API_KEY", "SERPAPI_API_KEY",
   "SAKANA_API_KEY", "TELEGRAM_BOT_TOKEN", "AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET",
+  "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
 ]);
 
 function providerCredential(name: string): string {
@@ -314,6 +324,14 @@ function providerRow(params: {
   status?: ApiProviderStatus;
   safeError?: string | null;
   configured?: boolean;
+  family?: ProviderFamily;
+  role?: ProviderRole;
+  roleLabel?: string;
+  selectedModel?: string;
+  environment?: ProviderEnvironment;
+  routePreview?: string;
+  council?: boolean;
+  testable?: boolean;
 }): ApiProviderHealth {
   const configured = params.configured ?? params.env.every(providerEnvConfigured);
   const latest = latestHealthLog(params.runs, params.component);
@@ -326,6 +344,14 @@ function providerRow(params: {
   }
   return {
     provider: params.provider,
+    family: params.family,
+    role: params.role,
+    roleLabel: params.roleLabel,
+    selectedModel: params.selectedModel,
+    environment: params.environment,
+    routePreview: params.routePreview,
+    council: params.council,
+    testable: params.testable,
     configured,
     requiredEnvVars: params.env,
     source: runtimeSource(),
@@ -333,10 +359,6 @@ function providerRow(params: {
     status: status ?? (configured ? "configured_untested" : "missing"),
     safeError: safeError ?? (configured ? null : `Missing ${params.env.filter((key) => !providerEnvConfigured(key)).join(", ")}`),
   };
-}
-
-function providerComponent(provider: string): string {
-  return provider.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 async function testJsonEndpoint(url: string, init: RequestInit, authErrorLabel = "provider returned authentication error", authStatuses = [401, 403]): Promise<{ status: ApiProviderStatus; safeError: string | null }> {
@@ -350,12 +372,52 @@ async function testJsonEndpoint(url: string, init: RequestInit, authErrorLabel =
   }
 }
 
-export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], test = false): Promise<ApiProviderHealth[]> {
+function councilProviderRows(runs: AgentRunRow[]): ApiProviderHealth[] {
+  return MODEL_PROVIDER_REGISTRY.map((entry) => {
+    const configured = entry.env.every(providerEnvConfigured);
+    let status: ApiProviderStatus | undefined;
+    let safeError: string | null | undefined;
+    if (entry.family === "ollama") {
+      status = configured ? "configured_untested" : "missing";
+      safeError = configured
+        ? "Deferred local runtime. Browser and Vercel do not test Ollama directly."
+        : `Missing ${entry.env.filter((key) => !providerEnvConfigured(key)).join(", ")}`;
+    }
+    return providerRow({
+      provider: entry.provider,
+      env: entry.env,
+      runs,
+      component: providerComponent(entry.provider),
+      configured,
+      status,
+      safeError,
+      family: entry.family,
+      role: entry.role,
+      roleLabel: entry.roleLabel,
+      selectedModel: selectedProviderModel(entry),
+      environment: entry.environment,
+      routePreview: entry.routePreview,
+      council: entry.council,
+      testable: entry.testable,
+    });
+  });
+}
+
+function safeDeepSeekBaseUrl(): string {
+  const raw = process.env.DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com";
+  try {
+    const url = new URL(raw);
+    return url.origin;
+  } catch {
+    return "https://api.deepseek.com";
+  }
+}
+
+export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], test = false, options: { onlyModelProviders?: boolean } = {}): Promise<ApiProviderHealth[]> {
   const accounts = await prisma.googleAccount.findMany({ where: { userId } }).catch(() => []);
   const source = runtimeSource();
   const rows: ApiProviderHealth[] = [
-    providerRow({ provider: "OpenAI", env: ["OPENAI_API_KEY"], runs, component: providerComponent("OpenAI") }),
-    providerRow({ provider: "Anthropic / Claude", env: ["ANTHROPIC_API_KEY"], runs, component: providerComponent("Anthropic / Claude") }),
+    ...councilProviderRows(runs),
     providerRow({ provider: "Sakana / Fugu", env: ["SAKANA_API_KEY"], runs, component: providerComponent("Sakana / Fugu") }),
     providerRow({ provider: "Firecrawl Web Search", env: ["FIRECRAWL_API_KEY"], runs, component: providerComponent("Firecrawl Web Search") }),
     providerRow({ provider: "SerpAPI Google Flights", env: ["SERPAPI_API_KEY"], runs, component: providerComponent("SerpAPI Google Flights") }),
@@ -372,12 +434,21 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
   const tested: ApiProviderHealth[] = [];
   for (const row of rows) {
     let result: { status: ApiProviderStatus; safeError: string | null };
-    if (!row.configured) {
+    if (options.onlyModelProviders && !row.family) {
+      tested.push(row);
+      continue;
+    } else if (!row.configured) {
       result = { status: "missing", safeError: `Missing ${row.requiredEnvVars.filter((key) => !providerEnvConfigured(key)).join(", ") || "connected account"}` };
-    } else if (row.provider === "OpenAI") {
+    } else if (row.family === "openai") {
       result = await testJsonEndpoint("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${cleanProviderCredential(process.env.OPENAI_API_KEY)}` } });
-    } else if (row.provider === "Anthropic / Claude") {
+    } else if (row.family === "anthropic") {
       result = await testJsonEndpoint("https://api.anthropic.com/v1/models", { headers: { "x-api-key": cleanProviderCredential(process.env.ANTHROPIC_API_KEY), "anthropic-version": "2023-06-01" } });
+    } else if (row.family === "deepseek") {
+      result = await testJsonEndpoint(`${safeDeepSeekBaseUrl()}/models`, { headers: { Authorization: `Bearer ${cleanProviderCredential(process.env.DEEPSEEK_API_KEY)}` } });
+    } else if (row.family === "gemini") {
+      result = await testJsonEndpoint("https://generativelanguage.googleapis.com/v1beta/models", { headers: { "x-goog-api-key": cleanProviderCredential(process.env.GEMINI_API_KEY) } });
+    } else if (row.family === "ollama") {
+      result = { status: row.configured ? "configured_untested" : "missing", safeError: row.configured ? "Deferred local runtime. Test through the Hermes local worker in the next phase." : row.safeError };
     } else if (row.provider === "SerpAPI Google Flights") {
       result = await testJsonEndpoint(`https://serpapi.com/account?api_key=${encodeURIComponent(providerCredential("SERPAPI_API_KEY"))}`, {}, "Invalid key or provider rejected request", [400, 401, 403]);
     } else if (row.provider === "Telegram") {

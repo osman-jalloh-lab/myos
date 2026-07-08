@@ -234,7 +234,22 @@ interface HealthCenterData {
   scheduledJobs: Array<{ name: string; key: string; enabled: boolean; lastRun: string | null; nextRun: string | null; lastResult: string | null; runtime: string | null; successCount: number; failureCount: number; status: "Healthy" | "Delayed" | "Failed" | "Never Ran" | "Disabled" }>;
   executors: Array<{ name: string; status: "Ready" | "Online" | "Offline" | "Stale" | "Busy" | "Unknown"; lastRun: string | null; lastError: string | null; workerId?: string | null; machineName?: string | null; rootPath?: string | null; nodeVersion?: string | null; npmVersion?: string | null; gitAvailable?: boolean | null; codexAvailable?: boolean | null; currentTask?: string | null; workerApiTarget?: string | null; lastFetchError?: string | null; capabilities?: string[] }>;
   notifications: Array<{ name: string; lastSent: string | null; lastFailed: string | null; pendingNotifications: number; status: HealthSeverity }>;
-  apiProviders: Array<{ provider: string; configured: boolean; requiredEnvVars: string[]; source: "local env" | "Vercel/runtime"; lastTested: string | null; status: "working" | "missing" | "invalid" | "error" | "configured_untested"; safeError: string | null }>;
+  apiProviders: Array<{
+    provider: string;
+    family?: "openai" | "anthropic" | "deepseek" | "gemini" | "ollama" | "groq";
+    roleLabel?: string;
+    selectedModel?: string;
+    environment?: "Local" | "Vercel" | "Both";
+    routePreview?: string;
+    council?: boolean;
+    testable?: boolean;
+    configured: boolean;
+    requiredEnvVars: string[];
+    source: "local env" | "Vercel/runtime";
+    lastTested: string | null;
+    status: "working" | "missing" | "invalid" | "error" | "configured_untested";
+    safeError: string | null;
+  }>;
   logs: Array<{ timestamp: string; component: string; status: HealthSeverity; message: string }>;
   actionResult?: { ok: boolean; message: string };
 }
@@ -1690,7 +1705,7 @@ function HealthCenterPanel({
 }: {
   data: HealthCenterData | null;
   busyAction: string | null;
-  onAction: (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout" | "testApiKeys") => Promise<void>;
+  onAction: (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout" | "testApiKeys" | "testModelProviders") => Promise<void>;
 }) {
   if (!data) return <div style={{ ...cardStyle, textAlign: "center", color: "#4B5563", padding: 48 }}>Health Center is loading.</div>;
 
@@ -1699,7 +1714,7 @@ function HealthCenterPanel({
     ["runEmailScout", "Run Email Scout Now"],
     ["runSkillScout", "Run Skill Scout Now"],
     ["checkAllConnections", "Check All Connections"],
-    ["testApiKeys", "Test API Keys"],
+    ["testModelProviders", "Test Provider Connections"],
     ["refreshHealth", "Refresh Health"],
   ] as const;
   const hermesExecutorReady = data.executors.some((executor) => executor.name === "Hermes Agent" && ["Ready", "Online", "Busy"].includes(executor.status));
@@ -1733,32 +1748,38 @@ function HealthCenterPanel({
 
       <div style={cardStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
-          <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>API Providers</div>
+          <div>
+            <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>Model Providers / Council Setup</div>
+            <div style={{ color: "#647089", fontSize: 11, marginTop: 4 }}>Registry only. No council voting or automatic routing is active yet.</div>
+          </div>
           <div style={{ color: "#4B5563", fontSize: 11 }}>No secrets are returned to the browser.</div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(150px,1fr) 86px 120px 100px minmax(150px,1.2fr)", gap: 8, color: "#647089", fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", padding: "0 2px 8px" }}>
-          <span>Provider</span>
-          <span>Configured</span>
-          <span>Source</span>
-          <span>Status</span>
-          <span>Last tested / message</span>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(245px, 1fr))", gap: 10 }}>
           {(data.apiProviders ?? []).map((provider) => {
             const color = provider.status === "working" ? "#34D399" : provider.status === "configured_untested" ? "#60A5FA" : provider.status === "missing" ? "#FBBF24" : "#F87171";
+            const isCouncil = provider.council === true;
             return (
-              <div key={provider.provider} style={{ display: "grid", gridTemplateColumns: "minmax(150px,1fr) 86px 120px 100px minmax(150px,1.2fr)", gap: 8, alignItems: "center", padding: "10px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid #28324A", borderRadius: 8 }}>
-                <div>
-                  <div style={{ color: "#F1F4FB", fontSize: 13, fontWeight: 700 }}>{provider.provider}</div>
-                  {provider.requiredEnvVars.length > 0 && <div style={{ color: "#647089", fontSize: 10, marginTop: 3 }}>{provider.requiredEnvVars.join(", ")}</div>}
+              <div key={provider.provider} style={{ padding: "12px", background: isCouncil ? "rgba(14,20,36,0.58)" : "rgba(40,50,74,0.3)", border: `1px solid ${isCouncil ? "rgba(96,165,250,0.28)" : "#28324A"}`, borderRadius: 8, minWidth: 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", marginBottom: 9 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ color: "#F1F4FB", fontSize: 13, fontWeight: 800, overflowWrap: "anywhere" }}>{provider.provider}</div>
+                    <div style={{ color: isCouncil ? "#60A5FA" : "#647089", fontSize: 10, fontWeight: 800, marginTop: 3, textTransform: "uppercase" }}>{provider.roleLabel ?? "Project service"}</div>
+                  </div>
+                  <span style={badgeStyle(color)}>{statusLabel(provider.status)}</span>
                 </div>
-                <span style={{ color: provider.configured ? "#34D399" : "#FBBF24", fontSize: 12, fontWeight: 800 }}>{provider.configured ? "yes" : "no"}</span>
-                <span style={{ color: "#94A3B8", fontSize: 11 }}>{provider.source}</span>
-                <span style={badgeStyle(color)}>{statusLabel(provider.status)}</span>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ color: "#94A3B8", fontSize: 11 }}>{provider.lastTested ? timeAgo(provider.lastTested) : "not tested"}</div>
-                  {provider.safeError && <div style={{ color: provider.status === "missing" ? "#FBBF24" : provider.status === "configured_untested" ? "#60A5FA" : "#F87171", fontSize: 11, marginTop: 4, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{provider.safeError}</div>}
+                <div style={{ display: "grid", gridTemplateColumns: "76px minmax(0,1fr)", gap: "6px 10px", color: "#94A3B8", fontSize: 11 }}>
+                  <span style={{ color: "#647089" }}>Configured</span>
+                  <strong style={{ color: provider.configured ? "#34D399" : "#FBBF24" }}>{provider.configured ? "Yes" : "No"}</strong>
+                  <span style={{ color: "#647089" }}>Model</span>
+                  <span style={{ color: "#D8DEEB", overflowWrap: "anywhere" }}>{provider.selectedModel ?? "default"}</span>
+                  <span style={{ color: "#647089" }}>Env</span>
+                  <span>{provider.environment ?? provider.source}</span>
+                  <span style={{ color: "#647089" }}>Test</span>
+                  <span>{provider.testable === false ? "Deferred" : provider.lastTested ? timeAgo(provider.lastTested) : "not tested"}</span>
                 </div>
+                {provider.requiredEnvVars.length > 0 && <div style={{ color: "#647089", fontSize: 10, marginTop: 9, overflowWrap: "anywhere" }}>{provider.requiredEnvVars.join(", ")}</div>}
+                {provider.routePreview && <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 9, lineHeight: 1.45 }}>{provider.routePreview}</div>}
+                {provider.safeError && <div style={{ color: provider.status === "missing" ? "#FBBF24" : provider.status === "configured_untested" ? "#60A5FA" : "#F87171", fontSize: 11, marginTop: 8, overflowWrap: "anywhere" }}>{provider.safeError}</div>}
               </div>
             );
           })}
@@ -2158,7 +2179,7 @@ export default function CommandCenterClient() {
     await fetchAll();
   };
 
-  const runHealthAction = async (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout" | "testApiKeys") => {
+  const runHealthAction = async (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout" | "testApiKeys" | "testModelProviders") => {
     setHealthAction(action);
     try {
       const res = await fetch("/api/command-center/health-center", {
