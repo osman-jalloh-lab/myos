@@ -19,6 +19,7 @@ const ACTION_LABEL: Record<string, string> = {
   save_memory: "Save memory",
   delete_memory: "Remove stale memory",
   apply_to_job: "Apply to job",
+  self_improvement_proposal: "Self-improvement proposal",
 };
 
 function summarizePayload(actionType: string, payload: unknown): string {

@@ -457,6 +457,7 @@ function approvalLabel(action: ApprovalAction): string {
     const p = action.payload as Record<string, unknown>;
     if (action.actionType === "engineering_plan") return `Build plan: ${String(p.projectName ?? "").slice(0, 50)}`;
     if (action.actionType === "skill_scout_import") return `Skill Scout: ${String(p.candidateName ?? "candidate").slice(0, 50)}`;
+    if (action.actionType === "self_improvement_proposal") return `Self-improvement: ${String(p.proposedImprovement ?? p.observedIssue ?? "proposal").slice(0, 50)}`;
     if (action.actionType === "save_memory") return `Remember: "${String(p.fact ?? "").slice(0, 50)}"`;
     if (action.actionType === "create_task") return `Task: "${String(p.title ?? "").slice(0, 50)}"`;
     return action.actionType.replace(/_/g, " ");
