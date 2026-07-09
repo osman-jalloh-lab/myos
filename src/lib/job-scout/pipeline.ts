@@ -35,6 +35,7 @@ export interface ParsedJob {
   title: string;
   location?: string;
   url?: string;
+  category?: JobScoutCategoryKey;
 }
 
 export interface PipelineResult {
@@ -44,7 +45,103 @@ export interface PipelineResult {
   kitsBuilt: number;
   draftsQueued: number;
   errors: string[];
-  topLeads: Array<{ title: string; company: string; fitScore: number; url?: string }>;
+  categoryCounts: Record<JobScoutCategoryKey, number>;
+  topLeads: Array<{ title: string; company: string; fitScore: number; category: JobScoutCategoryKey; url?: string }>;
+}
+
+export type JobScoutCategoryKey = "fall_internship" | "full_time_it" | "soc" | "risk_management";
+
+export interface JobScoutCategory {
+  key: JobScoutCategoryKey;
+  label: string;
+  queries: string[];
+  include: RegExp[];
+  requireFallTerm?: boolean;
+  certificationWeighted?: boolean;
+}
+
+const FALL_TERM_RE = /\b(fall|autumn|fall\s*2026|fall\s*term|fall\s*semester|september|october|november|december)\b/i;
+const INTERNSHIP_RE = /\b(intern|internship|co-?op|student trainee|university program|campus)\b/i;
+const FULL_TIME_RE = /\b(full[-\s]?time|regular|permanent|entry[-\s]?level|associate|analyst|specialist|technician|support)\b/i;
+const IT_RE = /\b(information technology|IT support|desktop support|technical support|help desk|service desk|systems administrator|network technician|support analyst|IT analyst)\b/i;
+const SOC_RE = /\b(SOC|security operations|security analyst|cybersecurity analyst|incident response|SIEM|Splunk|Sentinel|alert triage|threat detection|blue team)\b/i;
+const RISK_RE = /\b(risk management|third[-\s]?party risk|technology risk|IT risk|GRC|governance risk compliance|compliance analyst|security compliance|audit|internal controls|control testing|NIST|ISO 27001|SOC 2)\b/i;
+const CERT_RE = /\b(Security\+|CySA\+|CompTIA Security|CompTIA CySA|CS0-003|SY0-701|SIEM|SOC|incident response|risk|GRC|audit|compliance|NIST|controls?)\b/i;
+
+export const JOB_SCOUT_CATEGORIES: JobScoutCategory[] = [
+  {
+    key: "fall_internship",
+    label: "Fall-term internships",
+    queries: [
+      "fall 2026 cybersecurity internship Security+ CySA+",
+      "fall 2026 IT internship Austin cybersecurity",
+      "fall semester technology risk internship GRC",
+    ],
+    include: [INTERNSHIP_RE],
+    requireFallTerm: true,
+  },
+  {
+    key: "full_time_it",
+    label: "Full-time IT jobs",
+    queries: [
+      "entry level full time IT support analyst Austin",
+      "full time technical support specialist Security+",
+      "IT help desk analyst full time Austin",
+    ],
+    include: [FULL_TIME_RE, IT_RE],
+  },
+  {
+    key: "soc",
+    label: "SOC jobs",
+    queries: [
+      "entry level SOC analyst Security+ CySA+",
+      "security operations center analyst SIEM Security+",
+      "cybersecurity analyst SOC CySA+ Austin",
+    ],
+    include: [SOC_RE],
+    certificationWeighted: true,
+  },
+  {
+    key: "risk_management",
+    label: "Risk management jobs",
+    queries: [
+      "entry level technology risk analyst Security+ CySA+",
+      "GRC analyst security compliance risk management",
+      "IT risk compliance analyst NIST audit Austin",
+    ],
+    include: [RISK_RE],
+    certificationWeighted: true,
+  },
+];
+
+function searchableText(job: { title: string; company: string; location?: string | null; description?: string | null; notes?: string | null }): string {
+  return [job.title, job.company, job.location, job.description, job.notes].filter(Boolean).join(" ");
+}
+
+export function inferJobScoutCategory(job: { title: string; company: string; location?: string | null; description?: string | null; notes?: string | null }): JobScoutCategoryKey | null {
+  const text = searchableText(job);
+  const marker = text.match(/\bCategory:\s*(fall_internship|full_time_it|soc|risk_management)\b/i)?.[1] as JobScoutCategoryKey | undefined;
+  if (marker) return marker;
+  if (SOC_RE.test(text)) return "soc";
+  if (RISK_RE.test(text)) return "risk_management";
+  if (INTERNSHIP_RE.test(text)) return "fall_internship";
+  if (FULL_TIME_RE.test(text) || IT_RE.test(text)) return "full_time_it";
+  return null;
+}
+
+export function matchesJobScoutCategory(job: { title: string; company: string; location?: string | null; description?: string | null; notes?: string | null }, category: JobScoutCategory): boolean {
+  const text = searchableText(job);
+  if (category.requireFallTerm && (!INTERNSHIP_RE.test(text) || !FALL_TERM_RE.test(text))) return false;
+  return category.include.some((pattern) => pattern.test(text));
+}
+
+export function adjustJobScoutFitScore(score: number, job: { title: string; company: string; location?: string | null; description?: string | null; notes?: string | null }, categoryKey: JobScoutCategoryKey): number {
+  const category = JOB_SCOUT_CATEGORIES.find((entry) => entry.key === categoryKey);
+  if (!category?.certificationWeighted) return score;
+  const text = searchableText(job);
+  const certificationBoost = CERT_RE.test(text) ? 8 : 0;
+  const socOrRiskBoost = categoryKey === "soc" && SOC_RE.test(text) ? 5 : categoryKey === "risk_management" && RISK_RE.test(text) ? 5 : 0;
+  return Math.max(0, Math.min(100, score + certificationBoost + socOrRiskBoost));
 }
 
 // ── Deduplication ─────────────────────────────────────────────────────────────
@@ -76,7 +173,14 @@ Never include "location" or "url" keys with null — omit them instead.`,
     const match = text.match(/\[[\s\S]*?\]/);
     if (!match) return [];
     const parsed = JSON.parse(match[0]) as ParsedJob[];
-    return parsed.filter((j) => j.company && j.title);
+    return parsed
+      .filter((j) => j.company && j.title)
+      .map((j) => ({ ...j, category: j.category ?? inferJobScoutCategory(j) ?? undefined }))
+      .filter((j) => {
+        if (!j.category) return false;
+        const category = JOB_SCOUT_CATEGORIES.find((entry) => entry.key === j.category);
+        return category ? matchesJobScoutCategory({ ...j, description: body }, category) : false;
+      });
   } catch {
     return [];
   }
@@ -86,8 +190,10 @@ Never include "location" or "url" keys with null — omit them instead.`,
 
 async function scoreJobLead(
   userId: string,
-  lead: ParsedJob
+  lead: ParsedJob,
+  category: JobScoutCategoryKey
 ): Promise<{ score: number; reason: string }> {
+  const categoryLabel = JOB_SCOUT_CATEGORIES.find((entry) => entry.key === category)?.label ?? category;
   const { text } = await callModel({
     userId,
     taskType: "job-scout",
@@ -95,11 +201,13 @@ async function scoreJobLead(
     systemPrompt: `You are Athena, a career-fit analyst. Be honest, not flattering.
 Candidate: Osman Jalloh — Security+ (SY0-701), CySA+ (CS0-003), HR I-9/E-Verify compliance auditor at ACC, CS Student Associate at UT System OCIO. Targeting GRC consulting, not yet mid-level.`,
     userPrompt: `Score fit 0-100. Reply with exactly: "Score: <number>\n<1-2 sentences of plain reasoning>"
+Category: ${categoryLabel}
 Role: ${lead.title} at ${lead.company}${lead.location ? ` in ${lead.location}` : ""}`,
   });
 
   const match = text.match(/(?:score)[:\s]*([0-9]{1,3})/i);
-  const score = match ? Math.max(0, Math.min(100, parseInt(match[1], 10))) : 50;
+  const rawScore = match ? Math.max(0, Math.min(100, parseInt(match[1], 10))) : 50;
+  const score = adjustJobScoutFitScore(rawScore, lead, category);
   return { score, reason: text.trim() };
 }
 
@@ -235,6 +343,12 @@ export async function runJobScoutPipeline(userId: string): Promise<PipelineResul
   let kitsBuilt = 0;
   let totalDraftsQueued = 0;
   const topLeads: PipelineResult["topLeads"] = [];
+  const categoryCounts: Record<JobScoutCategoryKey, number> = {
+    fall_internship: 0,
+    full_time_it: 0,
+    soc: 0,
+    risk_management: 0,
+  };
 
   // Fetch job alert emails
   let emails: Awaited<ReturnType<typeof fetchJobAlertMessages>> = [];
@@ -254,6 +368,11 @@ export async function runJobScoutPipeline(userId: string): Promise<PipelineResul
     }
 
     for (const job of jobs) {
+      const category = job.category ?? inferJobScoutCategory(job);
+      if (!category) continue;
+      const categoryDef = JOB_SCOUT_CATEGORIES.find((entry) => entry.key === category);
+      if (!categoryDef || !matchesJobScoutCategory({ ...job, description: email.body }, categoryDef)) continue;
+
       const fingerprint = fingerprintLead(job.company, job.title, job.url);
 
       // Skip already-seen leads
@@ -261,6 +380,7 @@ export async function runJobScoutPipeline(userId: string): Promise<PipelineResul
       if (exists) continue;
 
       leadsFound++;
+      categoryCounts[category] += 1;
 
       // Persist the lead
       let lead;
@@ -273,8 +393,8 @@ export async function runJobScoutPipeline(userId: string): Promise<PipelineResul
             title: job.title,
             location: job.location,
             url: job.url,
-            rawSnippet: email.snippet.slice(0, 500),
-            source: "gmail-alert",
+            rawSnippet: `[${category}] ${email.snippet}`.slice(0, 500),
+            source: `gmail-alert:${category}`,
           },
         });
       } catch (err) {
@@ -286,7 +406,7 @@ export async function runJobScoutPipeline(userId: string): Promise<PipelineResul
       let fitScore = 50;
       let fitReason = "";
       try {
-        const scored = await scoreJobLead(userId, job);
+        const scored = await scoreJobLead(userId, job, category);
         fitScore = scored.score;
         fitReason = scored.reason;
         leadsScored++;
@@ -311,7 +431,7 @@ export async function runJobScoutPipeline(userId: string): Promise<PipelineResul
       });
 
       if (fitScore >= MIN_SCORE_FOR_KIT) {
-        topLeads.push({ title: job.title, company: job.company, fitScore, url: job.url });
+        topLeads.push({ title: job.title, company: job.company, fitScore, category, url: job.url });
 
         const jdForKit = jdText || `${job.title} at ${job.company}${job.location ? ` in ${job.location}` : ""}`;
         try {
@@ -347,7 +467,7 @@ export async function runJobScoutPipeline(userId: string): Promise<PipelineResul
       outputSummary: topLeads
         .sort((a, b) => b.fitScore - a.fitScore)
         .slice(0, 5)
-        .map((l) => `${l.title} @ ${l.company}: ${l.fitScore}`)
+        .map((l) => `[${l.category}] ${l.title} @ ${l.company}: ${l.fitScore}`)
         .join(" · ")
         .slice(0, 2000),
       status: errors.length > 0 ? "partial" : "completed",
@@ -361,6 +481,7 @@ export async function runJobScoutPipeline(userId: string): Promise<PipelineResul
     kitsBuilt,
     draftsQueued: totalDraftsQueued,
     errors,
+    categoryCounts,
     topLeads: topLeads.sort((a, b) => b.fitScore - a.fitScore),
   };
 }

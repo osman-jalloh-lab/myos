@@ -15,9 +15,39 @@
 import { prisma } from "@/lib/db";
 import { discoverJobs, fitScore, trackJob } from "@/agents/athena";
 import { sendTelegramMessage } from "@/lib/telegram";
+import {
+  JOB_SCOUT_CATEGORIES,
+  adjustJobScoutFitScore,
+  inferJobScoutCategory,
+  matchesJobScoutCategory,
+  type JobScoutCategoryKey,
+} from "@/lib/job-scout/pipeline";
 
 const MIN_NOTES_LENGTH = 40;
-const SCOUT_QUERIES = ["GRC compliance analyst", "security compliance auditor"];
+const MAX_SCORE_PER_CATEGORY = 4;
+
+type CategoryStats = {
+  label: string;
+  queries: number;
+  discovered: number;
+  matched: number;
+  tracked: number;
+  scored: number;
+  sampleResults: Array<{ title: string; company: string; url?: string | null }>;
+  topResults: Array<{ title: string; company: string; score: number; url?: string | null }>;
+};
+
+function emptyCategoryStats(): Record<JobScoutCategoryKey, CategoryStats> {
+  const stats = {} as Record<JobScoutCategoryKey, CategoryStats>;
+  for (const category of JOB_SCOUT_CATEGORIES) {
+    stats[category.key] = { label: category.label, queries: category.queries.length, discovered: 0, matched: 0, tracked: 0, scored: 0, sampleResults: [], topResults: [] };
+  }
+  return stats;
+}
+
+function categoryNote(category: JobScoutCategoryKey, description?: string | null): string {
+  return [`Category: ${category}`, description ?? ""].filter(Boolean).join("\n\n").slice(0, 4000);
+}
 
 export async function GET(req: Request) {
   if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -27,27 +57,37 @@ export async function GET(req: Request) {
   const users = await prisma.user.findMany({ select: { id: true } });
   let discovered = 0;
   let tracked = 0;
+  const categoryStats = emptyCategoryStats();
 
   for (const user of users) {
     const existing = await prisma.jobListing.findMany({ where: { userId: user.id }, select: { url: true } });
     const knownUrls = new Set(existing.map((j) => j.url).filter(Boolean));
 
-    const found = await Promise.allSettled(SCOUT_QUERIES.map((q) => discoverJobs(q)));
-    const postings = found.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
-    discovered += postings.length;
+    for (const category of JOB_SCOUT_CATEGORIES) {
+      const found = await Promise.allSettled(category.queries.map((q) => discoverJobs(q, undefined, 6)));
+      const postings = found.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+      categoryStats[category.key].discovered += postings.length;
+      discovered += postings.length;
 
-    for (const posting of postings) {
-      if (!posting.url || knownUrls.has(posting.url)) continue;
-      knownUrls.add(posting.url);
-      await trackJob(user.id, {
-        title: posting.title,
-        company: posting.company,
-        url: posting.url,
-        source: "job-scout",
-        notes: posting.description?.slice(0, 4000),
-        postedAt: posting.postedAt ? new Date(posting.postedAt) : undefined,
-      });
-      tracked += 1;
+      for (const posting of postings) {
+        if (!matchesJobScoutCategory(posting, category)) continue;
+        categoryStats[category.key].matched += 1;
+        if (categoryStats[category.key].sampleResults.length < 5) {
+          categoryStats[category.key].sampleResults.push({ title: posting.title, company: posting.company, url: posting.url });
+        }
+        if (!posting.url || knownUrls.has(posting.url)) continue;
+        knownUrls.add(posting.url);
+        await trackJob(user.id, {
+          title: posting.title,
+          company: posting.company,
+          url: posting.url,
+          source: "job-scout",
+          notes: categoryNote(category.key, posting.description),
+          postedAt: posting.postedAt ? new Date(posting.postedAt) : undefined,
+        });
+        categoryStats[category.key].tracked += 1;
+        tracked += 1;
+      }
     }
   }
 
@@ -55,29 +95,49 @@ export async function GET(req: Request) {
     where: { fitScore: null, status: { in: ["interested", "applied"] } },
   });
 
-  const scoreable = candidates.filter((c) => (c.notes?.length ?? 0) >= MIN_NOTES_LENGTH);
+  const scoreableCandidates = candidates
+    .map((listing) => ({ listing, category: inferJobScoutCategory({ title: listing.title, company: listing.company, notes: listing.notes }) }))
+    .filter((entry): entry is { listing: typeof candidates[number]; category: JobScoutCategoryKey } => Boolean(entry.category) && (entry.listing.notes?.length ?? 0) >= MIN_NOTES_LENGTH);
+  const scoreCounts = new Map<JobScoutCategoryKey, number>();
+  const scoreable = scoreableCandidates.filter(({ category }) => {
+    const count = scoreCounts.get(category) ?? 0;
+    if (count >= MAX_SCORE_PER_CATEGORY) return false;
+    scoreCounts.set(category, count + 1);
+    return true;
+  });
 
   const results = await Promise.allSettled(
-    scoreable.map(async (listing) => {
+    scoreable.map(async ({ listing, category }) => {
       const result = await fitScore(listing.userId, {
         jobTitle: listing.title,
         company: listing.company,
         jobDescription: listing.notes!,
         jobListingId: listing.id,
       });
-      return { id: listing.id, title: listing.title, company: listing.company, score: result.score };
+      const adjustedScore = adjustJobScoutFitScore(result.score, { title: listing.title, company: listing.company, notes: listing.notes }, category);
+      if (adjustedScore !== result.score) {
+        await prisma.jobListing.update({ where: { id: listing.id }, data: { fitScore: adjustedScore } });
+      }
+      categoryStats[category].scored += 1;
+      categoryStats[category].topResults.push({ title: listing.title, company: listing.company, score: adjustedScore, url: listing.url });
+      return { id: listing.id, title: listing.title, company: listing.company, score: adjustedScore, category };
     })
   );
 
   const scored = results
-    .filter((r): r is PromiseFulfilledResult<{ id: string; title: string; company: string; score: number }> => r.status === "fulfilled")
+    .filter((r): r is PromiseFulfilledResult<{ id: string; title: string; company: string; score: number; category: JobScoutCategoryKey }> => r.status === "fulfilled")
     .map((r) => r.value);
+
+  for (const stats of Object.values(categoryStats)) {
+    stats.topResults.sort((a, b) => b.score - a.score);
+    stats.topResults = stats.topResults.slice(0, 5);
+  }
 
   await prisma.agentRun.create({
     data: {
       agentName: "athena",
-      inputSummary: `job-scout: ${SCOUT_QUERIES.length} live queries found ${discovered} postings (${tracked} new, tracked) · ${candidates.length} unscored tracked roles, ${scoreable.length} had enough notes to score`,
-      outputSummary: scored.map((s) => `${s.title} @ ${s.company}: ${s.score}`).join(" · ").slice(0, 2000),
+      inputSummary: `job-scout: ${JOB_SCOUT_CATEGORIES.length} categories / ${JOB_SCOUT_CATEGORIES.reduce((sum, category) => sum + category.queries.length, 0)} live queries found ${discovered} postings (${tracked} new, tracked) · ${candidates.length} unscored tracked roles, ${scoreable.length} category-matched roles had enough notes to score`,
+      outputSummary: scored.map((s) => `[${s.category}] ${s.title} @ ${s.company}: ${s.score}`).join(" · ").slice(0, 2000),
       status: "completed",
     },
   });
@@ -102,5 +162,5 @@ export async function GET(req: Request) {
     }
   }
 
-  return Response.json({ ok: true, job: "job-scout", discovered, tracked, scanned: candidates.length, scored, notified: goodMatches.length });
+  return Response.json({ ok: true, job: "job-scout", categories: categoryStats, discovered, tracked, scanned: candidates.length, scored, notified: goodMatches.length });
 }
