@@ -215,13 +215,33 @@ interface MemoryContextDebugData {
 }
 
 interface SkillView {
+  id: string;
   name: string;
-  source: string;
-  category: string;
   description: string;
+  path: string;
+  enabled: boolean;
+  ownerAgents: string[];
+  tags: string[];
+  triggerExamples: string[];
+  requiredCapabilities: string[];
+  safetyClass: "read_only" | "approval_required" | "local_execution";
+  estimatedCostSaving: "none" | "low" | "medium" | "high";
+  lastUsedAt: string | null;
+  usageCount: number;
+  source: "built_in" | "installed" | "scouted";
+  validationStatus: "valid" | "missing_metadata" | "invalid";
+  category: string;
   dateAdded: string | null;
-  status: string;
-  testResult: string;
+  validationWarnings: string[];
+  problemSolved: string;
+  instructionFile: string | null;
+  instructionPreview: string | null;
+}
+
+interface SkillRegistryData {
+  refreshed: boolean;
+  lastUpdated: string;
+  personalSkills: Array<{ id: string; present: boolean }>;
 }
 
 interface SkillCandidate {
@@ -1620,22 +1640,37 @@ function MemoryList({ title, empty, items }: { title: string; empty: string; ite
 
 function SkillsPanel({
   skills,
+  registry,
   scoutResult,
   approvals,
   onScout,
+  onRefresh,
+  onSetEnabled,
+  onTestMatch,
+  onAddDuplicateProbe,
   onApprove,
   onReject,
 }: {
   skills: SkillView[];
+  registry: SkillRegistryData | null;
   scoutResult: SkillScoutResult | null;
   approvals: ApprovalAction[];
   onScout: (repoUrl: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
+  onSetEnabled: (skillId: string, enabled: boolean) => Promise<void>;
+  onTestMatch: (skillId: string, message: string) => Promise<{ matched: boolean; score: number; reason: string }>;
+  onAddDuplicateProbe: (candidateName: string) => Promise<string>;
   onApprove: (id: string) => Promise<void>;
   onReject: (id: string) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [repoUrl, setRepoUrl] = useState("https://github.com/wshobson/agents");
   const [error, setError] = useState<string | null>(null);
+  const [openSkill, setOpenSkill] = useState<string | null>(null);
+  const [matchText, setMatchText] = useState("score this SOC analyst role against my Security+ and CySA+ background");
+  const [matchResult, setMatchResult] = useState<Record<string, string>>({});
+  const [duplicateMessage, setDuplicateMessage] = useState<string | null>(null);
   const scout = async () => {
     if (!repoUrl.trim()) return;
     setBusy(true);
@@ -1648,6 +1683,26 @@ function SkillsPanel({
       setBusy(false);
     }
   };
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const installed = skills.filter((skill) => skill.source === "installed" || skill.source === "built_in");
+  const recentlyAdded = skills
+    .filter((skill) => skill.dateAdded)
+    .sort((a, b) => new Date(b.dateAdded ?? 0).getTime() - new Date(a.dateAdded ?? 0).getTime())
+    .slice(0, 7);
+  const recommended = skills.filter((skill) =>
+    /brief|context|job|resume|soc|grc|risk|work|authorization|writing/i.test(`${skill.name} ${skill.description} ${skill.tags.join(" ")}`)
+  ).slice(0, 6);
+  const lastUsed = skills.filter((skill) => skill.lastUsedAt).sort((a, b) => new Date(b.lastUsedAt ?? 0).getTime() - new Date(a.lastUsedAt ?? 0).getTime()).slice(0, 6);
+  const validCount = skills.filter((skill) => skill.validationStatus === "valid").length;
+  const personalPresent = registry?.personalSkills.filter((skill) => skill.present).length ?? 0;
 
   const scoutApprovals = approvals.filter((approval) => approval.actionType === "skill_scout_import");
 
@@ -1657,8 +1712,8 @@ function SkillsPanel({
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 16, alignItems: "end" }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#38BDF8", letterSpacing: "0.08em", textTransform: "uppercase" }}>Sophos / Skills</div>
-            <h2 style={{ fontSize: 24, margin: "6px 0 4px", fontFamily: "Fraunces, serif" }}>Skill Scout</h2>
-            <div style={{ fontSize: 12, color: "#94A3B8" }}>{skills.length} installed skill folders indexed. Scout only reads GitHub metadata and file trees.</div>
+            <h2 style={{ fontSize: 24, margin: "6px 0 4px", fontFamily: "Fraunces, serif" }}>Skills Control Center</h2>
+            <div style={{ fontSize: 12, color: "#94A3B8" }}>{skills.length} skills indexed. {personalPresent}/7 imported personal skills present. Scout only reads safe metadata and GitHub file trees.</div>
             <form onSubmit={(event) => { event.preventDefault(); void scout(); }} style={{ display: "flex", gap: 10, marginTop: 14 }}>
               <input
                 value={repoUrl}
@@ -1680,15 +1735,39 @@ function SkillsPanel({
               <button type="submit" disabled={busy} style={{ padding: "9px 12px", borderRadius: 8, background: "rgba(56,189,248,0.12)", border: "1px solid rgba(56,189,248,0.35)", color: "#38BDF8", fontWeight: 700, cursor: busy ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
                 {busy ? "Scouting..." : "Run Skill Scout"}
               </button>
+              <button type="button" onClick={() => void refresh()} disabled={refreshing} style={{ padding: "9px 12px", borderRadius: 8, background: "rgba(52,211,153,0.12)", border: "1px solid rgba(52,211,153,0.35)", color: "#34D399", fontWeight: 700, cursor: refreshing ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+                {refreshing ? "Refreshing..." : "Refresh Registry"}
+              </button>
             </form>
             {error && <div style={{ color: "#F87171", fontSize: 12, marginTop: 8 }}>{error}</div>}
+            {duplicateMessage && <div style={{ color: "#34D399", fontSize: 12, marginTop: 8 }}>{duplicateMessage}</div>}
           </div>
           <div style={{ display: "grid", gap: 6, minWidth: 190 }}>
-            <span style={badgeStyle("#34D399")}>No scripts run</span>
-            <span style={badgeStyle("#FBBF24")}>Approval required</span>
-            <span style={badgeStyle("#60A5FA")}>GitHub only v1</span>
+            <span style={badgeStyle("#34D399")}>{validCount} valid metadata</span>
+            <span style={badgeStyle("#FBBF24")}>{skills.filter((skill) => skill.validationStatus !== "valid").length} warnings</span>
+            <span style={badgeStyle("#60A5FA")}>{registry?.lastUpdated ? `Updated ${timeAgo(registry.lastUpdated)}` : "Live registry"}</span>
           </div>
         </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
+        {[
+          ["Installed Skills", installed.length, "#34D399"],
+          ["Recently Added", recentlyAdded.length, "#60A5FA"],
+          ["Recommended", recommended.length, "#FBBF24"],
+          ["Usage Count", skills.reduce((sum, skill) => sum + skill.usageCount, 0), "#A78BFA"],
+        ].map(([label, value, color]) => (
+          <div key={label} style={{ ...cardStyle, padding: 14 }}>
+            <div style={{ color: color as string, fontSize: 22, fontWeight: 900, fontFamily: "Fraunces, serif" }}>{value}</div>
+            <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 800, letterSpacing: "0.07em", textTransform: "uppercase", marginTop: 4 }}>{label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+        <SkillSummaryList title="Recently Added" skills={recentlyAdded} empty="No dated skills yet" />
+        <SkillSummaryList title="Recommended for Current Project" skills={recommended} empty="No project recommendations yet" />
+        <SkillSummaryList title="Last Used" skills={lastUsed} empty="Use Test Match to record usage" />
       </div>
 
       {scoutResult && (
@@ -1775,23 +1854,91 @@ function SkillsPanel({
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
+      <div style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+          <div>
+            <div style={{ color: "#F1F4FB", fontSize: 16, fontWeight: 850, fontFamily: "Fraunces, serif" }}>Installed Skills</div>
+            <div style={{ color: "#94A3B8", fontSize: 12, marginTop: 3 }}>Safe metadata only. Instruction text can be opened for inspection, never executed from this panel.</div>
+          </div>
+          <button
+            onClick={() => void onAddDuplicateProbe("personal-context-anchor").then(setDuplicateMessage)}
+            style={{ padding: "8px 10px", borderRadius: 8, background: "rgba(45,212,191,0.10)", border: "1px solid rgba(45,212,191,0.35)", color: "#2DD4BF", fontSize: 12, fontWeight: 800, cursor: "pointer" }}
+          >
+            Test Duplicate Add
+          </button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
         {skills.map((skill) => (
-          <div key={`${skill.source}-${skill.name}`} style={cardStyle}>
+          <div key={skill.id} style={{ border: "1px solid rgba(93,111,143,0.22)", background: "rgba(8,13,24,0.36)", borderRadius: 8, padding: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
-              <strong style={{ color: "#F1F4FB" }}>{skill.name}</strong>
-              <span style={badgeStyle(skill.status === "installed" ? "#34D399" : "#FBBF24")}>{skill.status}</span>
+              <div style={{ minWidth: 0 }}>
+                <strong style={{ color: "#F1F4FB" }}>{skill.name}</strong>
+                <div style={{ color: "#647089", fontSize: 10, marginTop: 3, wordBreak: "break-word" }}>{skill.id}</div>
+              </div>
+              <span style={badgeStyle(skill.enabled ? "#34D399" : "#94A3B8")}>{skill.enabled ? "Enabled" : "Disabled"}</span>
             </div>
             <div style={{ color: "#94A3B8", fontSize: 12, marginBottom: 8 }}>{skill.description}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, color: "#4B5563", fontSize: 11 }}>
+            <div style={{ color: "#D8DEEB", fontSize: 12, lineHeight: 1.45, marginBottom: 8 }}>{skill.problemSolved}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+              {skill.ownerAgents.map((agent) => <span key={agent} style={badgeStyle(agentColor(agent))}>{agent}</span>)}
+              <span style={badgeStyle(skill.safetyClass === "read_only" ? "#34D399" : skill.safetyClass === "approval_required" ? "#FBBF24" : "#F87171")}>{statusLabel(skill.safetyClass)}</span>
+              <span style={badgeStyle(skill.estimatedCostSaving === "high" ? "#34D399" : skill.estimatedCostSaving === "medium" ? "#60A5FA" : "#94A3B8")}>{skill.estimatedCostSaving} savings</span>
+              <span style={badgeStyle(skill.validationStatus === "valid" ? "#34D399" : skill.validationStatus === "missing_metadata" ? "#FBBF24" : "#F87171")}>{statusLabel(skill.validationStatus)}</span>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, color: "#4B5563", fontSize: 11, marginBottom: 10 }}>
               <span>{skill.source}</span>
               <span>{skill.category}</span>
               <span>{skill.dateAdded ? timeAgo(skill.dateAdded) : "date unknown"}</span>
-              <span>{skill.testResult}</span>
+              <span>Used {skill.usageCount}x</span>
+              <span>{skill.lastUsedAt ? `Last used ${timeAgo(skill.lastUsedAt)}` : "Never used"}</span>
             </div>
+            {skill.validationWarnings.length > 0 && <div style={{ color: "#FBBF24", fontSize: 11, marginBottom: 9 }}>{skill.validationWarnings.join(" ")}</div>}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <button onClick={() => void onSetEnabled(skill.id, !skill.enabled)} style={smallButtonStyle(skill.enabled ? "#94A3B8" : "#34D399")}>{skill.enabled ? "Disable" : "Enable"}</button>
+              <button onClick={() => setOpenSkill(openSkill === skill.id ? null : skill.id)} style={smallButtonStyle("#60A5FA")}>Open Instructions</button>
+              <button
+                onClick={() => void onTestMatch(skill.id, matchText).then((result) => setMatchResult((prev) => ({ ...prev, [skill.id]: `${result.score}/100 - ${result.reason}` })))}
+                style={smallButtonStyle("#A78BFA")}
+              >
+                Test Match
+              </button>
+            </div>
+            {openSkill === skill.id && (
+              <pre style={{ margin: "10px 0 0", maxHeight: 220, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", color: "#94A3B8", fontSize: 11, border: "1px solid rgba(93,111,143,0.22)", borderRadius: 8, padding: 10, background: "rgba(14,20,36,0.58)" }}>
+                {skill.instructionPreview ?? "No SKILL.md instructions found."}
+              </pre>
+            )}
+            {matchResult[skill.id] && <div style={{ color: "#C4B5FD", fontSize: 11, marginTop: 8 }}>{matchResult[skill.id]}</div>}
           </div>
         ))}
+        </div>
+        <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            value={matchText}
+            onChange={(event) => setMatchText(event.target.value)}
+            placeholder="Test a request against skill metadata"
+            style={{ flex: 1, minWidth: 0, background: "rgba(14,20,36,0.72)", border: "1px solid #28324A", borderRadius: 8, padding: "9px 10px", color: "#F1F4FB", fontSize: 12, outline: "none" }}
+          />
+        </div>
       </div>
+    </div>
+  );
+}
+
+function SkillSummaryList({ title, skills, empty }: { title: string; skills: SkillView[]; empty: string }) {
+  return (
+    <div style={cardStyle}>
+      <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>{title}</div>
+      {skills.length === 0 ? <div style={{ color: "#647089", fontSize: 12 }}>{empty}</div> : (
+        <div style={{ display: "grid", gap: 8 }}>
+          {skills.map((skill) => (
+            <div key={`${title}-${skill.id}`} style={{ borderRadius: 8, border: "1px solid rgba(93,111,143,0.18)", background: "rgba(8,13,24,0.32)", padding: 9 }}>
+              <div style={{ color: "#F1F4FB", fontSize: 12, fontWeight: 800 }}>{skill.name}</div>
+              <div style={{ color: "#94A3B8", fontSize: 11, marginTop: 3 }}>{skill.problemSolved}</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -2307,6 +2454,7 @@ export default function CommandCenterClient() {
   const [healthCenter, setHealthCenter] = useState<HealthCenterData | null>(null);
   const [healthAction, setHealthAction] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillView[]>([]);
+  const [skillRegistry, setSkillRegistry] = useState<SkillRegistryData | null>(null);
   const [skillScoutResult, setSkillScoutResult] = useState<SkillScoutResult | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -2320,7 +2468,7 @@ export default function CommandCenterClient() {
         fetch("/api/chat").then((r) => r.json() as Promise<{ messages: ChatMessage[] }>),
         fetch("/api/command-center/memory-office").then((r) => r.json() as Promise<MemoryOfficeData>),
         fetch("/api/command-center/memory-context-debug").then((r) => r.json() as Promise<MemoryContextDebugData>),
-        fetch("/api/command-center/skills").then((r) => r.json() as Promise<{ skills: SkillView[] }>),
+        fetch("/api/command-center/skills").then((r) => r.json() as Promise<{ skills: SkillView[]; registry: SkillRegistryData }>),
         fetch("/api/command-center/execution-queue").then((r) => r.json() as Promise<ExecutionQueueData>),
         fetch("/api/command-center/runs").then((r) => r.json() as Promise<ExecutionRunsData>),
         fetch("/api/command-center/health-center").then((r) => r.json() as Promise<HealthCenterData>),
@@ -2335,7 +2483,10 @@ export default function CommandCenterClient() {
       }
       if (memoryRes.status === "fulfilled" && !("error" in memoryRes.value)) setMemoryOffice(memoryRes.value);
       if (memoryDebugRes.status === "fulfilled" && !("error" in memoryDebugRes.value)) setMemoryContextDebug(memoryDebugRes.value);
-      if (skillsRes.status === "fulfilled") setSkills(skillsRes.value.skills ?? []);
+      if (skillsRes.status === "fulfilled") {
+        setSkills(skillsRes.value.skills ?? []);
+        setSkillRegistry(skillsRes.value.registry ?? null);
+      }
       if (queueRes.status === "fulfilled" && !("error" in queueRes.value)) setExecutionQueue(queueRes.value);
       if (runRes.status === "fulfilled" && !("error" in runRes.value)) {
         const nextRuns = runRes.value.runs ?? [];
@@ -2432,6 +2583,46 @@ export default function CommandCenterClient() {
       throw new Error(data?.error ?? "Skill Scout failed.");
     }
     await fetchAll();
+  };
+
+  const refreshSkills = async () => {
+    const res = await fetch("/api/command-center/skills?refresh=1");
+    const data = await res.json() as { skills?: SkillView[]; registry?: SkillRegistryData };
+    setSkills(data.skills ?? []);
+    setSkillRegistry(data.registry ?? null);
+  };
+
+  const setSkillEnabledAction = async (skillId: string, enabled: boolean) => {
+    const res = await fetch("/api/command-center/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "setEnabled", skillId, enabled }),
+    });
+    if (!res.ok) throw new Error("Skill toggle failed.");
+    await refreshSkills();
+  };
+
+  const testSkillMatchAction = async (skillId: string, message: string) => {
+    const res = await fetch("/api/command-center/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "testMatch", skillId, message }),
+    });
+    const data = await res.json() as { result?: { matched: boolean; score: number; reason: string }; error?: string };
+    if (!res.ok || !data.result) throw new Error(data.error ?? "Skill match failed.");
+    await refreshSkills();
+    return data.result;
+  };
+
+  const duplicateSkillProbe = async (candidateName: string) => {
+    const res = await fetch("/api/command-center/skills", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "addSkill", candidateName }),
+    });
+    const data = await res.json() as { message?: string };
+    await refreshSkills();
+    return data.message ?? "Duplicate check completed.";
   };
 
   const runHealthAction = async (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout" | "testApiKeys" | "testModelProviders") => {
@@ -2556,9 +2747,14 @@ export default function CommandCenterClient() {
             {tab === "skills" && (
               <SkillsPanel
                 skills={skills}
+                registry={skillRegistry}
                 scoutResult={skillScoutResult}
                 approvals={approvals}
                 onScout={scoutRepo}
+                onRefresh={refreshSkills}
+                onSetEnabled={setSkillEnabledAction}
+                onTestMatch={testSkillMatchAction}
+                onAddDuplicateProbe={duplicateSkillProbe}
                 onApprove={handleApprove}
                 onReject={handleReject}
               />

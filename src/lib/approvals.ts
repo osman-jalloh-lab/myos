@@ -296,7 +296,7 @@ async function executeIfPossible(row: {
     }
 
     const { importApprovedSkillScoutItem } = await import("@/lib/skill-scout/importer");
-    const imported = await importApprovedSkillScoutItem(payload);
+    const imported = await importApprovedSkillScoutItem(payload, row.userId);
     executionNote = imported.summary;
   }
 

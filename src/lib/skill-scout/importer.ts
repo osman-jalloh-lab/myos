@@ -1,4 +1,5 @@
 import { writeCard } from "@/lib/knowledge-cards";
+import { checkDuplicateSkill } from "@/lib/skills/registry";
 
 type SkillScoutImportPayload = {
   candidateName?: unknown;
@@ -15,6 +16,7 @@ type SkillScoutImportPayload = {
 type ImportResult = {
   cardPath: string;
   summary: string;
+  skipped?: boolean;
 };
 
 const SAFE_SOURCE_PATH_RE = /^[a-zA-Z0-9_./-]+$/;
@@ -84,8 +86,16 @@ function validatePayload(payload: SkillScoutImportPayload): {
   };
 }
 
-export async function importApprovedSkillScoutItem(payload: unknown): Promise<ImportResult> {
+export async function importApprovedSkillScoutItem(payload: unknown, userId = "system"): Promise<ImportResult> {
   const item = validatePayload(payload as SkillScoutImportPayload);
+  const duplicate = await checkDuplicateSkill(userId, item.name);
+  if (duplicate.duplicate && duplicate.skill) {
+    return {
+      cardPath: duplicate.skill.path,
+      summary: duplicate.message,
+      skipped: true,
+    };
+  }
   const cardPath = `skills/${item.id}.md`;
   const body = [
     `# ${item.name}`,

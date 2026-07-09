@@ -8,7 +8,12 @@ vi.mock("@/lib/knowledge-cards", () => ({
   })),
 }));
 
+vi.mock("@/lib/skills/registry", () => ({
+  checkDuplicateSkill: vi.fn(async () => ({ duplicate: false, message: "not installed" })),
+}));
+
 import { writeCard } from "@/lib/knowledge-cards";
+import { checkDuplicateSkill } from "@/lib/skills/registry";
 import { importApprovedSkillScoutItem } from "@/lib/skill-scout/importer";
 
 beforeEach(() => {
@@ -50,6 +55,50 @@ describe("importApprovedSkillScoutItem", () => {
       riskLevel: "medium",
     })).rejects.toThrow("low-risk");
 
+    expect(writeCard).not.toHaveBeenCalled();
+  });
+
+  it("returns a no-op when the skill is already installed", async () => {
+    vi.mocked(checkDuplicateSkill).mockResolvedValueOnce({
+      duplicate: true,
+      message: "personal-context-anchor is already installed; no action taken.",
+      skill: {
+        id: "personal-context-anchor",
+        name: "personal-context-anchor",
+        description: "Grounds responses in context.",
+        path: "skills/personal-context-anchor.json",
+        enabled: true,
+        ownerAgents: ["hermes"],
+        tags: ["personal-context"],
+        triggerExamples: [],
+        requiredCapabilities: [],
+        safetyClass: "read_only",
+        estimatedCostSaving: "medium",
+        lastUsedAt: null,
+        usageCount: 0,
+        source: "installed",
+        validationStatus: "valid",
+        category: "personal-context",
+        dateAdded: null,
+        validationWarnings: [],
+        problemSolved: "Grounding.",
+        instructionFile: "skills/personal-context-anchor/SKILL.md",
+        instructionPreview: "Use this skill...",
+      },
+    });
+
+    const result = await importApprovedSkillScoutItem({
+      candidateName: "personal-context-anchor",
+      sourceRepo: "wshobson/agents",
+      sourcePath: "plugins/context/skills/personal-context-anchor/SKILL.md",
+      sourceUrl: "https://github.com/wshobson/agents/blob/HEAD/plugins/context/skills/personal-context-anchor/SKILL.md",
+      riskLevel: "low",
+    }, "user_1");
+
+    expect(result).toMatchObject({
+      skipped: true,
+      summary: "personal-context-anchor is already installed; no action taken.",
+    });
     expect(writeCard).not.toHaveBeenCalled();
   });
 });
