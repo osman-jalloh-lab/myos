@@ -73,7 +73,7 @@ export async function GET(req: Request) {
   const matchedTelemetry = await latestTelemetry(user.id, "i9-hr-compliance-specialist");
   const matchedEvent = await latestSkillEvent(user.id);
 
-  const noMatch = await sendMessage(user.id, noMatchPrompt, "dashboard", "hermes");
+  const noMatch = await sendMessage(user.id, noMatchPrompt, "dashboard", null);
   const noMatchTelemetry = await latestTelemetry(user.id, "none");
   const noMatchEvent = await latestSkillEvent(user.id);
 
@@ -97,7 +97,7 @@ export async function GET(req: Request) {
     },
     noMatch: {
       prompt: noMatchPrompt,
-      targetAgent: "hermes",
+      targetAgent: null,
       replyExcerpt: noMatchReply.slice(0, 1200),
       telemetry: telemetryView(noMatchTelemetry),
       runInspectorEvent: noMatchEvent,
