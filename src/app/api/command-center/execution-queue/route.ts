@@ -19,6 +19,7 @@ export async function GET() {
     waiting_approval: 0,
     completed: 0,
     failed: 0,
+    cancelled: 0,
   });
 
   const executorHealth = Object.values(tasks.reduce<Record<string, {

@@ -123,7 +123,7 @@ export async function POST(req: Request) {
     const readiness = await getHermesAgentReadiness().catch(() => ({ ready: false, reason: "readiness check failed" }));
     if (readiness.ready) {
       selectedExecutor = "hermes_agent";
-      executorNote = "Executor: Hermes Nous (primary). Codex CLI runs automatically if it fails.";
+      executorNote = "Executor: Hermes Nous (primary). Codex CLI fallback is available from Run Inspector after explicit approval.";
     } else {
       selectedExecutor = "local_worker";
       executorNote = `Executor: Codex CLI (local worker) — Hermes Nous unavailable: ${readiness.reason}.`;

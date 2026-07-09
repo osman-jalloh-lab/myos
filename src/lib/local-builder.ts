@@ -1893,6 +1893,15 @@ export async function queueLocalBuilderWorkerTask(
     projectId: resolvedProjectId,
     initialLog: `route=local_worker_queue executor=${assignedExecutor} reason=serverless_cannot_write_local_files. Queued for local execution.`,
   });
+  await import("@/lib/execution-runs").then(({ createExecutionRun }) => createExecutionRun({
+    userId,
+    projectId: resolvedProjectId,
+    taskId: task.id,
+    executor: assignedExecutor,
+    currentPhase: "queued",
+    currentActivity: `${queuedActionLabel(action)} queued for ${projectName}.`,
+    localFolderPath,
+  })).catch(() => undefined);
 
   const log = `${rowString(project?.localBuildLog) || ""}\nQueued ${action} for local worker task ${task.id}.\nServerless runtime did not touch ${localFolderPath}.`.trim();
   await db.execute({

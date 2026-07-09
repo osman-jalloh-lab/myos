@@ -108,7 +108,7 @@ interface ExecutionQueueTask {
   id: string;
   title: string;
   description: string;
-  status: "queued" | "planning" | "executing" | "qa_pending" | "qa_passed" | "waiting_approval" | "completed" | "failed";
+  status: "queued" | "planning" | "executing" | "qa_pending" | "qa_passed" | "waiting_approval" | "completed" | "failed" | "cancelled";
   priority: string;
   assignedExecutor: string;
   projectId: string | null;
@@ -140,6 +140,48 @@ interface ChatMessage {
   channel?: string;
   createdAt: string;
   quickActions?: ChatQuickAction[];
+}
+
+interface ExecutionTraceEvent {
+  id: string;
+  runId: string;
+  phase: string;
+  severity: "info" | "warning" | "error";
+  message: string;
+  source: string;
+  safeDetails?: Record<string, unknown>;
+  createdAt: string;
+}
+
+interface ExecutionRun {
+  id: string;
+  userId: string;
+  projectId: string | null;
+  taskId: string | null;
+  parentRunId: string | null;
+  executor: string;
+  currentPhase: string;
+  currentActivity: string | null;
+  startedAt: string;
+  lastHeartbeatAt: string;
+  lastMeaningfulEventAt: string;
+  completedAt: string | null;
+  status: "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "stalled";
+  lastSafeError: string | null;
+  workerId: string | null;
+  localFolderPath: string | null;
+  fallbackReason: string | null;
+  cancellationRequestedAt: string | null;
+  elapsedMs: number;
+  heartbeatAgeMs: number;
+  meaningfulEventAgeMs: number;
+  stuckReason: string | null;
+  latestEvent: ExecutionTraceEvent | null;
+}
+
+interface ExecutionRunsData {
+  runs: ExecutionRun[];
+  lastUpdated: string;
 }
 
 interface ChatQuickAction {
@@ -264,7 +306,7 @@ interface HealthCenterData {
   actionResult?: { ok: boolean; message: string };
 }
 
-type Tab = "overview" | "health" | "agents" | "memory" | "skills" | "projects" | "builds" | "logs" | "chat";
+type Tab = "overview" | "health" | "agents" | "memory" | "skills" | "projects" | "builds" | "runs" | "logs" | "chat";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -291,7 +333,7 @@ function relativeTime(iso: string): string {
 function statusColor(status: string): string {
   switch (status) {
     case "healthy": case "Healthy": case "Ready": case "Online": return "#34D399";
-    case "warning": case "Delayed": case "Never Ran": return "#FBBF24";
+    case "warning": case "Delayed": case "Never Ran": case "stalled": return "#FBBF24";
     case "failure": case "Failed": case "Offline": return "#F87171";
     case "Busy": return "#A78BFA";
     case "active": case "completed": case "done": case "deployed": case "qa_passed": case "Ready to Build": case "Brief Ready": case "Dev Server Running": return "#34D399";
@@ -299,6 +341,7 @@ function statusColor(status: string): string {
     case "in_progress": case "building": case "running": case "executing": case "qa_running": case "implementation_running": case "validation_running": case "Researching": case "Generating": case "Installing": case "Building": return "#A78BFA";
     case "waiting_approval": return "#FBBF24";
     case "blocked": case "failed": case "qa_failed": case "Build Failed": return "#F87171";
+    case "cancelled": return "#94A3B8";
     case "Dev Server Stopped": return "#60A5FA";
     default: return "#94A3B8";
   }
@@ -555,6 +598,17 @@ const badgeStyle = (color: string): React.CSSProperties => ({
   background: `${color}20`,
   border: `1px solid ${color}40`,
   textTransform: "capitalize",
+});
+
+const smallButtonStyle = (color: string): React.CSSProperties => ({
+  padding: "6px 9px",
+  borderRadius: 8,
+  border: `1px solid ${color}55`,
+  background: `${color}18`,
+  color,
+  fontSize: 11,
+  fontWeight: 800,
+  cursor: "pointer",
 });
 
 // ── Progress bar ──────────────────────────────────────────────────────────────
@@ -831,7 +885,7 @@ function AgentCommandPanel({ runs, health, projects, memoryDebug, onTabSwitch, o
 }
 
 function MissionQueuePanel({ queue, approvals, onApprove, onReject }: { queue: ExecutionQueueData | null; approvals: ApprovalAction[]; onApprove: (id: string) => Promise<void>; onReject: (id: string) => Promise<void> }) {
-  const queueStatuses = ["queued", "planning", "executing", "waiting_approval", "completed", "failed"] as const;
+  const queueStatuses = ["queued", "planning", "executing", "waiting_approval", "completed", "failed", "cancelled"] as const;
   return (
     <div style={missionCardStyle}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 8 }}>
@@ -873,6 +927,131 @@ function MissionQueuePanel({ queue, approvals, onApprove, onReject }: { queue: E
           ))}
           {approvals.length === 0 && <div style={{ color: "#647089", fontSize: 12 }}>No pending approvals.</div>}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RunInspectorPanel({
+  runs,
+  selectedRunId,
+  events,
+  onSelect,
+  onCancel,
+  onRetry,
+  onFallback,
+  onCopyDiagnostic,
+}: {
+  runs: ExecutionRun[];
+  selectedRunId: string | null;
+  events: ExecutionTraceEvent[];
+  onSelect: (runId: string) => void;
+  onCancel: (runId: string) => Promise<void>;
+  onRetry: (runId: string) => Promise<void>;
+  onFallback: (runId: string) => Promise<void>;
+  onCopyDiagnostic: (run: ExecutionRun, events: ExecutionTraceEvent[]) => Promise<void>;
+}) {
+  const selected = runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null;
+  const eventTail = events.slice(-8).reverse();
+  const fuguStatus = events.slice().reverse().find((event) => event.phase.includes("fugu"))?.message
+    ?? "No Fugu event recorded yet.";
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 0.9fr) minmax(420px, 1.6fr)", gap: 12 }}>
+      <div style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", marginBottom: 12 }}>
+          <div style={{ color: "#F1F4FB", fontSize: 16, fontWeight: 850, fontFamily: "Fraunces, serif" }}>Run Inspector</div>
+          <span style={{ color: "#647089", fontSize: 11 }}>{runs.length} recent</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {runs.map((run) => (
+            <button
+              key={run.id}
+              onClick={() => onSelect(run.id)}
+              style={{ textAlign: "left", borderRadius: 8, border: selected?.id === run.id ? "1px solid rgba(167,139,250,0.55)" : "1px solid rgba(93,111,143,0.22)", background: selected?.id === run.id ? "rgba(167,139,250,0.12)" : "rgba(8,13,24,0.36)", padding: 10, cursor: "pointer" }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={badgeStyle(statusColor(run.status))}>{statusLabel(run.status)}</span>
+                <span style={{ color: "#F1F4FB", fontSize: 12, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{run.currentActivity ?? run.currentPhase}</span>
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 7, color: "#647089", fontSize: 10 }}>
+                <span>{run.executor}</span>
+                <span>{statusLabel(run.currentPhase)}</span>
+                <span>{timeAgo(run.startedAt)}</span>
+              </div>
+            </button>
+          ))}
+          {!runs.length && <div style={{ color: "#647089", fontSize: 13 }}>No execution runs yet.</div>}
+        </div>
+      </div>
+      <div style={cardStyle}>
+        {!selected ? (
+          <div style={{ color: "#647089", fontSize: 13 }}>Queue a local build to inspect its live execution trace.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+              <div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  <span style={badgeStyle(statusColor(selected.status))}>{statusLabel(selected.status)}</span>
+                  <span style={badgeStyle(statusColor(selected.currentPhase))}>{statusLabel(selected.currentPhase)}</span>
+                  <span style={badgeStyle("#A78BFA")}>{selected.executor}</span>
+                </div>
+                <div style={{ color: "#F1F4FB", fontSize: 18, fontWeight: 850, fontFamily: "Fraunces, serif", marginTop: 8 }}>{selected.currentActivity ?? "No activity yet"}</div>
+              </div>
+              <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button onClick={() => onCancel(selected.id)} disabled={["completed", "failed", "cancelled"].includes(selected.status)} style={smallButtonStyle("#FBBF24")}>Cancel</button>
+                <button onClick={() => onRetry(selected.id)} style={smallButtonStyle("#60A5FA")}>Retry</button>
+                <button onClick={() => onFallback(selected.id)} style={smallButtonStyle("#A78BFA")}>Switch to Codex</button>
+                <button onClick={() => onCopyDiagnostic(selected, events)} style={smallButtonStyle("#34D399")}>Copy diagnostic</button>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
+              {[
+                ["Elapsed", `${Math.round(selected.elapsedMs / 1000)}s`],
+                ["Last progress", timeAgo(selected.lastMeaningfulEventAt)],
+                ["Heartbeat", `${Math.round(selected.heartbeatAgeMs / 1000)}s ago`],
+                ["Worker", selected.workerId ?? "unclaimed"],
+                ["Project", selected.projectId ?? "none"],
+                ["Task", selected.taskId ?? "none"],
+                ["Folder", selected.localFolderPath ?? "none"],
+                ["Fugu", fuguStatus],
+              ].map(([label, value]) => (
+                <div key={label} style={{ borderRadius: 8, border: "1px solid rgba(93,111,143,0.2)", background: "rgba(8,13,24,0.34)", padding: 8 }}>
+                  <div style={{ color: "#647089", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 800 }}>{label}</div>
+                  <div style={{ color: "#D8DEEB", fontSize: 11, marginTop: 5, wordBreak: "break-word" }}>{value}</div>
+                </div>
+              ))}
+            </div>
+            {selected.stuckReason && <div style={{ borderRadius: 8, border: "1px solid rgba(251,191,36,0.3)", background: "rgba(251,191,36,0.08)", color: "#FBBF24", padding: 9, fontSize: 12 }}>{selected.stuckReason}</div>}
+            {selected.cancellationRequestedAt && <div style={{ color: "#FBBF24", fontSize: 12 }}>Cancellation requested {timeAgo(selected.cancellationRequestedAt)}; waiting for worker confirmation.</div>}
+            {selected.fallbackReason && <div style={{ color: "#A78BFA", fontSize: 12 }}>Fallback history: {selected.fallbackReason}</div>}
+            {selected.lastSafeError && <div style={{ color: "#F87171", fontSize: 12 }}>Last safe error: {selected.lastSafeError}</div>}
+            <div>
+              <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>Timeline</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                {eventTail.map((event) => (
+                  <div key={event.id} style={{ borderRadius: 8, border: `1px solid ${statusColor(event.severity)}33`, background: "rgba(8,13,24,0.35)", padding: 9 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <div style={{ color: "#F1F4FB", fontSize: 12, fontWeight: 800 }}>{event.message}</div>
+                      <span style={{ color: "#647089", fontSize: 10, flexShrink: 0 }}>{timeAgo(event.createdAt)}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 7, marginTop: 5, flexWrap: "wrap" }}>
+                      <span style={badgeStyle(statusColor(event.severity))}>{event.severity}</span>
+                      <span style={badgeStyle(statusColor(event.phase))}>{statusLabel(event.phase)}</span>
+                      <span style={badgeStyle("#647089")}>{event.source}</span>
+                    </div>
+                    {event.safeDetails && (
+                      <details style={{ marginTop: 7 }}>
+                        <summary style={{ color: "#94A3B8", fontSize: 11, cursor: "pointer" }}>Safe details</summary>
+                        <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", color: "#94A3B8", fontSize: 10, margin: "6px 0 0" }}>{JSON.stringify(event.safeDetails, null, 2)}</pre>
+                      </details>
+                    )}
+                  </div>
+                ))}
+                {!events.length && <div style={{ color: "#647089", fontSize: 13 }}>No trace events yet.</div>}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2122,6 +2301,9 @@ export default function CommandCenterClient() {
   const [memoryOffice, setMemoryOffice] = useState<MemoryOfficeData | null>(null);
   const [memoryContextDebug, setMemoryContextDebug] = useState<MemoryContextDebugData | null>(null);
   const [executionQueue, setExecutionQueue] = useState<ExecutionQueueData | null>(null);
+  const [executionRuns, setExecutionRuns] = useState<ExecutionRun[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [executionEvents, setExecutionEvents] = useState<ExecutionTraceEvent[]>([]);
   const [healthCenter, setHealthCenter] = useState<HealthCenterData | null>(null);
   const [healthAction, setHealthAction] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillView[]>([]);
@@ -2130,7 +2312,7 @@ export default function CommandCenterClient() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, memoryRes, memoryDebugRes, skillsRes, queueRes, healthRes] = await Promise.allSettled([
+      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, memoryRes, memoryDebugRes, skillsRes, queueRes, runRes, healthRes] = await Promise.allSettled([
         fetch("/api/command-center/projects").then((r) => r.json() as Promise<{ projects: Project[] }>),
         fetch("/api/command-center/builds").then((r) => r.json() as Promise<{ builds: Build[] }>),
         fetch("/api/approvals").then((r) => r.json() as Promise<{ actions: ApprovalAction[] }>),
@@ -2140,6 +2322,7 @@ export default function CommandCenterClient() {
         fetch("/api/command-center/memory-context-debug").then((r) => r.json() as Promise<MemoryContextDebugData>),
         fetch("/api/command-center/skills").then((r) => r.json() as Promise<{ skills: SkillView[] }>),
         fetch("/api/command-center/execution-queue").then((r) => r.json() as Promise<ExecutionQueueData>),
+        fetch("/api/command-center/runs").then((r) => r.json() as Promise<ExecutionRunsData>),
         fetch("/api/command-center/health-center").then((r) => r.json() as Promise<HealthCenterData>),
       ]);
 
@@ -2154,6 +2337,11 @@ export default function CommandCenterClient() {
       if (memoryDebugRes.status === "fulfilled" && !("error" in memoryDebugRes.value)) setMemoryContextDebug(memoryDebugRes.value);
       if (skillsRes.status === "fulfilled") setSkills(skillsRes.value.skills ?? []);
       if (queueRes.status === "fulfilled" && !("error" in queueRes.value)) setExecutionQueue(queueRes.value);
+      if (runRes.status === "fulfilled" && !("error" in runRes.value)) {
+        const nextRuns = runRes.value.runs ?? [];
+        setExecutionRuns(nextRuns);
+        setSelectedRunId((current) => current && nextRuns.some((run) => run.id === current) ? current : nextRuns[0]?.id ?? null);
+      }
       if (healthRes.status === "fulfilled" && !("error" in healthRes.value)) setHealthCenter(healthRes.value);
 
       const webMsgs = chatRes.status === "fulfilled" ? (chatRes.value.messages ?? []).map((m) => ({ ...m, channel: "dashboard" })) : [];
@@ -2169,6 +2357,26 @@ export default function CommandCenterClient() {
     return () => clearInterval(interval);
   }, [fetchAll]);
 
+  useEffect(() => {
+    if (!selectedRunId) {
+      setExecutionEvents([]);
+      return;
+    }
+    let cancelled = false;
+    const fetchEvents = async () => {
+      const res = await fetch(`/api/command-center/runs/${selectedRunId}/events`);
+      if (!res.ok) return;
+      const data = await res.json() as { events?: ExecutionTraceEvent[] };
+      if (!cancelled) setExecutionEvents(data.events ?? []);
+    };
+    void fetchEvents();
+    const interval = setInterval(() => { void fetchEvents(); }, 10000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [selectedRunId]);
+
   const handleApprove = async (id: string) => {
     await fetch(`/api/approvals/${id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision: "approve" }) });
     void fetchAll();
@@ -2177,6 +2385,25 @@ export default function CommandCenterClient() {
   const handleReject = async (id: string) => {
     await fetch(`/api/approvals/${id}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decision: "reject" }) });
     void fetchAll();
+  };
+
+  const runAction = async (runId: string, action: "cancel" | "retry") => {
+    await fetch(`/api/command-center/runs/${runId}/${action}`, { method: "POST" });
+    await fetchAll();
+  };
+
+  const fallbackToCodex = async (runId: string) => {
+    if (!window.confirm("Switch this run to Codex CLI? This queues a separate fallback run and will not deploy, push, or touch production.")) return;
+    await fetch(`/api/command-center/runs/${runId}/fallback-to-codex`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirmation: "switch-to-codex" }),
+    });
+    await fetchAll();
+  };
+
+  const copyDiagnostic = async (run: ExecutionRun, events: ExecutionTraceEvent[]) => {
+    await navigator.clipboard.writeText(JSON.stringify({ run, events: events.slice(-40) }, null, 2));
   };
 
   const pendingCount = approvals.filter((a) => a.status === "pending").length;
@@ -2245,9 +2472,9 @@ export default function CommandCenterClient() {
 
       {/* Tabs */}
       <div style={{ padding: "0 24px", borderBottom: "1px solid #28324A", display: "flex", gap: 6, minHeight: 38, alignItems: "center", overflowX: "auto" }}>
-        {(["overview", "health", "agents", "memory", "skills", "projects", "builds", "logs", "chat"] as Tab[]).map((t) => (
+        {(["overview", "health", "agents", "memory", "skills", "projects", "builds", "runs", "logs", "chat"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)} style={pillStyle(tab === t)}>
-            {t === "health" ? "Health Center" : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "health" ? "Health Center" : t === "runs" ? "Run Inspector" : t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "overview" && pendingCount > 0 && (
               <span style={{ marginLeft: 6, background: "#FBBF24", color: "#0E1424", borderRadius: 999, padding: "0 5px", fontSize: 10, fontWeight: 800 }}>
                 {pendingCount}
@@ -2338,6 +2565,18 @@ export default function CommandCenterClient() {
             )}
             {tab === "projects" && <ProjectsPanel projects={projects} />}
             {tab === "builds" && <BuildsPanel builds={builds} />}
+            {tab === "runs" && (
+              <RunInspectorPanel
+                runs={executionRuns}
+                selectedRunId={selectedRunId}
+                events={executionEvents}
+                onSelect={setSelectedRunId}
+                onCancel={(runId) => runAction(runId, "cancel")}
+                onRetry={(runId) => runAction(runId, "retry")}
+                onFallback={fallbackToCodex}
+                onCopyDiagnostic={copyDiagnostic}
+              />
+            )}
             {tab === "logs" && <LogsPanel runs={runs} audit={audit} />}
             {tab === "chat" && <ChatPanel initialMessages={chatMessages} />}
           </>

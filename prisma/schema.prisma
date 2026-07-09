@@ -29,6 +29,7 @@ model User {
   trackedApps      TrackedApplication[]
   auditLogs        AuditLog[]
   agentTasks       AgentTask[]
+  executionRuns    ExecutionRun[]
   engineeringTasks EngineeringTask[]
   emailCorrespondents EmailCorrespondent[]
 }
@@ -328,6 +329,51 @@ model AgentTask {
 
   @@index([userId, status])
   @@index([userId, createdAt])
+}
+
+model ExecutionRun {
+  id                     String                @id @default(cuid())
+  userId                 String
+  user                   User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId              String?
+  taskId                 String?
+  parentRunId            String?
+  executor               String
+  currentPhase           String                @default("queued")
+  currentActivity        String?
+  startedAt              DateTime              @default(now())
+  lastHeartbeatAt        DateTime              @default(now())
+  lastMeaningfulEventAt  DateTime              @default(now())
+  completedAt            DateTime?
+  status                 String                @default("queued")
+  lastSafeError          String?
+  workerId               String?
+  localFolderPath        String?
+  fallbackReason         String?
+  cancellationRequestedAt DateTime?
+  createdAt              DateTime              @default(now())
+  updatedAt              DateTime              @updatedAt
+  events                 ExecutionTraceEvent[]
+
+  @@index([userId, status])
+  @@index([userId, startedAt])
+  @@index([taskId])
+  @@index([projectId])
+}
+
+model ExecutionTraceEvent {
+  id          String       @id @default(cuid())
+  runId       String
+  run         ExecutionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  phase       String
+  severity    String      @default("info")
+  message     String
+  source      String
+  safeDetails String?
+  createdAt   DateTime    @default(now())
+
+  @@index([runId, createdAt])
+  @@index([phase, createdAt])
 }
 
 model EngineeringTask {

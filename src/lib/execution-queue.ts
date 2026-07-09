@@ -14,7 +14,8 @@ export type ExecutionQueueStatus =
   | "qa_passed"
   | "waiting_approval"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export type ExecutionQueueTask = {
   id: string;
@@ -48,7 +49,7 @@ function nullableString(value: unknown): string | null {
 function normalizeStatus(status: string): ExecutionQueueStatus {
   if (status === "running") return "executing";
   if (status === "blocked" || status === "approval_required") return "waiting_approval";
-  if (["queued", "planning", "executing", "qa_pending", "qa_passed", "waiting_approval", "completed", "failed"].includes(status)) {
+  if (["queued", "planning", "executing", "qa_pending", "qa_passed", "waiting_approval", "completed", "failed", "cancelled"].includes(status)) {
     return status as ExecutionQueueStatus;
   }
   return "queued";

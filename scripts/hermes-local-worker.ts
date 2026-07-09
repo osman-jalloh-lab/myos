@@ -22,7 +22,18 @@ type QueueTask = {
   projectId: string | null;
   logs: string | null;
   assignedExecutor: string;
+  runId?: string | null;
 };
+
+type ExecutionPhase =
+  | "queued" | "claimed" | "initializing" | "planning" | "fugu_design_gate"
+  | "waiting_for_worker" | "waiting_for_approval" | "preparing_workspace"
+  | "hermes_nous_running" | "codex_fallback_running" | "installing_dependencies"
+  | "building" | "starting_preview" | "browser_qa" | "fugu_polish_review"
+  | "completed" | "failed" | "cancelled" | "stalled";
+
+type ExecutionSource = "web" | "local_worker" | "hermes_nous" | "codex" | "fugu" | "qa";
+type ExecutionSeverity = "info" | "warning" | "error";
 
 type WorkerCapabilities = {
   nodeVersion: string;
@@ -55,6 +66,13 @@ let lastHermesAgentError: string | null = null;
 const EMAIL_POLL_DEFAULT_MS = 3 * 60_000;
 let lastEmailPoll = 0;
 let emailPollInFlight = false;
+
+class CancellationRequestedError extends Error {
+  constructor() {
+    super("Cancellation confirmed by local worker.");
+    this.name = "CancellationRequestedError";
+  }
+}
 
 // Read lazily (not at module load) — CRON_SECRET and the override come from
 // .env.local, which loadLocalEnv() only applies once runLoop() starts.
@@ -191,10 +209,189 @@ function safeError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   return raw
     .replace(/(TURSO_AUTH_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|SAKANA_API_KEY|FIRECRAWL_API_KEY|SERPAPI_API_KEY|AMADEUS_CLIENT_SECRET)=\S+/gi, "$1=[redacted]")
+    .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
+    .replace(/(postgres|mysql|libsql|mongodb|redis):\/\/[^\s"'<>]+/gi, "[redacted-connection-string]")
+    .replace(/(?:^|\s)(?:sk|pk|ghp|gho|ghu|ghs|xoxb)-[A-Za-z0-9_-]{12,}/gi, " [redacted-token]")
+    .replace(/\.env(?:\.[A-Za-z0-9_-]+)?/g, "[env-file]")
     .slice(0, 2000);
 }
 
+function safeTraceText(value: unknown, max = 2000): string {
+  const raw = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  return safeError(raw).slice(0, max);
+}
+
+function safeTraceDetails(details?: Record<string, unknown>): string | null {
+  if (!details) return null;
+  const safe = Object.fromEntries(Object.entries(details).slice(0, 30).map(([key, value]) => [
+    safeTraceText(key, 80),
+    typeof value === "number" || typeof value === "boolean" || value === null
+      ? value
+      : safeTraceText(value, 500),
+  ]));
+  return JSON.stringify(safe).slice(0, 4000);
+}
+
+function terminalStatusForPhase(phase: ExecutionPhase): string | null {
+  if (phase === "completed" || phase === "failed" || phase === "cancelled" || phase === "stalled") return phase;
+  return null;
+}
+
+function executorForTask(task: QueueTask): string {
+  if (task.assignedExecutor === "hermes_agent") return "hermes_agent";
+  if (task.assignedExecutor === "codex_cli") return "codex_cli";
+  return "local_worker";
+}
+
+async function ensureExecutionRunTables(db: Client): Promise<void> {
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS ExecutionRun (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      projectId TEXT,
+      taskId TEXT,
+      parentRunId TEXT,
+      executor TEXT NOT NULL,
+      currentPhase TEXT NOT NULL DEFAULT 'queued',
+      currentActivity TEXT,
+      startedAt TEXT NOT NULL DEFAULT (datetime('now')),
+      lastHeartbeatAt TEXT NOT NULL DEFAULT (datetime('now')),
+      lastMeaningfulEventAt TEXT NOT NULL DEFAULT (datetime('now')),
+      completedAt TEXT,
+      status TEXT NOT NULL DEFAULT 'queued',
+      lastSafeError TEXT,
+      workerId TEXT,
+      localFolderPath TEXT,
+      fallbackReason TEXT,
+      cancellationRequestedAt TEXT,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS ExecutionTraceEvent (
+      id TEXT PRIMARY KEY,
+      runId TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'info',
+      message TEXT NOT NULL,
+      source TEXT NOT NULL,
+      safeDetails TEXT,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  await db.execute(`CREATE INDEX IF NOT EXISTS ExecutionRun_taskId_idx ON ExecutionRun(taskId)`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS ExecutionRun_userId_startedAt_idx ON ExecutionRun(userId, startedAt)`);
+  await db.execute(`CREATE INDEX IF NOT EXISTS ExecutionTraceEvent_runId_createdAt_idx ON ExecutionTraceEvent(runId, createdAt)`);
+}
+
+async function ensureExecutionRunForTask(db: Client, task: QueueTask): Promise<string> {
+  await ensureExecutionRunTables(db);
+  const existing = await db.execute({
+    sql: `SELECT id FROM ExecutionRun WHERE taskId = ? ORDER BY startedAt DESC LIMIT 1`,
+    args: [task.id],
+  });
+  const existingId = String((existing.rows[0] as Record<string, unknown> | undefined)?.id ?? "");
+  if (existingId) return existingId;
+
+  const id = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO ExecutionRun (id, userId, projectId, taskId, executor, currentPhase, currentActivity, status, workerId, startedAt, lastHeartbeatAt, lastMeaningfulEventAt, createdAt, updatedAt)
+          VALUES (?, ?, ?, ?, ?, 'queued', ?, 'queued', ?, datetime('now'), datetime('now'), datetime('now'), datetime('now'), datetime('now'))`,
+    args: [id, task.userId, task.projectId, task.id, executorForTask(task), `Queued for ${task.assignedExecutor}.`, WORKER_ID],
+  });
+  await db.execute({
+    sql: `INSERT INTO ExecutionTraceEvent (id, runId, phase, severity, message, source, safeDetails, createdAt)
+          VALUES (?, ?, 'queued', 'info', ?, 'local_worker', NULL, datetime('now'))`,
+    args: [crypto.randomUUID(), id, `Run discovered by ${WORKER_ID}.`],
+  });
+  return id;
+}
+
+async function traceEvent(db: Client, task: QueueTask, params: {
+  phase: ExecutionPhase;
+  source?: ExecutionSource;
+  severity?: ExecutionSeverity;
+  message: string;
+  details?: Record<string, unknown>;
+  meaningful?: boolean;
+  status?: string;
+  localFolderPath?: string | null;
+  lastSafeError?: string | null;
+}): Promise<void> {
+  const runId = task.runId || await ensureExecutionRunForTask(db, task);
+  task.runId = runId;
+  const message = safeTraceText(params.message, 700);
+  const terminal = terminalStatusForPhase(params.phase);
+  await db.execute({
+    sql: `INSERT INTO ExecutionTraceEvent (id, runId, phase, severity, message, source, safeDetails, createdAt)
+          VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+    args: [
+      crypto.randomUUID(),
+      runId,
+      params.phase,
+      params.severity ?? "info",
+      message,
+      params.source ?? "local_worker",
+      safeTraceDetails(params.details),
+    ],
+  });
+  await db.execute({
+    sql: `UPDATE ExecutionRun
+          SET currentPhase = ?, currentActivity = ?, status = ?,
+              lastHeartbeatAt = datetime('now'),
+              lastMeaningfulEventAt = CASE WHEN ? = 1 THEN datetime('now') ELSE lastMeaningfulEventAt END,
+              completedAt = CASE WHEN ? = 1 THEN datetime('now') ELSE completedAt END,
+              workerId = ?, localFolderPath = coalesce(?, localFolderPath),
+              lastSafeError = coalesce(?, lastSafeError), updatedAt = datetime('now')
+          WHERE id = ?`,
+    args: [
+      params.phase,
+      message,
+      params.status ?? terminal ?? "running",
+      params.meaningful === false ? 0 : 1,
+      terminal ? 1 : 0,
+      WORKER_ID,
+      params.localFolderPath ?? null,
+      params.lastSafeError ? safeTraceText(params.lastSafeError, 1000) : null,
+      runId,
+    ],
+  });
+}
+
+async function heartbeatExecutionRun(db: Client, task: QueueTask, activity?: string): Promise<void> {
+  if (!task.runId) return;
+  await db.execute({
+    sql: `UPDATE ExecutionRun SET lastHeartbeatAt = datetime('now'), workerId = ?, currentActivity = coalesce(?, currentActivity), updatedAt = datetime('now') WHERE id = ?`,
+    args: [WORKER_ID, activity ? safeTraceText(activity, 700) : null, task.runId],
+  }).catch(() => undefined);
+}
+
+async function isCancellationRequested(db: Client, task: QueueTask): Promise<boolean> {
+  if (!task.runId) return false;
+  const res = await db.execute({
+    sql: `SELECT cancellationRequestedAt, status FROM ExecutionRun WHERE id = ? LIMIT 1`,
+    args: [task.runId],
+  });
+  const row = res.rows[0] as Record<string, unknown> | undefined;
+  return Boolean(row?.cancellationRequestedAt && !["completed", "failed", "cancelled"].includes(String(row.status ?? "")));
+}
+
+async function throwIfCancellationRequested(db: Client, task: QueueTask): Promise<void> {
+  if (!await isCancellationRequested(db, task)) return;
+  await traceEvent(db, task, {
+    phase: "cancelled",
+    source: "local_worker",
+    severity: "warning",
+    message: "Cancellation confirmed by local worker.",
+    status: "cancelled",
+  });
+  await updateTask(db, task, { status: "cancelled", result: "Cancellation confirmed by local worker.", error: null, log: "Cancelled after Osman requested cancellation." }).catch(() => undefined);
+  throw new CancellationRequestedError();
+}
+
 async function ensureWorkerTables(db: Client): Promise<void> {
+  await ensureExecutionRunTables(db);
   await db.execute(`
     CREATE TABLE IF NOT EXISTS LocalWorkerHeartbeat (
       workerId TEXT PRIMARY KEY,
@@ -473,7 +670,15 @@ async function claimTask(db: Client): Promise<QueueTask | null> {
     args: [WORKER_ID, appendLog(task.logs, `Claimed by local worker ${WORKER_ID} for ${task.assignedExecutor}; lease ${LEASE_MS / 60_000} minutes.`), task.id, task.assignedExecutor],
   });
 
-  return update.rowsAffected > 0 ? task : null;
+  if (update.rowsAffected <= 0) return null;
+  task.runId = await ensureExecutionRunForTask(db, task);
+  await traceEvent(db, task, {
+    phase: "claimed",
+    source: "local_worker",
+    message: `Claimed by ${WORKER_ID}.`,
+    details: { executor: task.assignedExecutor, taskId: task.id, projectId: task.projectId },
+  });
+  return task;
 }
 
 async function updateTask(db: Client, task: QueueTask, params: { status?: string; result?: string | null; error?: string | null; log?: string; files?: string[] }): Promise<void> {
@@ -706,8 +911,18 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
   }
 
   const builder = await import("../src/lib/local-builder");
+  await traceEvent(db, task, { phase: "planning", source: "local_worker", message: "Building Hermes Nous execution packet." });
   const packet = await builder.buildHermesAgentExecutionPrompt(task.userId, task.projectId, task.description);
+  await traceEvent(db, task, { phase: "fugu_design_gate", source: "fugu", message: "Fugu design gate context prepared for Hermes Nous." });
   const folder = await assertSafeHermesProjectFolder(packet.folder);
+  await traceEvent(db, task, {
+    phase: "preparing_workspace",
+    source: "local_worker",
+    message: "Prepared safe local workspace for Hermes Nous.",
+    localFolderPath: folder,
+    details: { commandCategory: "workspace_prepare", projectId: task.projectId },
+  });
+  await throwIfCancellationRequested(db, task);
   const beforeDirectories = await listDirectories(folder);
   const promptName = `HERMES_AGENT_TASK_${task.id}.md`;
   const promptPath = path.join(folder, promptName);
@@ -718,6 +933,13 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
   lastHermesAgentError = null;
   await updateTask(db, task, { log: `Launching Hermes Agent ${capabilities.hermesAgentVersion ?? "unknown version"} in ${folder}.` });
   await updateProjectExecuting(db, task, "hermes_agent");
+  await traceEvent(db, task, {
+    phase: "hermes_nous_running",
+    source: "hermes_nous",
+    message: "Hermes Nous started.",
+    details: { commandCategory: "hermes_oneshot", version: capabilities.hermesAgentVersion ?? "unknown" },
+    localFolderPath: folder,
+  });
 
   let agentOutput = "";
   try {
@@ -734,9 +956,23 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
         env: hermesAgentProcessEnv(),
       });
       agentOutput = safeHermesOutput(`${result.stdout}${result.stderr}`.trim());
+      await traceEvent(db, task, {
+        phase: "hermes_nous_running",
+        source: "hermes_nous",
+        message: "Hermes Nous response received.",
+        details: { outputTail: agentOutput.slice(-1200) },
+      });
     } catch (error) {
       const processError = error as Error & { stdout?: string; stderr?: string };
       const detail = safeHermesOutput(`${processError.stdout ?? ""}\n${processError.stderr ?? ""}`.trim());
+      await traceEvent(db, task, {
+        phase: "hermes_nous_running",
+        source: "hermes_nous",
+        severity: "error",
+        message: "Hermes Nous returned an error.",
+        details: { outputTail: detail.slice(-1200) },
+        lastSafeError: detail || safeError(error),
+      });
       throw new Error(detail || safeError(error));
     }
   } finally {
@@ -756,9 +992,13 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
   let buildOutput = "No package.json found; npm build skipped.";
   if (existsSync(packagePath)) {
     await updateTask(db, task, { log: "Dependencies install started." });
+    await traceEvent(db, task, { phase: "installing_dependencies", source: "local_worker", message: "Dependency install started.", details: { commandCategory: "package_install" } });
+    await throwIfCancellationRequested(db, task);
     const installOutput = existsSync(path.join(folder, "node_modules")) ? "Dependencies already present." : await runNpm(folder, ["install"], 10 * 60_000);
     await updateTask(db, task, { log: "Dependencies installed successfully." });
     await updateTask(db, task, { log: "npm run build started." });
+    await traceEvent(db, task, { phase: "building", source: "local_worker", message: "Build started.", details: { commandCategory: "package_build" } });
+    await throwIfCancellationRequested(db, task);
     const npmBuildOutput = await runNpm(folder, ["run", "build"], 10 * 60_000);
     await updateTask(db, task, { log: "npm run build passed." });
     buildOutput = `${installOutput}\n${npmBuildOutput}`.trim();
@@ -770,9 +1010,13 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
   });
 
   await updateTask(db, task, { log: "Parawi QA checklist started." });
+  await traceEvent(db, task, { phase: "browser_qa", source: "qa", message: "Parawi QA checklist started." });
+  await throwIfCancellationRequested(db, task);
   await builder.runLocalBuilderQa(task.userId, task.projectId);
   await updateTask(db, task, { log: "Browser QA and preview startup started." });
+  await traceEvent(db, task, { phase: "starting_preview", source: "local_worker", message: "Preview startup started." });
   const qa = await builder.startPreviewAndRunBrowserQa(task.userId, task.projectId);
+  await traceEvent(db, task, { phase: "browser_qa", source: "qa", message: "Browser QA completed.", details: { qaStatus: qa.qaStatus, localDevUrl: qa.localDevUrl ?? "unavailable" } });
   const passed = qa.qaStatus === "qa_passed";
   await updateTask(db, task, { log: `Browser QA ${passed ? "passed" : "needs review"}; preview ${qa.localDevUrl ? "started" : "unavailable"}.` });
   const summary = [
@@ -796,6 +1040,15 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
     result: summary,
     error: null,
     log: summary,
+  });
+  await traceEvent(db, task, {
+    phase: passed ? "completed" : "waiting_for_approval",
+    source: "local_worker",
+    severity: passed ? "info" : "warning",
+    message: passed ? "Run completed after build and QA." : "Run built but needs review before completion.",
+    details: { qaStatus: qa.qaStatus, preview: qa.localDevUrl ?? "unavailable" },
+    status: passed ? "completed" : "waiting_approval",
+    localFolderPath: folder,
   });
 }
 
@@ -918,6 +1171,8 @@ async function executeCouncilChatTask(db: Client, task: QueueTask): Promise<void
 }
 
 async function executeTask(db: Client, task: QueueTask): Promise<void> {
+  await traceEvent(db, task, { phase: "initializing", source: "local_worker", message: "Worker initialized execution." });
+  await throwIfCancellationRequested(db, task);
   if (task.assignedExecutor === "council_chat") {
     await executeCouncilChatTask(db, task);
     return;
@@ -938,39 +1193,22 @@ async function executeTask(db: Client, task: QueueTask): Promise<void> {
       await executeHermesAgentTask(db, task, capabilities);
       return;
     } catch (error) {
-      // Hermes Nous is primary; Codex CLI is the automatic fallback. A task is
-      // only truly failed when BOTH fail (fix-and-harden brief 2.4).
-      const hermesReason = safeError(error);
-      lastHermesAgentError = hermesReason;
-      const { action } = parseTaskPayload(task);
-      if (!capabilities.codexAvailable || !ALLOWED_ACTIONS.has(action)) {
-        throw new Error(
-          `Hermes Nous failed (${hermesReason}); Codex CLI fallback unavailable (${!capabilities.codexAvailable ? "codex is not installed" : `unsupported action: ${action}`}).`
-        );
-      }
-      const fallbackNote = `Hermes Nous failed (${hermesReason}) — falling back to Codex CLI.`;
-      console.warn(fallbackNote);
-      await updateTask(db, task, { log: fallbackNote }).catch(() => undefined);
-      try {
-        // Re-dispatch through the existing Codex/local-worker path so the
-        // build log and Project.assignedAgent reflect who actually ran it.
-        await executeLocalWorkerTask(db, { ...task, assignedExecutor: "codex_cli" });
-        if (task.projectId) {
-          await db.execute({
-            sql: `UPDATE Project SET assignedAgent = 'codex_cli', updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
-            args: [task.projectId, task.userId],
-          }).catch(() => undefined);
-        }
-        await updateTask(db, task, { log: "Codex CLI fallback completed after Hermes Nous failure." }).catch(() => undefined);
-        return;
-      } catch (codexError) {
-        throw new Error(`Hermes Nous failed (${hermesReason}); Codex CLI fallback also failed (${safeError(codexError)}).`);
-      }
+      const explicitFallbackReason = safeError(error);
+      lastHermesAgentError = explicitFallbackReason;
+      await traceEvent(db, task, {
+        phase: "failed",
+        source: "hermes_nous",
+        severity: "error",
+        message: "Hermes Nous failed. Switch to Codex is available from Run Inspector after explicit approval.",
+        details: { error: explicitFallbackReason },
+        lastSafeError: explicitFallbackReason,
+        status: "failed",
+      }).catch(() => undefined);
+      throw new Error(`Hermes Nous failed (${explicitFallbackReason}). Codex fallback requires explicit approval from Run Inspector.`);
     }
   }
   await executeLocalWorkerTask(db, task);
 }
-
 async function executeLocalWorkerTask(db: Client, task: QueueTask): Promise<void> {
   const { action, message } = parseTaskPayload(task);
   if (!ALLOWED_ACTIONS.has(action)) {
@@ -981,22 +1219,34 @@ async function executeLocalWorkerTask(db: Client, task: QueueTask): Promise<void
   currentTask = `${action}: ${task.title}`;
   await updateTask(db, task, { log: `Executing ${action} on ${os.hostname()}.` });
   await updateProjectExecuting(db, task, action);
+  await traceEvent(db, task, {
+    phase: task.assignedExecutor === "codex_cli" ? "codex_fallback_running" : action === "runQa" ? "browser_qa" : "planning",
+    source: task.assignedExecutor === "codex_cli" ? "codex" : "local_worker",
+    message: `Executing ${action} on ${os.hostname()}.`,
+    details: { commandCategory: action, executor: task.assignedExecutor },
+  });
+  await throwIfCancellationRequested(db, task);
 
   let project;
   if (action === "prepare") {
+    await traceEvent(db, task, { phase: "preparing_workspace", source: "local_worker", message: "Preparing local project workspace." });
     project = await builder.prepareLocalBuildProject(task.userId, message);
     if (!project) throw new Error("Prepare action did not parse as a local build request.");
   } else {
     if (!task.projectId) throw new Error(`${action} requires a project id.`);
     if (action === "generate") {
+      await traceEvent(db, task, { phase: "building", source: task.assignedExecutor === "codex_cli" ? "codex" : "local_worker", message: "Generating local starter app.", details: { commandCategory: "generate_app" } });
       project = await builder.generateLocalStarterApp(task.userId, task.projectId, message);
     } else if (action === "startDev") {
+      await traceEvent(db, task, { phase: "starting_preview", source: "local_worker", message: "Starting local preview server.", details: { commandCategory: "start_preview" } });
       project = await builder.startLocalDevServer(task.userId, task.projectId);
     } else if (action === "stopDev") {
       project = await builder.stopLocalDevServer(task.userId, task.projectId);
     } else if (action === "runQa") {
+      await traceEvent(db, task, { phase: "browser_qa", source: "qa", message: "Running local QA checklist.", details: { commandCategory: "qa" } });
       project = await builder.runLocalBuilderQa(task.userId, task.projectId);
     } else if (action === "rebuild" || action === "build" || action === "npmBuild") {
+      await traceEvent(db, task, { phase: "building", source: task.assignedExecutor === "codex_cli" ? "codex" : "local_worker", message: "Rebuilding local starter app.", details: { commandCategory: "build" } });
       project = await builder.rebuildLocalStarterApp(task.userId, task.projectId);
     }
   }
@@ -1004,7 +1254,10 @@ async function executeLocalWorkerTask(db: Client, task: QueueTask): Promise<void
   if (!project) throw new Error(`No project result returned for action: ${action}`);
 
   if (["generate", "rebuild", "build", "npmBuild"].includes(action) && task.projectId && !/failed/i.test(project.status)) {
+    await traceEvent(db, task, { phase: "starting_preview", source: "local_worker", message: "Starting preview and browser QA.", details: { commandCategory: "preview_and_browser_qa" } });
+    await throwIfCancellationRequested(db, task);
     project = await builder.startPreviewAndRunBrowserQa(task.userId, task.projectId);
+    await traceEvent(db, task, { phase: "browser_qa", source: "qa", message: "Browser QA completed.", details: { qaStatus: project.qaStatus ?? "unknown", localDevUrl: project.localDevUrl ?? "unavailable" } });
   }
 
   const finalStatus = taskStatusForProjectStatus(project.status);
@@ -1021,6 +1274,16 @@ async function executeLocalWorkerTask(db: Client, task: QueueTask): Promise<void
     result,
     error: finalStatus === "failed" ? project.buildError ?? "Local worker action failed." : null,
     log: result,
+  });
+  await traceEvent(db, task, {
+    phase: finalStatus === "failed" ? "failed" : finalStatus === "qa_pending" ? "waiting_for_approval" : "completed",
+    source: "local_worker",
+    severity: finalStatus === "failed" ? "error" : finalStatus === "qa_pending" ? "warning" : "info",
+    message: finalStatus === "failed" ? "Local worker action failed." : `${action} finished for ${project.projectName}.`,
+    details: { projectStatus: project.status, qaStatus: project.qaStatus ?? "none" },
+    status: finalStatus === "failed" ? "failed" : finalStatus === "qa_pending" ? "waiting_approval" : "completed",
+    localFolderPath: project.localFolderPath,
+    lastSafeError: finalStatus === "failed" ? project.buildError ?? "Local worker action failed." : null,
   });
 }
 
@@ -1086,6 +1349,7 @@ async function runLoop(): Promise<void> {
         void Promise.all([
           renewTaskLease(db, task.id),
           heartbeat(db, capabilities, apiBaseUrl),
+          heartbeatExecutionRun(db, task, currentTask ?? undefined),
           // Long builds block the main loop for minutes — keep the inbox
           // poll alive from here too (internally throttled).
           maybePollEmailWatcher(apiBaseUrl),
@@ -1098,7 +1362,19 @@ async function runLoop(): Promise<void> {
       } catch (error) {
         lastError = safeError(error);
         if (task.assignedExecutor === "hermes_agent") lastHermesAgentError = lastError;
-        await updateTask(db, task, { status: "failed", error: lastError, log: `Failed: ${lastError}` }).catch(() => undefined);
+        if (error instanceof CancellationRequestedError) {
+          await updateTask(db, task, { status: "cancelled", result: "Cancellation confirmed by local worker.", error: null, log: "Cancelled by request." }).catch(() => undefined);
+        } else {
+          await traceEvent(db, task, {
+            phase: "failed",
+            source: task.assignedExecutor === "hermes_agent" ? "hermes_nous" : "local_worker",
+            severity: "error",
+            message: `Failed: ${lastError}`,
+            lastSafeError: lastError,
+            status: "failed",
+          }).catch(() => undefined);
+          await updateTask(db, task, { status: "failed", error: lastError, log: `Failed: ${lastError}` }).catch(() => undefined);
+        }
       } finally {
         clearInterval(maintenance);
         currentTask = null;
