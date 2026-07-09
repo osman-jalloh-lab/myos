@@ -51,3 +51,15 @@ export function getSkillsByCategory(category: string): SkillDefinition[] {
 }
 
 export type { SkillDefinition } from "./types";
+export {
+  formatSkillsUsed,
+  recordSkillUsageTelemetry,
+  resolveRelevantSkills,
+  skillInstructionBlock,
+} from "./routing";
+export type {
+  ResolvedSkill,
+  ResolveRelevantSkillsParams,
+  SkillResolution,
+  SkillUsageTelemetryInput,
+} from "./routing";

@@ -6,6 +6,14 @@ import { buildContextBlock, updateSessionAfterResponse } from "@/lib/memory-cont
 import { contextStateFromContextBlock, resolveMessageWithContext } from "@/lib/context-persistence";
 import { normalizeAgentKey } from "@/lib/agent-roster";
 import { isCouncilProviderTarget, providerFamilyFromCouncilTarget, sendCouncilMessage } from "@/lib/model-council-chat";
+import { appendExecutionEvent, createExecutionRun } from "@/lib/execution-runs";
+import {
+  formatSkillsUsed,
+  recordSkillUsageTelemetry,
+  resolveRelevantSkills,
+  skillInstructionBlock,
+  type SkillResolution,
+} from "@/lib/skills/routing";
 
 export type ChatChannel = "dashboard" | "telegram";
 
@@ -104,18 +112,71 @@ export async function sendMessage(
   const resolvedContext = chatContext ?? await buildContextBlock(contextChatId, userId, text).catch(() => "");
   const contextResolution = resolveMessageWithContext(text, contextStateFromContextBlock(resolvedContext || undefined));
   const routingText = contextResolution.resolvedText;
+  const contextProject = contextResolution as unknown as { projectId?: unknown };
+  const projectId = typeof contextProject.projectId === "string"
+    ? contextProject.projectId
+    : null;
+  const skillResolution = await resolveRelevantSkills({
+    userId,
+    message: routingText,
+    agentName: normalizedTargetAgent,
+    projectId,
+    maxSkills: 3,
+  }).catch((): SkillResolution => ({
+    matched: false,
+    agentName: normalizedTargetAgent ?? "hermes",
+    projectId,
+    taskType: "general",
+    confidence: 0,
+    reason: "Skill routing could not inspect the registry, so the normal agent/model path was used.",
+    skills: [],
+    consideredSkillCount: 0,
+  }));
+  const skillBlock = skillInstructionBlock(skillResolution);
+  const routedWithSkills = skillBlock ? `${skillBlock}\n\nUSER MESSAGE\n${routingText}` : routingText;
 
   let route: RouteResult;
   if (normalizedTargetAgent === "mercury") {
     // Mercury handles external tool/API requests independently — it does not
     // go through Hermes routing, keeping the two agent graphs separate.
-    const { reply, pendingApprovals } = await handleMercuryRequest(userId, routingText, channel);
+    const { reply, pendingApprovals } = await handleMercuryRequest(userId, routedWithSkills, channel);
     route = { reply, pendingApprovals };
   } else {
     route = normalizedTargetAgent
-      ? await routeToAgent(userId, normalizedTargetAgent, routingText, channel, 0, resolvedContext || undefined)
-      : await routeMessage(userId, routingText, channel, resolvedContext || undefined);
+      ? await routeToAgent(userId, normalizedTargetAgent, routedWithSkills, channel, 0, resolvedContext || undefined)
+      : await routeMessage(userId, routedWithSkills, channel, resolvedContext || undefined);
   }
+
+  const skillsUsedLine = formatSkillsUsed(skillResolution);
+  route.reply = `${route.reply}\n\n${skillsUsedLine}`;
+  await recordSkillUsageTelemetry({ userId, resolution: skillResolution, modelCallAvoided: false }).catch(() => {});
+  await createExecutionRun({
+    userId,
+    projectId,
+    executor: "internal",
+    currentPhase: "planning",
+    currentActivity: skillsUsedLine,
+  }).then(async (run) => {
+    await appendExecutionEvent(run.id, {
+      phase: "completed",
+      source: "web",
+      severity: skillResolution.matched ? "info" : "warning",
+      message: skillsUsedLine,
+      safeDetails: {
+        agentName: skillResolution.agentName,
+        taskType: skillResolution.taskType,
+        confidence: skillResolution.confidence,
+        reason: skillResolution.reason,
+        skills: skillResolution.skills.map((skill) => ({
+          id: skill.id,
+          confidence: skill.confidence,
+          reason: skill.reason,
+        })),
+      },
+      meaningful: true,
+      status: "completed",
+    });
+  }).catch(() => {});
 
   // Instant feedback when a fact auto-saved, so Osman never wonders whether it landed.
   const memoryTag = rememberedTag(remembered);
