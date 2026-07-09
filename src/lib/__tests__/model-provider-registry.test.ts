@@ -11,10 +11,13 @@ describe("model provider registry", () => {
     expect(MODEL_PROVIDER_REGISTRY.filter((entry) => entry.council).map((entry) => [entry.family, entry.role])).toEqual([
       ["openai", "engineering"],
       ["anthropic", "architecture"],
-      ["deepseek", "challenger"],
-      ["gemini", "multimodal_strategy"],
       ["ollama", "local_reviewer"],
     ]);
+  });
+
+  it("keeps DeepSeek and Gemini out of Council v1", () => {
+    expect(MODEL_PROVIDER_REGISTRY.find((entry) => entry.family === "deepseek")).toMatchObject({ council: false });
+    expect(MODEL_PROVIDER_REGISTRY.find((entry) => entry.family === "gemini")).toMatchObject({ council: false, testable: false });
   });
 
   it("keeps Groq as fallback instead of a voting council family", () => {

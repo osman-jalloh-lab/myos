@@ -4,8 +4,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import BuilderOffice from "./BuilderOffice";
 import LiveBuildConsole from "./LiveBuildConsole";
 import AgentRoster from "@/components/AgentRoster";
+import CouncilChatPanel from "@/components/CouncilChatPanel";
 import HermesNousChatPanel from "@/components/HermesNousChatPanel";
-import { agentColor, CHAT_ROSTER_AGENTS } from "@/lib/agent-roster";
+import { agentColor, CHAT_ROSTER_AGENTS, COUNCIL_REVIEWER_AGENTS } from "@/lib/agent-roster";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -966,6 +967,16 @@ function AgentTalkPanel() {
           <AgentRoster agents={CHAT_ROSTER_AGENTS} />
         </div>
       </div>
+      <div style={cardStyle}>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Reviewer offices</div>
+          <h2 style={{ margin: "6px 0 0", fontSize: 24, fontFamily: "Fraunces, serif" }}>Council Offices</h2>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 6 }}>
+          <AgentRoster agents={COUNCIL_REVIEWER_AGENTS} />
+        </div>
+      </div>
+      <CouncilChatPanel />
       <HermesNousChatPanel />
     </div>
   );
@@ -1731,7 +1742,7 @@ function HealthCenterPanel({
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
           <div>
             <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>Model Providers / Council Setup</div>
-            <div style={{ color: "#647089", fontSize: 11, marginTop: 4 }}>Registry only. No council voting or automatic routing is active yet.</div>
+            <div style={{ color: "#647089", fontSize: 11, marginTop: 4 }}>Registry for Council chat and routing preview. Automatic background routing is still preview-only.</div>
           </div>
           <div style={{ color: "#4B5563", fontSize: 11 }}>No secrets are returned to the browser.</div>
         </div>

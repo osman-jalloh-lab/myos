@@ -5,6 +5,7 @@ import { autoCaptureUserMemory, logAutoMemoryFailure, rememberedTag } from "@/li
 import { buildContextBlock, updateSessionAfterResponse } from "@/lib/memory-context";
 import { contextStateFromContextBlock, resolveMessageWithContext } from "@/lib/context-persistence";
 import { normalizeAgentKey } from "@/lib/agent-roster";
+import { isCouncilProviderTarget, providerFamilyFromCouncilTarget, sendCouncilMessage } from "@/lib/model-council-chat";
 
 export type ChatChannel = "dashboard" | "telegram";
 
@@ -83,6 +84,16 @@ export async function sendMessage(
 ): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView; route: RouteResult }> {
   const contextChatId = `${channel}:shared:${userId}`;
   const normalizedTargetAgent = targetAgent ? normalizeAgentKey(targetAgent) : null;
+  if (channel === "dashboard" && isCouncilProviderTarget(normalizedTargetAgent)) {
+    const providerFamily = providerFamilyFromCouncilTarget(normalizedTargetAgent!);
+    if (!providerFamily) throw new Error("Unknown Council provider.");
+    return sendCouncilMessage({
+      userId,
+      message: text,
+      mode: "provider",
+      providerFamily,
+    });
+  }
   const userRow = await prisma.chatMessage.create({
     data: { userId, role: "user", content: text, channel, targetAgent: normalizedTargetAgent },
   });

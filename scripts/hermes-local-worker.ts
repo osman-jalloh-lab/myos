@@ -9,6 +9,8 @@ import { promisify } from "node:util";
 // Dependency-free on purpose — safe to import before loadLocalEnv() runs,
 // unlike ../src/lib/local-builder which is only ever imported dynamically.
 import { parseHermesChatOutput, sanitizeHermesOutput } from "../src/lib/hermes-nous-cli";
+import { councilProviderEntries, formatCouncilResponse, getCouncilProvider, runCouncilProvider, type CouncilChatMode } from "../src/lib/council-providers";
+import type { ProviderFamily } from "../src/lib/model-provider-registry";
 import { DEFAULT_LOCAL_PROJECTS_ROOT, resolveLocalProjectsRoot } from "../src/lib/local-projects-root";
 
 type QueueTask = {
@@ -236,7 +238,7 @@ async function recoverStaleTasks(db: Client): Promise<number> {
   const stale = await db.execute({
     sql: `SELECT id, logs FROM AgentTask
           WHERE status = 'executing'
-            AND assigned_executor IN ('local_worker', 'hermes_agent', 'hermes_chat')
+            AND assigned_executor IN ('local_worker', 'hermes_agent', 'hermes_chat', 'council_chat')
             AND (lease_expires_at < datetime('now')
               OR (lease_expires_at IS NULL AND updatedAt < datetime('now', '-5 minutes')))`,
     args: [],
@@ -441,7 +443,7 @@ async function claimTask(db: Client): Promise<QueueTask | null> {
     sql: `
       SELECT id, userId, title, description, status, project_id, logs, assigned_executor
       FROM AgentTask
-      WHERE assigned_executor IN ('local_worker', 'hermes_agent', 'hermes_chat') AND status = 'queued'
+      WHERE assigned_executor IN ('local_worker', 'hermes_agent', 'hermes_chat', 'council_chat') AND status = 'queued'
       ORDER BY createdAt ASC
       LIMIT 1
     `,
@@ -568,6 +570,40 @@ function parseHermesChatPayload(task: QueueTask): { message: string; chatMessage
     };
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error("Hermes Nous chat task payload is not valid JSON.");
+    throw error;
+  }
+}
+
+function parseCouncilChatPayload(task: QueueTask): {
+  mode: CouncilChatMode;
+  providerFamily: ProviderFamily | null;
+  target: string;
+  message: string;
+  chatMessageId: string | null;
+} {
+  try {
+    const parsed = JSON.parse(task.description) as {
+      mode?: unknown;
+      providerFamily?: unknown;
+      target?: unknown;
+      message?: unknown;
+      chatMessageId?: unknown;
+    };
+    const mode: CouncilChatMode = parsed.mode === "provider" ? "provider" : "council";
+    const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+    const target = typeof parsed.target === "string" && parsed.target.trim() ? parsed.target.trim() : "model_council";
+    if (!message) throw new Error("Council chat task is missing a message.");
+    return {
+      mode,
+      providerFamily: typeof parsed.providerFamily === "string" && parsed.providerFamily.trim()
+        ? parsed.providerFamily as ProviderFamily
+        : null,
+      target,
+      message,
+      chatMessageId: typeof parsed.chatMessageId === "string" && parsed.chatMessageId.trim() ? parsed.chatMessageId : null,
+    };
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error("Council chat task payload is not valid JSON.");
     throw error;
   }
 }
@@ -841,7 +877,51 @@ async function executeHermesChatTask(db: Client, task: QueueTask, capabilities: 
   });
 }
 
+async function executeCouncilChatTask(db: Client, task: QueueTask): Promise<void> {
+  const payload = parseCouncilChatPayload(task);
+  currentTask = payload.mode === "council" ? `council_chat: ${task.title}` : `council_provider: ${payload.providerFamily ?? "unknown"}`;
+  await updateTask(db, task, {
+    log: payload.mode === "council"
+      ? "Council debate started on the local worker."
+      : `Direct Council provider chat started for ${payload.providerFamily}.`,
+  });
+
+  const entries = payload.mode === "provider"
+    ? [payload.providerFamily ? getCouncilProvider(payload.providerFamily) : null].filter(Boolean)
+    : councilProviderEntries();
+  if (!entries.length) throw new Error("No Council provider entry matched this request.");
+
+  const responses = [];
+  for (const entry of entries) {
+    await updateTask(db, task, { log: `Calling ${entry!.provider} (${entry!.roleLabel}).` });
+    responses.push(await runCouncilProvider(entry!, payload.message));
+  }
+  const reply = safeHermesOutput(formatCouncilResponse(payload.mode, responses)).slice(0, 12000);
+  await db.execute({
+    sql: `INSERT INTO ChatMessage (id, userId, role, content, channel, targetAgent, createdAt)
+          VALUES (?, ?, 'assistant', ?, 'dashboard', ?, ?)`,
+    args: [crypto.randomUUID(), task.userId, reply, payload.target, new Date().toISOString()],
+  });
+  const answered = responses.filter((response) => response.status === "answered").length;
+  const unavailable = responses.length - answered;
+  await updateTask(db, task, {
+    status: answered > 0 ? "completed" : "failed",
+    result: [
+      payload.mode === "council" ? "Council debate completed." : "Direct Council provider chat completed.",
+      `Answered: ${answered}/${responses.length}`,
+      unavailable ? `Unavailable: ${unavailable}` : null,
+      payload.chatMessageId ? `User message: ${payload.chatMessageId}` : null,
+    ].filter(Boolean).join("\n"),
+    error: answered > 0 ? null : "No configured Council provider answered.",
+    log: `Council chat finished with ${answered}/${responses.length} provider response(s).`,
+  });
+}
+
 async function executeTask(db: Client, task: QueueTask): Promise<void> {
+  if (task.assignedExecutor === "council_chat") {
+    await executeCouncilChatTask(db, task);
+    return;
+  }
   if (task.assignedExecutor === "hermes_chat") {
     const capabilities = await getCapabilities();
     try {

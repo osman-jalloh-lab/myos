@@ -3,14 +3,16 @@ import {
   AGENT_COLORS,
   CHAT_ROSTER_AGENTS,
   COMMAND_AGENT_PREFIXES,
+  COUNCIL_REVIEWER_AGENTS,
   TASK_ASSIGNABLE_AGENT_KEYS,
+  type AgentKey,
   agentColor,
   chatTargetForAgent,
   isTaskAssignableAgent,
   normalizeAgentKey,
 } from "@/lib/agent-roster";
 
-const CANONICAL_AGENT_KEYS = [
+const CORE_AGENT_KEYS = [
   "hermes",
   "iris",
   "kairos",
@@ -24,6 +26,14 @@ const CANONICAL_AGENT_KEYS = [
   "prometheus",
   "mercury",
 ] as const;
+
+const COUNCIL_AGENT_KEYS = [
+  "council_openai",
+  "council_anthropic",
+  "council_ollama",
+] as const;
+
+const CANONICAL_AGENT_KEYS = [...CORE_AGENT_KEYS, ...COUNCIL_AGENT_KEYS] as const satisfies readonly AgentKey[];
 
 describe("agent roster", () => {
   it("keeps the canonical agent keys stable", () => {
@@ -53,7 +63,7 @@ describe("agent roster", () => {
   });
 
   it("keeps chat roster metadata complete for the UI", () => {
-    for (const agent of CHAT_ROSTER_AGENTS) {
+    for (const agent of [...CHAT_ROSTER_AGENTS, ...COUNCIL_REVIEWER_AGENTS]) {
       expect(agent.id).toBeTruthy();
       expect(agent.letter).toEqual(expect.any(String));
       expect(agent.name).toEqual(expect.any(String));
@@ -68,16 +78,17 @@ describe("agent roster", () => {
     expect(chatTargetForAgent("hermes")).toBeNull();
     expect(chatTargetForAgent("mnemo")).toBe("mnemosyne");
     expect(chatTargetForAgent(" Themis ")).toBe("themis");
+    expect(chatTargetForAgent("council_openai")).toBe("council_openai");
   });
 
   it("keeps Telegram prefixes on valid canonical agent keys", () => {
     expect(COMMAND_AGENT_PREFIXES).toContain("mercury");
     expect(COMMAND_AGENT_PREFIXES).not.toContain("hermes");
-    expect(COMMAND_AGENT_PREFIXES.every((agent) => CANONICAL_AGENT_KEYS.includes(agent))).toBe(true);
+    expect(COMMAND_AGENT_PREFIXES.every((agent) => CORE_AGENT_KEYS.includes(agent))).toBe(true);
   });
 
   it("keeps dispatcher health-check references inside the canonical roster", () => {
     expect(TASK_ASSIGNABLE_AGENT_KEYS.length).toBeGreaterThan(0);
-    expect(TASK_ASSIGNABLE_AGENT_KEYS.every((agent) => CANONICAL_AGENT_KEYS.includes(agent))).toBe(true);
+    expect(TASK_ASSIGNABLE_AGENT_KEYS.every((agent) => CORE_AGENT_KEYS.includes(agent))).toBe(true);
   });
 });

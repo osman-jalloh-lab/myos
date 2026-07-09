@@ -1,4 +1,4 @@
-export type AgentKey =
+export type CoreAgentKey =
   | "hermes"
   | "iris"
   | "kairos"
@@ -11,6 +11,13 @@ export type AgentKey =
   | "themis"
   | "prometheus"
   | "mercury";
+
+export type CouncilAgentKey =
+  | "council_openai"
+  | "council_anthropic"
+  | "council_ollama";
+
+export type AgentKey = CoreAgentKey | CouncilAgentKey;
 
 export interface RosterAgent {
   id: AgentKey | "mnemo";
@@ -38,6 +45,9 @@ export const AGENT_COLORS: Record<AgentKey, string> = {
   themis: "#FB7185",
   prometheus: "#F97316",
   mercury: "#F59E0B",
+  council_openai: "#60A5FA",
+  council_anthropic: "#C084FC",
+  council_ollama: "#A3E635",
 };
 
 export function normalizeAgentKey(agentName: string): AgentKey {
@@ -136,17 +146,45 @@ export const CHAT_ROSTER_AGENTS: RosterAgent[] = [
   },
 ];
 
-export const TASK_ASSIGNABLE_AGENT_KEYS: AgentKey[] = CHAT_ROSTER_AGENTS.map((agent) =>
-  normalizeAgentKey(agent.id)
-);
+export const COUNCIL_REVIEWER_AGENTS: RosterAgent[] = [
+  {
+    id: "council_openai",
+    letter: "O",
+    name: "OpenAI",
+    role: "Engineering reviewer",
+    color: AGENT_COLORS.council_openai,
+    emptyStateText: "Visit OpenAI's engineering office for implementation checks, code plans, and repo-level review. This office talks to OpenAI only.",
+  },
+  {
+    id: "council_anthropic",
+    letter: "C",
+    name: "Claude",
+    role: "Architecture reviewer",
+    color: AGENT_COLORS.council_anthropic,
+    emptyStateText: "Visit Claude's architecture office for system design, tradeoffs, and long-form reasoning. This office talks to Anthropic only.",
+  },
+  {
+    id: "council_ollama",
+    letter: "L",
+    name: "Ollama",
+    role: "Local reviewer",
+    color: AGENT_COLORS.council_ollama,
+    emptyStateText: "Visit Ollama's local office for private low-cost review on the always-on laptop. This office talks to Ollama only.",
+  },
+];
 
-export const COMMAND_AGENT_PREFIXES: AgentKey[] = [
+export const TASK_ASSIGNABLE_AGENT_KEYS: CoreAgentKey[] = CHAT_ROSTER_AGENTS.map((agent) =>
+  normalizeAgentKey(agent.id)
+).filter((agent): agent is CoreAgentKey => !agent.startsWith("council_"));
+
+export const COMMAND_AGENT_PREFIXES: CoreAgentKey[] = [
   ...TASK_ASSIGNABLE_AGENT_KEYS.filter((agent) => agent !== "hermes"),
   "mercury",
 ];
 
 export function isTaskAssignableAgent(agentName: string): boolean {
-  return TASK_ASSIGNABLE_AGENT_KEYS.includes(normalizeAgentKey(agentName));
+  const key = normalizeAgentKey(agentName);
+  return !key.startsWith("council_") && TASK_ASSIGNABLE_AGENT_KEYS.includes(key as CoreAgentKey);
 }
 
 export function chatTargetForAgent(agentName: string): AgentKey | null {
