@@ -903,6 +903,16 @@ async function verifyParawiLocalAppContract(folder: string): Promise<void> {
 
 async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities: WorkerCapabilities): Promise<void> {
   if (!task.projectId) throw new Error("Hermes Agent tasks require a project id.");
+  if (/ForceHermesNousFailureForVerifier:\s*true/i.test(task.description)) {
+    await traceEvent(db, task, {
+      phase: "hermes_nous_running",
+      source: "hermes_nous",
+      severity: "warning",
+      message: "Verifier forced Hermes Nous failure before CLI execution.",
+      details: { commandCategory: "verifier_forced_hermes_failure" },
+    });
+    throw new Error("Forced Hermes Nous verifier failure.");
+  }
   if (!capabilities.hermesAgentAvailable || !capabilities.hermesAgentPath) {
     throw new Error("Hermes Agent is not installed or is unavailable on the Local Worker machine.");
   }
@@ -1193,18 +1203,42 @@ async function executeTask(db: Client, task: QueueTask): Promise<void> {
       await executeHermesAgentTask(db, task, capabilities);
       return;
     } catch (error) {
-      const explicitFallbackReason = safeError(error);
-      lastHermesAgentError = explicitFallbackReason;
+      const hermesReason = safeError(error);
+      lastHermesAgentError = hermesReason;
       await traceEvent(db, task, {
-        phase: "failed",
+        phase: "codex_fallback_running",
         source: "hermes_nous",
-        severity: "error",
-        message: "Hermes Nous failed. Switch to Codex is available from Run Inspector after explicit approval.",
-        details: { error: explicitFallbackReason },
-        lastSafeError: explicitFallbackReason,
-        status: "failed",
+        severity: "warning",
+        message: `Hermes Nous failed: ${hermesReason}. Automatically fell back to Codex.`,
+        details: { error: hermesReason, fallback: "automatic_codex" },
+        lastSafeError: hermesReason,
+        status: "running",
       }).catch(() => undefined);
-      throw new Error(`Hermes Nous failed (${explicitFallbackReason}). Codex fallback requires explicit approval from Run Inspector.`);
+      const fallbackTask = { ...task, assignedExecutor: "codex_cli" };
+      await updateTask(db, task, { log: `Hermes Nous failed: ${hermesReason}. Automatically fell back to Codex.` }).catch(() => undefined);
+      try {
+        await executeLocalWorkerTask(db, fallbackTask);
+        if (task.projectId) {
+          await db.execute({
+            sql: `UPDATE Project SET assignedAgent = 'codex_cli', updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
+            args: [task.projectId, task.userId],
+          }).catch(() => undefined);
+        }
+        await updateTask(db, task, { log: "Codex automatic fallback completed after Hermes Nous failure." }).catch(() => undefined);
+        return;
+      } catch (codexError) {
+        const codexReason = safeError(codexError);
+        await traceEvent(db, task, {
+          phase: "failed",
+          source: "codex",
+          severity: "error",
+          message: `Automatic Codex fallback failed: ${codexReason}`,
+          details: { hermesError: hermesReason, codexError: codexReason },
+          lastSafeError: codexReason,
+          status: "failed",
+        }).catch(() => undefined);
+        throw new Error(`Hermes Nous failed (${hermesReason}); automatic Codex fallback also failed (${codexReason}).`);
+      }
     }
   }
   await executeLocalWorkerTask(db, task);
