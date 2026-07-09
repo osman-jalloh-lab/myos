@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { redactExecutionText } from "@/lib/execution-runs";
 import { getCodexCliStatus } from "@/lib/local-builder";
 import { MODEL_PROVIDER_REGISTRY, providerComponent, selectedProviderModel, type ProviderEnvironment, type ProviderFamily, type ProviderRole } from "@/lib/model-provider-registry";
 
@@ -50,6 +51,21 @@ export type ExecutorHealthRow = {
   capabilities?: string[];
 };
 
+export type HermesNousRuntimeHealth = {
+  installed: boolean;
+  installPath: string | null;
+  version: string | null;
+  authState: "configured" | "missing" | "unknown";
+  selectedModelProvider: string;
+  workerState: "online" | "offline" | "stale" | "busy" | "unknown";
+  lastSuccessfulRun: string | null;
+  lastFailure: string | null;
+  currentActiveRun: string | null;
+  supportedExecutionProfiles: string[];
+  codexFallbackAvailable: boolean;
+  diagnostic: string;
+};
+
 export type NotificationHealthRow = {
   name: string;
   lastSent: string | null;
@@ -95,6 +111,7 @@ export type HealthCenterSnapshot = {
   accounts: HealthAccount[];
   scheduledJobs: ScheduledJobHealth[];
   executors: ExecutorHealthRow[];
+  hermesNousRuntime: HermesNousRuntimeHealth;
   notifications: NotificationHealthRow[];
   apiProviders: ApiProviderHealth[];
   logs: HealthLogEntry[];
@@ -105,7 +122,7 @@ type QueueHealthRow = {
   assigned_executor: string | null;
 };
 
-type LocalWorkerHeartbeatRow = {
+export type LocalWorkerHeartbeatRow = {
   workerId: string;
   machineName: string;
   status: string;
@@ -222,6 +239,73 @@ function localWorkerStatus(heartbeat: LocalWorkerHeartbeatRow | null): ExecutorH
   if (ageMs > 90 * 1000 || heartbeat.status === "offline") return "Offline";
   if (ageMs > 45 * 1000 || heartbeat.status === "stale") return "Stale";
   return heartbeat.currentTask ? "Busy" : "Online";
+}
+
+function safePathLabel(rawPath: string | null | undefined): string | null {
+  if (!rawPath) return null;
+  const normalized = rawPath.replace(/\\/g, "/");
+  const parts = normalized.split("/").filter(Boolean);
+  const file = parts.at(-1) ?? "hermes";
+  const drive = rawPath.match(/^[A-Za-z]:/)?.[0] ?? null;
+  const rootHint = drive ? `${drive}/` : rawPath.startsWith("/") ? "/" : "";
+  return `${rootHint}.../${file}`;
+}
+
+function hermesWorkerState(heartbeat: LocalWorkerHeartbeatRow | null): HermesNousRuntimeHealth["workerState"] {
+  const status = localWorkerStatus(heartbeat);
+  if (status === "Online" || status === "Ready") return "online";
+  if (status === "Busy") return "busy";
+  if (status === "Stale") return "stale";
+  if (status === "Offline") return "offline";
+  return "unknown";
+}
+
+function hermesRuntimeDiagnostic(runtime: Omit<HermesNousRuntimeHealth, "diagnostic">): string {
+  return redactExecutionText([
+    "Hermes Nous Runtime Diagnostic",
+    `Installed: ${runtime.installed ? "yes" : "no"}`,
+    `Safe install path: ${runtime.installPath ?? "missing"}`,
+    `Version: ${runtime.version ?? "unknown"}`,
+    `Nous auth: ${runtime.authState}`,
+    `Selected model/provider: ${runtime.selectedModelProvider}`,
+    `Worker state: ${runtime.workerState}`,
+    `Last successful run: ${runtime.lastSuccessfulRun ?? "none"}`,
+    `Last failure: ${runtime.lastFailure ?? "none"}`,
+    `Current active run: ${runtime.currentActiveRun ?? "none"}`,
+    `Supported execution profiles: ${runtime.supportedExecutionProfiles.join(", ") || "none"}`,
+    `Codex fallback available: ${runtime.codexFallbackAvailable ? "yes" : "no"}`,
+  ].join("\n"), 2000);
+}
+
+export function buildHermesNousRuntimeHealth(params: {
+  heartbeat: LocalWorkerHeartbeatRow | null;
+  codexAvailable: boolean;
+  hermesAgentAvailable: boolean;
+  hermesAgentAuthConfigured: boolean;
+  hermesAgentModelConfigured: boolean;
+}): HermesNousRuntimeHealth {
+  const selectedModelProvider = params.hermesAgentModelConfigured
+    ? "Selected on worker heartbeat; exact provider/model is not exposed by the local worker."
+    : "Missing on worker heartbeat.";
+  const supportedExecutionProfiles = [
+    params.hermesAgentAvailable ? "hermes_agent" : null,
+    "local_worker",
+    params.codexAvailable ? "codex_fallback" : null,
+  ].filter((item): item is string => Boolean(item));
+  const runtime: Omit<HermesNousRuntimeHealth, "diagnostic"> = {
+    installed: params.hermesAgentAvailable,
+    installPath: safePathLabel(params.heartbeat?.hermesAgentPath),
+    version: params.heartbeat?.hermesAgentVersion ?? null,
+    authState: params.heartbeat ? params.hermesAgentAuthConfigured ? "configured" : "missing" : "unknown",
+    selectedModelProvider,
+    workerState: hermesWorkerState(params.heartbeat),
+    lastSuccessfulRun: params.heartbeat?.lastHermesAgentRun ?? null,
+    lastFailure: redactExecutionText(params.heartbeat?.lastHermesAgentError ?? null, 500) || null,
+    currentActiveRun: params.heartbeat?.currentTask ?? null,
+    supportedExecutionProfiles,
+    codexFallbackAvailable: params.codexAvailable,
+  };
+  return { ...runtime, diagnostic: hermesRuntimeDiagnostic(runtime) };
 }
 
 function boolish(value: number | boolean | null | undefined): boolean {
@@ -636,6 +720,13 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
   const hermesAgentAuthConfigured = boolish(latestLocalWorker?.hermesAgentAuthConfigured);
   const hermesAgentModelConfigured = boolish(latestLocalWorker?.hermesAgentModelConfigured);
   const hermesAgentReady = hermesAgentAvailable && hermesAgentAuthConfigured && hermesAgentModelConfigured;
+  const hermesNousRuntime = buildHermesNousRuntimeHealth({
+    heartbeat: latestLocalWorker,
+    codexAvailable,
+    hermesAgentAvailable,
+    hermesAgentAuthConfigured,
+    hermesAgentModelConfigured,
+  });
   const executorRows: ExecutorHealthRow[] = [
     { name: "Hermes", status: executorStatus(latestRun(runs, ["hermes"]), false, true), lastRun: iso(latestRun(runs, ["hermes"])?.createdAt), lastError: latestRun(runs, ["hermes"])?.status === "failed" ? latestRun(runs, ["hermes"])?.outputSummary ?? null : null },
     { name: "Builder", status: executorStatus(latestRun(runs, ["local_build", "hermes-local-builder"]), busyExecutors.has("hermes-local-builder"), true), lastRun: iso(latestRun(runs, ["local_build", "hermes-local-builder"])?.createdAt), lastError: latestRun(runs, ["local_build", "hermes-local-builder"])?.status === "failed" ? latestRun(runs, ["local_build", "hermes-local-builder"])?.outputSummary ?? null : null },
@@ -669,7 +760,7 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
       lastError: latestLocalWorker?.lastHermesAgentError ?? (latestLocalWorker && !hermesAgentReady ? "Hermes Agent needs Nous OAuth and a selected model/provider" : null),
       machineName: latestLocalWorker?.machineName ?? null,
       capabilities: latestLocalWorker ? [
-        `Executable ${latestLocalWorker.hermesAgentPath ?? "missing"}`,
+        `Executable ${safePathLabel(latestLocalWorker.hermesAgentPath) ?? "missing"}`,
         `Version ${latestLocalWorker.hermesAgentVersion ?? "unknown"}`,
         `Nous OAuth ${hermesAgentAuthConfigured ? "configured" : "missing"}`,
         `Model/provider ${hermesAgentModelConfigured ? "selected" : "missing"}`,
@@ -748,6 +839,7 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
     accounts: [...accountRows, calendarRow, telegramRow, githubRow, jobTrackerRow],
     scheduledJobs,
     executors: executorRows,
+    hermesNousRuntime,
     notifications: notificationRows,
     apiProviders,
     logs: healthLogs,

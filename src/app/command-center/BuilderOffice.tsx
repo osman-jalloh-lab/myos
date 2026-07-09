@@ -54,7 +54,21 @@ type RootInfo = { root: string; exists: boolean; projectCount: number; warning: 
 type CodexStatus = { installed: boolean; available: boolean; version: string | null; message: string };
 type ProviderStatus = { provider: string; configured: boolean; status: "working" | "missing" | "invalid" | "error" | "configured_untested"; safeError: string | null };
 type ExecutorStatus = { name: string; status: "Ready" | "Online" | "Offline" | "Stale" | "Busy" | "Unknown"; lastError: string | null };
-type BuilderHealth = { apiProviders: ProviderStatus[]; executors: ExecutorStatus[] };
+type HermesNousRuntime = {
+  installed: boolean;
+  installPath: string | null;
+  version: string | null;
+  authState: "configured" | "missing" | "unknown";
+  selectedModelProvider: string;
+  workerState: "online" | "offline" | "stale" | "busy" | "unknown";
+  lastSuccessfulRun: string | null;
+  lastFailure: string | null;
+  currentActiveRun: string | null;
+  supportedExecutionProfiles: string[];
+  codexFallbackAvailable: boolean;
+  diagnostic: string;
+};
+type BuilderHealth = { apiProviders: ProviderStatus[]; executors: ExecutorStatus[]; hermesNousRuntime?: HermesNousRuntime };
 
 const card: React.CSSProperties = { background: "rgba(26,35,54,.85)", border: "1px solid #28324A", borderRadius: 16, padding: "20px 24px", backdropFilter: "blur(12px)" };
 
@@ -143,6 +157,56 @@ function localDevServerStatus(project: Project): string {
 function manualDevCommand(folder?: string | null): string | null {
   if (!folder) return null;
   return `cd "${folder}"\nnpm run dev`;
+}
+
+function HermesNousRuntimeCard({ runtime }: { runtime?: HermesNousRuntime }) {
+  const [copied, setCopied] = useState(false);
+  if (!runtime) {
+    return (
+      <div style={card}>
+        <div style={{ color: "#F97316", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Hermes Nous Runtime</div>
+        <div style={{ color: "#4B5563", fontSize: 12 }}>Runtime heartbeat not loaded yet.</div>
+      </div>
+    );
+  }
+  const statusColor = runtime.workerState === "online" || runtime.workerState === "busy" ? "#34D399" : runtime.workerState === "stale" ? "#FBBF24" : "#F87171";
+  const copy = async () => {
+    await navigator.clipboard.writeText(runtime.diagnostic);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  const rows = [
+    ["Installed", runtime.installed ? "yes" : "missing"],
+    ["Path", runtime.installPath ?? "missing"],
+    ["Version", runtime.version ?? "unknown"],
+    ["Nous auth", runtime.authState],
+    ["Model/provider", runtime.selectedModelProvider],
+    ["Worker", runtime.workerState],
+    ["Last run", runtime.lastSuccessfulRun ? formatDate(runtime.lastSuccessfulRun) ?? runtime.lastSuccessfulRun : "none"],
+    ["Last failure", runtime.lastFailure ?? "none"],
+    ["Active run", runtime.currentActiveRun ?? "none"],
+    ["Profiles", runtime.supportedExecutionProfiles.join(", ") || "none"],
+    ["Codex fallback", runtime.codexFallbackAvailable ? "available" : "unavailable"],
+  ];
+  return (
+    <div style={card}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start", marginBottom: 12 }}>
+        <div>
+          <div style={{ color: "#F97316", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase" }}>Hermes Nous Runtime</div>
+          <div style={{ color: "#647089", fontSize: 11, marginTop: 3 }}>Read-only worker heartbeat. Auth stays local.</div>
+        </div>
+        <span style={{ ...badge(runtime.workerState), color: statusColor, borderColor: `${statusColor}45`, background: `${statusColor}18` }}>{runtime.workerState}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7, color: "#94A3B8", fontSize: 12 }}>
+        {rows.map(([label, value]) => (
+          <span key={label} style={{ overflowWrap: "anywhere" }}>{label}: <strong style={{ color: "#D8DEEB" }}>{value}</strong></span>
+        ))}
+      </div>
+      <button type="button" onClick={() => void copy()} style={{ marginTop: 12, color: "#FDBA74", background: "rgba(249,115,22,.12)", border: "1px solid rgba(249,115,22,.4)", borderRadius: 8, padding: "8px 10px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+        {copied ? "Copied" : "Copy Setup Diagnostic"}
+      </button>
+    </div>
+  );
 }
 
 function LocalPreviewPanel({ project }: { project: Project }) {
@@ -518,6 +582,7 @@ export default function BuilderOffice() {
             <div style={{ color: "#4B5563", fontSize: 12 }}>No research brief yet.</div>
           )}
         </div>
+        <HermesNousRuntimeCard runtime={health?.hermesNousRuntime} />
         <div style={card}>
           <div style={{ color: "#38BDF8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Codex CLI executor</div>
           {codexStatus ? (

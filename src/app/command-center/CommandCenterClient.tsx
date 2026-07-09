@@ -310,6 +310,20 @@ interface HealthCenterData {
   accounts: Array<{ name: string; connected: boolean; email?: string | null; label?: string | null; gmailScope?: boolean; calendarScope?: boolean; tokenExpiresAt?: string | null; lastSuccessfulSync: string | null; lastError: string | null; reconnectRequired: boolean; warnings: string[]; score: number }>;
   scheduledJobs: Array<{ name: string; key: string; enabled: boolean; lastRun: string | null; nextRun: string | null; lastResult: string | null; runtime: string | null; successCount: number; failureCount: number; status: "Healthy" | "Delayed" | "Failed" | "Never Ran" | "Disabled" }>;
   executors: Array<{ name: string; status: "Ready" | "Online" | "Offline" | "Stale" | "Busy" | "Unknown"; lastRun: string | null; lastError: string | null; workerId?: string | null; machineName?: string | null; rootPath?: string | null; nodeVersion?: string | null; npmVersion?: string | null; gitAvailable?: boolean | null; codexAvailable?: boolean | null; currentTask?: string | null; workerApiTarget?: string | null; lastFetchError?: string | null; capabilities?: string[] }>;
+  hermesNousRuntime?: {
+    installed: boolean;
+    installPath: string | null;
+    version: string | null;
+    authState: "configured" | "missing" | "unknown";
+    selectedModelProvider: string;
+    workerState: "online" | "offline" | "stale" | "busy" | "unknown";
+    lastSuccessfulRun: string | null;
+    lastFailure: string | null;
+    currentActiveRun: string | null;
+    supportedExecutionProfiles: string[];
+    codexFallbackAvailable: boolean;
+    diagnostic: string;
+  };
   notifications: Array<{ name: string; lastSent: string | null; lastFailed: string | null; pendingNotifications: number; status: HealthSeverity }>;
   apiProviders: Array<{
     provider: string;
@@ -2119,6 +2133,61 @@ function BuildsPanel({ builds }: { builds: Build[] }) {
 
 // ── Logs panel ────────────────────────────────────────────────────────────────
 
+function HermesNousRuntimeSection({ runtime }: { runtime: NonNullable<HealthCenterData["hermesNousRuntime"]> | undefined }) {
+  const [copied, setCopied] = useState(false);
+  if (!runtime) {
+    return (
+      <div style={cardStyle}>
+        <div style={{ color: "#F97316", fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 }}>Hermes Nous Runtime</div>
+        <div style={{ color: "#647089", fontSize: 13 }}>No worker heartbeat has reported Hermes Nous runtime data yet.</div>
+      </div>
+    );
+  }
+  const statusColorValue = runtime.workerState === "online" || runtime.workerState === "busy" ? "#34D399" : runtime.workerState === "stale" ? "#FBBF24" : "#F87171";
+  const copyDiagnostic = async () => {
+    await navigator.clipboard.writeText(runtime.diagnostic);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  const rows: Array<[string, string | null]> = [
+    ["Installed", runtime.installed ? "Installed" : "Missing"],
+    ["Install path", runtime.installPath ?? "missing"],
+    ["Version", runtime.version ?? "unknown"],
+    ["Nous auth", runtime.authState],
+    ["Selected model/provider", runtime.selectedModelProvider],
+    ["Worker state", runtime.workerState],
+    ["Last successful run", runtime.lastSuccessfulRun ? timeAgo(runtime.lastSuccessfulRun) : "none"],
+    ["Last failure", runtime.lastFailure ?? "none"],
+    ["Current active run", runtime.currentActiveRun ?? "none"],
+    ["Execution profiles", runtime.supportedExecutionProfiles.join(", ") || "none"],
+    ["Codex fallback", runtime.codexFallbackAvailable ? "available" : "unavailable"],
+  ];
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 14 }}>
+        <div>
+          <div style={{ color: "#F97316", fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>Hermes Nous Runtime</div>
+          <div style={{ color: "#647089", fontSize: 11, marginTop: 3 }}>Safe worker heartbeat view. No browser-side auth action runs here.</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <span style={badgeStyle(statusColorValue)}>{runtime.workerState}</span>
+          <button type="button" onClick={() => void copyDiagnostic()} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(249,115,22,0.42)", background: "rgba(249,115,22,0.12)", color: "#FDBA74", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>
+            {copied ? "Copied" : "Copy Setup Diagnostic"}
+          </button>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 8 }}>
+        {rows.map(([label, value]) => (
+          <div key={label} style={{ padding: "9px 10px", borderRadius: 8, border: "1px solid rgba(40,50,74,0.7)", background: "rgba(11,16,32,0.28)", minWidth: 0 }}>
+            <div style={{ color: "#647089", fontSize: 10, fontWeight: 800, textTransform: "uppercase" }}>{label}</div>
+            <div style={{ color: "#D8DEEB", fontSize: 12, marginTop: 4, overflowWrap: "anywhere" }}>{value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function HealthCenterPanel({
   data,
   busyAction,
@@ -2207,6 +2276,8 @@ function HealthCenterPanel({
           {!(data.apiProviders ?? []).length && <div style={{ color: "#4B5563", fontSize: 13 }}>API provider health has not been loaded yet.</div>}
         </div>
       </div>
+
+      <HermesNousRuntimeSection runtime={data.hermesNousRuntime} />
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 20 }}>
         <div style={cardStyle}>
