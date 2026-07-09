@@ -14,6 +14,7 @@ import {
   skillInstructionBlock,
   type SkillResolution,
 } from "@/lib/skills/routing";
+import { retrieveMemoryForPrompt, type MemoryRetrievalResult } from "@/lib/memory-center";
 
 export type ChatChannel = "dashboard" | "telegram";
 
@@ -42,6 +43,21 @@ function toView(row: {
     targetAgent: row.targetAgent,
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+function memoryRetrievalBlock(result: MemoryRetrievalResult | null): string | null {
+  if (!result) return null;
+  const lines: string[] = [];
+  if (result.confirmedFacts.length > 0) {
+    lines.push("RETRIEVED CONFIRMED MEMORY");
+    lines.push(...result.confirmedFacts.map((item) => `- ${item.fact}${item.source ? ` (source: ${item.source}, confidence: ${item.confidence}%)` : ` (confidence: ${item.confidence}%)`}`));
+  }
+  if (result.projectDecisions.length > 0) {
+    lines.push("RETRIEVED PROJECT DECISIONS");
+    lines.push(...result.projectDecisions.map((item) => `- ${item.projectName}: ${item.decision.slice(0, 260)} (source: ${item.source}, confidence: ${item.confidence}%)`));
+  }
+  if (result.redactedCount > 0) lines.push(`Sensitive memory redactions applied: ${result.redactedCount}.`);
+  return lines.length ? lines.join("\n") : null;
 }
 
 /**
@@ -132,8 +148,42 @@ export async function sendMessage(
     skills: [],
     consideredSkillCount: 0,
   }));
+  const run = await createExecutionRun({
+    userId,
+    projectId,
+    executor: "internal",
+    currentPhase: "planning",
+    currentActivity: "Retrieving relevant memory and project decisions.",
+  }).catch(() => null);
+  const memoryRetrieval = await retrieveMemoryForPrompt({
+    userId,
+    message: routingText,
+    agentName: skillResolution.agentName,
+    taskType: skillResolution.taskType,
+    projectId,
+    runId: run?.id ?? null,
+    maxFacts: 6,
+  }).catch((): MemoryRetrievalResult | null => null);
+  if (run) {
+    await appendExecutionEvent(run.id, {
+      phase: "planning",
+      source: "web",
+      severity: "info",
+      message: memoryRetrieval
+        ? `Memory retrieved: ${memoryRetrieval.confirmedFacts.length} confirmed facts, ${memoryRetrieval.projectDecisions.length} project decisions.`
+        : "Memory retrieved: unavailable; normal routing continued.",
+      safeDetails: {
+        confirmedFacts: memoryRetrieval?.confirmedFacts ?? [],
+        projectDecisions: memoryRetrieval?.projectDecisions ?? [],
+        redactedCount: memoryRetrieval?.redactedCount ?? 0,
+      },
+      meaningful: true,
+    });
+  }
+  const memoryBlock = memoryRetrievalBlock(memoryRetrieval);
   const skillBlock = skillInstructionBlock(skillResolution);
-  const routedWithSkills = skillBlock ? `${skillBlock}\n\nUSER MESSAGE\n${routingText}` : routingText;
+  const preface = [memoryBlock, skillBlock].filter(Boolean).join("\n\n");
+  const routedWithSkills = preface ? `${preface}\n\nUSER MESSAGE\n${routingText}` : routingText;
 
   let route: RouteResult;
   if (normalizedTargetAgent === "mercury") {
@@ -150,13 +200,7 @@ export async function sendMessage(
   const skillsUsedLine = formatSkillsUsed(skillResolution);
   route.reply = `${route.reply}\n\n${skillsUsedLine}`;
   await recordSkillUsageTelemetry({ userId, resolution: skillResolution, modelCallAvoided: false }).catch(() => {});
-  await createExecutionRun({
-    userId,
-    projectId,
-    executor: "internal",
-    currentPhase: "planning",
-    currentActivity: skillsUsedLine,
-  }).then(async (run) => {
+  if (run) {
     await appendExecutionEvent(run.id, {
       phase: "completed",
       source: "web",
@@ -176,7 +220,7 @@ export async function sendMessage(
       meaningful: true,
       status: "completed",
     });
-  }).catch(() => {});
+  }
 
   // Instant feedback when a fact auto-saved, so Osman never wonders whether it landed.
   const memoryTag = rememberedTag(remembered);

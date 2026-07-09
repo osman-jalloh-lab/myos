@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, type CSSProperties } from "react";
 import BuilderOffice from "./BuilderOffice";
 import LiveBuildConsole from "./LiveBuildConsole";
 import AgentRoster from "@/components/AgentRoster";
@@ -192,6 +192,11 @@ interface ChatQuickAction {
 }
 
 interface MemoryOfficeData {
+  confirmedFacts?: Array<{ id: string; fact: string; source: string | null; date: string; confidence: number; whereUsed: string[]; pinned: boolean; archived: boolean }>;
+  inferredFacts?: Array<{ id: string; fact: string; source: string | null; date: string; confidence: number; whereUsed: string[]; status: string }>;
+  projectDecisionItems?: Array<{ id: string; projectName: string; status: string; decision: string; source: string; date: string; confidence: number; whereUsed: string[] }>;
+  operationalLessons?: Array<{ id: string; lesson: string; source: string; date: string; confidence: number; whereUsed: string[] }>;
+  recentMemoryUse?: Array<{ id: string; runId: string | null; agentName: string | null; taskType: string | null; query: string; retrieved: Array<{ id: string; fact: string; source: string | null; confidence: number }>; createdAt: string }>;
   memories: Array<{ id: string; fact: string; source: string | null; createdAt: string; approvedAt: string | null }>;
   projectDecisions: Array<{ id: string; projectName: string; status: string; decision: string; updatedAt: string }>;
   buildLessons: Array<{ id: string; status: string; summary: string; createdAt: string }>;
@@ -1484,12 +1489,16 @@ function MemoryOfficePanel({
   data,
   debug,
   onCreateTestMemory,
+  onMemoryAction,
 }: {
   data: MemoryOfficeData | null;
   debug: MemoryContextDebugData | null;
   onCreateTestMemory: () => Promise<void>;
+  onMemoryAction: (body: Record<string, unknown>) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftFact, setDraftFact] = useState("");
   const create = async () => {
     setBusy(true);
     try {
@@ -1499,7 +1508,28 @@ function MemoryOfficePanel({
     }
   };
 
-  const memoryCount = data?.memories.length ?? 0;
+  const confirmed = data?.confirmedFacts ?? (data?.memories ?? []).map((m) => ({
+    id: m.id,
+    fact: m.fact,
+    source: m.source,
+    date: m.approvedAt ?? m.createdAt,
+    confidence: 100,
+    whereUsed: [],
+    pinned: false,
+    archived: false,
+  }));
+  const inferred = data?.inferredFacts ?? [];
+  const memoryCount = confirmed.length;
+  const action = async (body: Record<string, unknown>) => {
+    setBusy(true);
+    try {
+      await onMemoryAction(body);
+      setEditingId(null);
+      setDraftFact("");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={cardStyle}>
@@ -1516,12 +1546,53 @@ function MemoryOfficePanel({
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 16 }}>
-        <MemoryList title="Recent Memories Saved" empty="No memories saved yet" items={(data?.memories ?? []).map((m) => ({ key: m.id, head: m.fact, meta: `${m.source ?? "memory"} / ${timeAgo(m.createdAt)}` }))} />
-        <MemoryList title="Project Decisions" empty="No project decisions yet" items={(data?.projectDecisions ?? []).map((p) => ({ key: p.id, head: p.projectName, body: p.decision, meta: `${p.status} / ${p.updatedAt ? timeAgo(p.updatedAt) : "recent"}` }))} />
-        <MemoryList title="Build Lessons Learned" empty="No build lessons yet" items={(data?.buildLessons ?? []).slice(0, 8).map((b) => ({ key: b.id, head: b.summary || "Builder run", meta: `${b.status} / ${b.createdAt ? timeAgo(b.createdAt) : "recent"}` }))} />
+        <div style={cardStyle}>
+          <div style={{ color: "#2DD4BF", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 12 }}>Confirmed Facts</div>
+          {confirmed.length === 0 ? <div style={{ color: "#4B5563", fontSize: 13 }}>No confirmed facts saved yet.</div> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {confirmed.slice(0, 18).map((m) => (
+                <div key={m.id} style={{ padding: "10px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid rgba(40,50,74,0.7)", borderRadius: 8 }}>
+                  {editingId === m.id ? (
+                    <textarea value={draftFact} onChange={(e) => setDraftFact(e.target.value)} style={{ width: "100%", minHeight: 72, background: "#0B1020", color: "#F1F4FB", border: "1px solid rgba(148,163,184,0.25)", borderRadius: 6, padding: 8 }} />
+                  ) : (
+                    <div style={{ color: "#F1F4FB", fontSize: 13, fontWeight: 650 }}>{m.pinned ? "Pinned: " : ""}{m.fact}</div>
+                  )}
+                  <div style={{ color: "#647089", fontSize: 11, marginTop: 6 }}>Source: {m.source ?? "memory"} / Date: {timeAgo(m.date)} / Confidence: {m.confidence}% / Used: {m.whereUsed.length ? m.whereUsed.join(", ") : "not used yet"}</div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    {editingId === m.id ? (
+                      <button onClick={() => void action({ action: "editMemory", memoryId: m.id, fact: draftFact })} disabled={busy} style={miniButtonStyle("#34D399")}>Save</button>
+                    ) : (
+                      <button onClick={() => { setEditingId(m.id); setDraftFact(m.fact); }} disabled={busy} style={miniButtonStyle("#94A3B8")}>Edit</button>
+                    )}
+                    <button onClick={() => void action({ action: "pinMemory", memoryId: m.id, pinned: !m.pinned })} disabled={busy} style={miniButtonStyle("#FBBF24")}>{m.pinned ? "Unpin" : "Pin"}</button>
+                    <button onClick={() => void action({ action: "archiveMemory", memoryId: m.id, archived: !m.archived })} disabled={busy} style={miniButtonStyle("#A78BFA")}>{m.archived ? "Unarchive" : "Archive"}</button>
+                    <button onClick={() => void action({ action: "deleteMemory", memoryId: m.id })} disabled={busy} style={miniButtonStyle("#F87171")}>Delete</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={cardStyle}>
+          <div style={{ color: "#FBBF24", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 12 }}>Inferred Facts Awaiting Review</div>
+          {inferred.length === 0 ? <div style={{ color: "#4B5563", fontSize: 13 }}>No inferred facts waiting for approval.</div> : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {inferred.slice(0, 12).map((m) => (
+                <div key={m.id} style={{ padding: "10px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid rgba(40,50,74,0.7)", borderRadius: 8 }}>
+                  <div style={{ color: "#F1F4FB", fontSize: 13, fontWeight: 650 }}>{m.fact}</div>
+                  <div style={{ color: "#647089", fontSize: 11, marginTop: 6 }}>Source: {m.source ?? "memory-suggest"} / Date: {timeAgo(m.date)} / Confidence: {m.confidence}% / Used: {m.whereUsed.length ? m.whereUsed.join(", ") : "not used yet"}</div>
+                  <button onClick={() => void action({ action: "approveSuggestion", approvalId: m.id })} disabled={busy} style={{ ...miniButtonStyle("#34D399"), marginTop: 8 }}>Approve</button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <MemoryList title="Project Decisions" empty="No project decisions yet" items={(data?.projectDecisionItems ?? data?.projectDecisions ?? []).map((p) => ({ key: p.id, head: p.projectName, body: p.decision, meta: `${"source" in p ? p.source : p.status} / ${timeAgo("date" in p ? p.date : p.updatedAt)} / ${"confidence" in p ? p.confidence : 100}%` }))} />
+        <MemoryList title="Operational Lessons" empty="No operational lessons yet" items={(data?.operationalLessons ?? data?.buildLessons ?? []).slice(0, 12).map((b) => ({ key: b.id, head: "lesson" in b ? b.lesson.slice(0, 120) : b.summary || "Builder run", meta: `${"source" in b ? b.source : b.status} / ${timeAgo("date" in b ? b.date : b.createdAt)} / ${"confidence" in b ? b.confidence : 75}%` }))} />
+        <MemoryList title="Recent Memory Use" empty="No memory retrievals logged yet" items={(data?.recentMemoryUse ?? []).map((u) => ({ key: u.id, head: `${u.agentName ?? "agent"}${u.taskType ? ` / ${u.taskType}` : ""}`, body: `${u.retrieved.length} retrieved\n${u.retrieved.map((m) => `- ${m.fact}`).join("\n")}`, meta: `${u.runId ? `run ${u.runId.slice(0, 8)} / ` : ""}${timeAgo(u.createdAt)}` }))} />
         <MemoryList title="Research Briefs" empty="No research briefs yet" items={(data?.researchBriefs ?? []).map((b) => ({ key: b.id, head: b.projectName, body: b.brief.slice(0, 260), meta: b.updatedAt ? timeAgo(b.updatedAt) : "recent" }))} />
-        <MemoryList title="Failed Build Fixes" empty="No failed build fixes yet" items={(data?.failedBuildFixes ?? []).map((f) => ({ key: f.id, head: f.projectName, body: f.error || f.log.slice(0, 240), meta: f.updatedAt ? timeAgo(f.updatedAt) : "recent" }))} />
-        <MemoryList title="User Preferences" empty="No user preferences saved yet" items={(data?.userPreferences ?? []).map((m) => ({ key: m.id, head: m.fact, meta: `${m.source ?? "memory"} / ${timeAgo(m.createdAt)}` }))} />
       </div>
 
       {memoryCount === 0 && (
@@ -1923,6 +1994,19 @@ function SkillsPanel({
       </div>
     </div>
   );
+}
+
+function miniButtonStyle(color: string): CSSProperties {
+  return {
+    padding: "6px 8px",
+    borderRadius: 6,
+    background: `${color}1F`,
+    border: `1px solid ${color}66`,
+    color,
+    fontSize: 11,
+    fontWeight: 800,
+    cursor: "pointer",
+  };
 }
 
 function SkillSummaryList({ title, skills, empty }: { title: string; skills: SkillView[]; empty: string }) {
@@ -2569,6 +2653,19 @@ export default function CommandCenterClient() {
     await fetchAll();
   };
 
+  const memoryCenterAction = async (body: Record<string, unknown>) => {
+    const res = await fetch("/api/command-center/memory-office", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null) as { error?: string } | null;
+      throw new Error(data?.error ?? "Memory action failed.");
+    }
+    await fetchAll();
+  };
+
   const scoutRepo = async (repoUrl: string) => {
     const res = await fetch("/api/command-center/skills", {
       method: "POST",
@@ -2743,7 +2840,7 @@ export default function CommandCenterClient() {
                 )}
               </div>
             )}
-            {tab === "memory" && <MemoryOfficePanel data={memoryOffice} debug={memoryContextDebug} onCreateTestMemory={createTestMemory} />}
+            {tab === "memory" && <MemoryOfficePanel data={memoryOffice} debug={memoryContextDebug} onCreateTestMemory={createTestMemory} onMemoryAction={memoryCenterAction} />}
             {tab === "skills" && (
               <SkillsPanel
                 skills={skills}

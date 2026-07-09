@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { createApproval } from "@/lib/approvals";
 
 const SECRET_VALUE_RE = /(api[_\s-]?key|token|secret|password|credential)\s*(?:is|=|:)\s*["']?[A-Za-z0-9_\-./+=]{8,}["']?/gi;
 
@@ -58,6 +59,41 @@ export async function rememberUserFact(userId: string, fact: string, source = "a
       source,
       approvedAt: new Date(),
     },
+  });
+  return true;
+}
+
+async function proposeInferredUserFact(userId: string, fact: string, source = "auto-memory:llm-inferred"): Promise<boolean> {
+  const cleaned = cleanFact(fact);
+  if (!cleaned) return false;
+  const canonical = canonicalFact(cleaned);
+  const [confirmed, pending] = await Promise.all([
+    prisma.memory.findMany({
+      where: { userId, approvedAt: { not: null } },
+      select: { id: true, fact: true },
+      take: 300,
+    }),
+    prisma.approvalAction.findMany({
+      where: { userId, actionType: "save_memory", status: "pending" },
+      select: { payload: true },
+      take: 300,
+    }),
+  ]);
+  if (confirmed.some((memory) => canonicalFact(memory.fact) === canonical)) return false;
+  if (pending.some((approval) => {
+    try {
+      const payload = JSON.parse(approval.payload) as { fact?: string };
+      return payload.fact ? canonicalFact(payload.fact) === canonical : false;
+    } catch {
+      return false;
+    }
+  })) return false;
+
+  await createApproval(userId, "save_memory", {
+    fact: cleaned,
+    source,
+    confidence: 70,
+    inferred: true,
   });
   return true;
 }
@@ -122,7 +158,7 @@ export async function autoCaptureUserMemory(userId: string, message: string, sou
   if (saved.length === 0 && facts.length === 0 && worthClassifying(message)) {
     const llmFacts = await extractFactsWithLlm(userId, message);
     for (const fact of llmFacts) {
-      if (await rememberUserFact(userId, fact, "auto-memory:llm-extracted")) saved.push(fact);
+      if (await proposeInferredUserFact(userId, fact)) saved.push(`Suggested memory: ${fact}`);
     }
   }
   return saved;
@@ -150,5 +186,8 @@ export async function logAutoMemoryFailure(userId: string, message: string, erro
 /** Chat-reply tag so Osman gets instant feedback that a fact landed. */
 export function rememberedTag(saved: string[]): string | null {
   if (!saved.length) return null;
+  if (saved.every((fact) => fact.startsWith("Suggested memory:"))) {
+    return `Memory suggestions queued for approval: ${saved.map((fact) => fact.replace(/^Suggested memory:\s*/, "")).join(" / ")}`;
+  }
   return `📌 Remembered: ${saved.join(" · ")}`;
 }
