@@ -82,4 +82,41 @@ describe("runSkillScout", () => {
 
     expect(fetch).not.toHaveBeenCalled();
   });
+
+  it("reports invalid GitHub tokens distinctly from missing repositories", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({ message: "Bad credentials" }),
+      headers: new Headers(),
+    }) as unknown as typeof fetch;
+
+    await expect(runSkillScout("user_1", "https://github.com/wshobson/agents")).rejects.toThrow("token is invalid or expired");
+  });
+
+  it("reports authenticated 403s without mislabeling them as token-missing", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: async () => ({ message: "Resource protected by organization SAML enforcement" }),
+      headers: new Headers({
+        "x-ratelimit-remaining": "42",
+        "x-oauth-scopes": "repo, user",
+        "x-accepted-oauth-scopes": "repo",
+      }),
+    }) as unknown as typeof fetch;
+
+    await expect(runSkillScout("user_1", "https://github.com/wshobson/agents")).rejects.toThrow("authenticated but blocked");
+  });
+
+  it("still reports true GitHub rate limits clearly", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      json: async () => ({ message: "API rate limit exceeded" }),
+      headers: new Headers({ "x-ratelimit-remaining": "0" }),
+    }) as unknown as typeof fetch;
+
+    await expect(runSkillScout("user_1", "https://github.com/wshobson/agents")).rejects.toThrow("rate limit exceeded");
+  });
 });

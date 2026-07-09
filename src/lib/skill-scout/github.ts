@@ -220,9 +220,31 @@ function githubHeaders(): Record<string, string> {
 async function githubJson<T>(url: string): Promise<T> {
   const res = await fetch(url, { headers: githubHeaders() });
   if (!res.ok) {
-    if (res.status === 404) throw new Error("Repository was not found on GitHub.");
-    if (res.status === 403) throw new Error("GitHub rate-limited this request. Set a clean GITHUB_TOKEN to increase limits.");
-    throw new Error(`GitHub API returned ${res.status}.`);
+    let message = "";
+    try {
+      const body = await res.json() as { message?: unknown; documentation_url?: unknown };
+      message = typeof body.message === "string" ? body.message : "";
+    } catch {
+      message = await res.text().catch(() => "");
+    }
+    const safeMessage = message.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]").slice(0, 240);
+    if (res.status === 401) throw new Error(`GitHub API returned 401: token is invalid or expired.${safeMessage ? ` ${safeMessage}` : ""}`);
+    if (res.status === 404) throw new Error("Repository was not found on GitHub, or the connected token cannot access it.");
+    if (res.status === 403) {
+      const remaining = res.headers.get("x-ratelimit-remaining");
+      const scopes = res.headers.get("x-oauth-scopes");
+      const accepted = res.headers.get("x-accepted-oauth-scopes");
+      if (remaining === "0" || /rate limit/i.test(safeMessage)) {
+        throw new Error(`GitHub API returned 403: rate limit exceeded.${safeMessage ? ` ${safeMessage}` : ""}`);
+      }
+      throw new Error([
+        `GitHub API returned 403: token is authenticated but blocked for this request.`,
+        accepted ? `Accepted scopes: ${accepted}.` : null,
+        scopes ? `Token scopes seen by GitHub: ${scopes}.` : null,
+        safeMessage || null,
+      ].filter(Boolean).join(" "));
+    }
+    throw new Error(`GitHub API returned ${res.status}.${safeMessage ? ` ${safeMessage}` : ""}`);
   }
   return res.json() as Promise<T>;
 }
