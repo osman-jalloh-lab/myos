@@ -92,13 +92,15 @@ const EVENT_KEYWORDS = [
   "interview", "meeting", "phone screen", "video interview", "call", "appointment",
   "calendar invite", "scheduled for", "confirmed for", "reschedule", "schedule",
   "availability", "deadline", "due date", "due by", "starts at", "ends at",
-  "zoom", "google meet", "teams meeting", "onsite", "on-site",
+  "zoom", "google meet", "teams meeting", "onsite", "on-site", "orientation",
+  "session", "held at", "will be held",
 ];
 
 const TASK_KEYWORDS = [
   "please respond", "please reply", "reply", "respond", "follow up", "following up",
   "action required", "complete", "submit", "review", "send", "provide", "upload",
   "confirm", "still interested", "next steps", "fill out", "sign", "approve",
+  "update",
 ];
 
 const MONTH_PATTERN = "\\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?\\s+\\d{1,2}(?:,\\s*\\d{4})?";
@@ -130,7 +132,8 @@ function findFirstMatch(text: string, patterns: string[]): string | undefined {
 function inferDateText(text: string): string | undefined {
   return findFirstMatch(text, [
     `${MONTH_PATTERN}(?:\\s+(?:at|@)\\s+${TIME_PATTERN})?`,
-    `${WEEKDAY_PATTERN}(?:,?\\s+${MONTH_PATTERN})?(?:\\s+(?:at|@)\\s+${TIME_PATTERN})?`,
+    `${WEEKDAY_PATTERN},?\\s+(?:${MONTH_PATTERN}|${NUMERIC_DATE_PATTERN})(?:\\s+(?:at|@)?\\s*${TIME_PATTERN})?`,
+    `${WEEKDAY_PATTERN}(?:\\s+(?:at|@)?\\s*${TIME_PATTERN})`,
     `${NUMERIC_DATE_PATTERN}(?:\\s+(?:at|@)\\s+${TIME_PATTERN})?`,
     `\\b(?:today|tomorrow)\\b(?:\\s+(?:at|@)\\s+${TIME_PATTERN})?`,
     TIME_PATTERN,
@@ -166,8 +169,20 @@ export function classifyEmailFollowUp(
   const eventHits = EVENT_KEYWORDS.filter((kw) => lower.includes(kw));
   const taskHits = TASK_KEYWORDS.filter((kw) => lower.includes(kw));
   const hasDate = Boolean(inferDateText(haystack));
+  const explicitUpdateTask = /\bplease\s+(?:still\s+)?update\b/i.test(haystack);
 
-  if (eventHits.length > 0 && (hasDate || eventHits.some((kw) => kw.includes("interview") || kw.includes("meeting") || kw.includes("appointment") || kw.includes("deadline")))) {
+  if (taskHits.length > 0 && explicitUpdateTask) {
+    return {
+      kind: "task",
+      confidence: "high",
+      reason: `Task signal: ${taskHits.slice(0, 3).join(", ")}.`,
+      title: `Follow up: ${titleSubject}`,
+      dueAt: parseDueAt(haystack),
+      priority: lower.includes("urgent") || lower.includes("deadline") || lower.includes("action required") ? "high" : "medium",
+    };
+  }
+
+  if (eventHits.length > 0 && (hasDate || eventHits.some((kw) => kw.includes("interview") || kw.includes("appointment") || kw.includes("deadline")))) {
     const window = eventWindowFromText(haystack);
     return {
       kind: "event",
