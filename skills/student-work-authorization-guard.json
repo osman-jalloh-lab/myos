@@ -1,0 +1,25 @@
+{
+  "name": "student.work_authorization.guard",
+  "description": "Keeps job, internship, and HR advice aware of student work-authorization and timing constraints without legal advice or unapproved outreach.",
+  "category": "career",
+  "agent": "athena",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "Job, internship, onboarding, or HR text involving student work authorization or timing."
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.jobs.authorizationReview",
+    "risk": "external_write",
+    "requiresApproval": true,
+    "pipeline": ["internal.jobs.classify", "internal.hr.authorizationGuard", "approval.queue"]
+  },
+  "examples": [
+    "does this internship fit fall availability?",
+    "draft a work authorization clarification question",
+    "does this onboarding email need action?",
+    "is this full-time role risky for student constraints?"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "career.grc.risk_screener",
+  "description": "Screens GRC, risk, compliance, audit, SOC 2, NIST, controls, and security analyst roles against Osman's Security+/CySA+ background.",
+  "category": "career",
+  "agent": "athena",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "GRC, risk, compliance, audit, or security role text to evaluate."
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.jobs.score",
+    "risk": "read",
+    "requiresApproval": false,
+    "pipeline": ["internal.jobs.classify", "internal.jobs.score"]
+  },
+  "examples": [
+    "is this GRC analyst role a fit?",
+    "score this risk management job",
+    "does this compliance analyst role match Security+ and CySA+?",
+    "what resume angle should I use for this SOC 2 role?"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "it.helpdesk.trainer",
+  "description": "Coaches IT help desk troubleshooting, ticket notes, escalation summaries, and support interview practice.",
+  "category": "career",
+  "agent": "sophos",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "Help desk scenario, ticket, troubleshooting issue, or interview question."
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.skills.instructions",
+    "risk": "read",
+    "requiresApproval": false,
+    "pipeline": ["internal.skills.match", "internal.response.coach"]
+  },
+  "examples": [
+    "help me answer a help desk interview question",
+    "write a clean ticket note for this issue",
+    "how should I troubleshoot a login problem?",
+    "coach me through a tier 1 support scenario"
+  ]
+}

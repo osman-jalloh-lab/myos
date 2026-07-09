@@ -1,0 +1,25 @@
+{
+  "name": "job.application.ops",
+  "description": "Runs job-search operations for Athena: fit checks, ATS-aware resume/cover-letter drafting, app tracking, and approval-gated recruiter outreach.",
+  "category": "career",
+  "agent": "athena",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "Job listing, recruiter message, or application workflow request."
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.jobs.pipeline",
+    "risk": "external_write",
+    "requiresApproval": true,
+    "pipeline": ["internal.jobs.score", "internal.resume.generate", "internal.jobs.track", "approval.queue"]
+  },
+  "examples": [
+    "score this SOC analyst role",
+    "tailor my resume for this GRC analyst job",
+    "draft a follow-up to this recruiter",
+    "track this application as applied"
+  ]
+}

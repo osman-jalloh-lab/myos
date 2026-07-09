@@ -1,0 +1,25 @@
+{
+  "name": "personal.context.anchor",
+  "description": "Grounds agent responses in Osman's confirmed work, school, career, certification, and operating constraints without writing memory.",
+  "category": "personal-context",
+  "agent": "hermes",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "The user request that needs Osman's real context, constraints, or preferences applied."
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.context.ground",
+    "risk": "read",
+    "requiresApproval": false,
+    "pipeline": ["internal.memory.readConfirmed", "internal.context.apply"]
+  },
+  "examples": [
+    "use my background to decide if this job is worth applying to",
+    "draft this in my voice",
+    "what should I prioritize today?",
+    "does this email matter for me?"
+  ]
+}

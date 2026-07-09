@@ -1,0 +1,25 @@
+{
+  "name": "hr.i9.compliance",
+  "description": "Draft careful HR/I-9/E-Verify guidance and approval-gated email responses without giving legal advice or bypassing approvals.",
+  "category": "work",
+  "agent": "themis",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "HR, I-9, E-Verify, or work-authorization message to analyze or draft around."
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.email.draft",
+    "risk": "external_write",
+    "requiresApproval": true,
+    "pipeline": ["internal.email.classifyImportant", "internal.hr.i9Review", "approval.queue"]
+  },
+  "examples": [
+    "draft a response to this I-9 email",
+    "what should I do with this E-Verify notice?",
+    "turn this HR compliance email into next steps",
+    "does this work authorization message need action?"
+  ]
+}

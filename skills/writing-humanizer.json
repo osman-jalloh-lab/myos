@@ -1,0 +1,25 @@
+{
+  "name": "writing.humanizer",
+  "description": "Rewrites drafts so they sound clear, specific, and human while preserving facts and approval gates for outbound messages.",
+  "category": "communication",
+  "agent": "hermes",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "Draft text or writing request to humanize."
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.writing.rewrite",
+    "risk": "read",
+    "requiresApproval": false,
+    "pipeline": ["internal.skills.match", "internal.writing.rewrite"]
+  },
+  "examples": [
+    "make this sound human",
+    "rewrite this email in my voice",
+    "make this less robotic",
+    "tighten this recruiter message"
+  ]
+}
