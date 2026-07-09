@@ -144,7 +144,8 @@ function parseDueAt(text: string): string | undefined {
   const dateText = inferDateText(text);
   if (!dateText) return undefined;
   const parsed = new Date(dateText);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed.getTime() < Date.now() - 86_400_000 ? undefined : parsed.toISOString();
 }
 
 function eventWindowFromText(text: string): { start?: string; end?: string } {
