@@ -14,7 +14,7 @@
 
 import { prisma } from "@/lib/db";
 import { syncGmailInbox, fetchEmailBody, classify, getCorrespondentGraph, type EmailMessage, type EmailCategory } from "@/lib/gmail";
-import { classifyEmailRoute, routeToThemis, routeToAthena } from "@/lib/agentHandoff";
+import { classifyEmailRoute, routeActionEmailFollowUp, routeToThemis, routeToAthena } from "@/lib/agentHandoff";
 import { sendTelegramMessage } from "@/lib/telegram";
 
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
@@ -101,8 +101,13 @@ export async function GET(req: Request) {
         } else if (route === "recruiter" || route === "job_application") {
           const result = await routeToAthena(user.id, { ...email, body: body || undefined });
           draftNotes.push(`Athena drafted a reply to "${email.subject.slice(0, 60)}" (approval ${result.action.id.slice(0, 8)})`);
-        } else {
-          continue; // general action mail is listed in the digest but not auto-drafted
+        }
+        const followUp = await routeActionEmailFollowUp(user.id, { ...email, body: body || undefined });
+        if (followUp.action) {
+          const noun = followUp.classification.kind === "event" ? "calendar event" : "task";
+          draftNotes.push(`Iris drafted a ${noun} from "${email.subject.slice(0, 60)}" (approval ${followUp.action.id.slice(0, 8)})`);
+        } else if (route === "general") {
+          continue; // general action mail without a clear follow-up remains listed only
         }
         await prisma.agentRun.create({
           data: {

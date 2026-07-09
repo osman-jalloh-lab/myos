@@ -12,7 +12,7 @@
 import { prisma } from "@/lib/db";
 import { classify, fetchInboxMessages, fetchEmailBody, getCorrespondentGraph } from "@/lib/gmail";
 import { sendTelegramMessage } from "@/lib/telegram";
-import { classifyEmailRoute, routeToThemis, routeToAthena } from "@/lib/agentHandoff";
+import { classifyEmailRoute, routeActionEmailFollowUp, routeToThemis, routeToAthena } from "@/lib/agentHandoff";
 import type { InlineButton } from "@/lib/telegram";
 
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
@@ -121,6 +121,7 @@ export async function GET(req: Request) {
       // Route to the right agent and generate a draft if applicable
       let agentNote = "";
       let draftActionId: string | undefined;
+      let followUpActionId: string | undefined;
 
       if (route === "i9_compliance") {
         try {
@@ -141,6 +142,18 @@ export async function GET(req: Request) {
           console.error(`[email-watcher] Athena handoff failed for "${email.subject}":`, err);
           agentNote = "\nAthena handoff failed — see logs.";
         }
+      }
+
+      try {
+        const followUp = await routeActionEmailFollowUp(user.id, { ...email, body: body || undefined });
+        if (followUp.action) {
+          followUpActionId = followUp.action.id;
+          const noun = followUp.classification.kind === "event" ? "calendar event" : "task";
+          agentNote += `\nIris drafted a ${noun} for approval (approval ID: ${followUp.action.id.slice(0, 8)}).`;
+        }
+      } catch (err) {
+        console.error(`[email-watcher] follow-up handoff failed for "${email.subject}":`, err);
+        agentNote += "\nFollow-up draft failed — see logs.";
       }
 
       // Clean up sender display name
@@ -165,6 +178,8 @@ export async function GET(req: Request) {
         [
           draftActionId
             ? { text: "✅ Review Draft", callback_data: `approve ${draftActionId}`.slice(0, 64) }
+            : followUpActionId
+              ? { text: "✅ Review Follow-up", callback_data: `approve ${followUpActionId}`.slice(0, 64) }
             : { text: "✏️ Draft Reply", callback_data: draftCommand.slice(0, 64) },
           { text: "👁 Mark Read", callback_data: `mark as read: ${email.subject.slice(0, 30)}` },
         ],
@@ -176,7 +191,7 @@ export async function GET(req: Request) {
           data: {
             agentName: "email-watcher",
             inputSummary: `email=${email.id} route=${route} from=${email.from.slice(0, 60)}`,
-            outputSummary: `notified: ${email.subject.slice(0, 100)}${draftActionId ? ` | draft=${draftActionId.slice(0, 8)}` : ""}`,
+            outputSummary: `notified: ${email.subject.slice(0, 100)}${draftActionId ? ` | draft=${draftActionId.slice(0, 8)}` : ""}${followUpActionId ? ` | followup=${followUpActionId.slice(0, 8)}` : ""}`,
             status: "completed",
           },
         });

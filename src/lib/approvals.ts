@@ -178,6 +178,8 @@ async function executeIfPossible(row: {
       source?: string;
       sourceRef?: string;
       priority?: string;
+      assignedAgent?: string | null;
+      delegatedBy?: string | null;
     };
     await prisma.task.create({
       data: {
@@ -188,6 +190,8 @@ async function executeIfPossible(row: {
         source: payload.source,
         sourceRef: payload.sourceRef,
         priority: payload.priority ?? "medium",
+        assignedAgent: payload.assignedAgent ?? null,
+        delegatedBy: payload.delegatedBy ?? null,
       },
     });
   }
