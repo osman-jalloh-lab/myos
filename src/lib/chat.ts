@@ -4,6 +4,7 @@ import { handleMercuryRequest } from "@/agents/mercury";
 import { autoCaptureUserMemory, logAutoMemoryFailure, rememberedTag } from "@/lib/auto-memory";
 import { buildContextBlock, updateSessionAfterResponse } from "@/lib/memory-context";
 import { contextStateFromContextBlock, resolveMessageWithContext } from "@/lib/context-persistence";
+import { normalizeAgentKey } from "@/lib/agent-roster";
 
 export type ChatChannel = "dashboard" | "telegram";
 
@@ -81,8 +82,9 @@ export async function sendMessage(
   chatContext?: string
 ): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView; route: RouteResult }> {
   const contextChatId = `${channel}:shared:${userId}`;
+  const normalizedTargetAgent = targetAgent ? normalizeAgentKey(targetAgent) : null;
   const userRow = await prisma.chatMessage.create({
-    data: { userId, role: "user", content: text, channel, targetAgent },
+    data: { userId, role: "user", content: text, channel, targetAgent: normalizedTargetAgent },
   });
   const remembered = await autoCaptureUserMemory(userId, text).catch(async (error) => {
     await logAutoMemoryFailure(userId, text, error);
@@ -93,14 +95,14 @@ export async function sendMessage(
   const routingText = contextResolution.resolvedText;
 
   let route: RouteResult;
-  if (targetAgent === "mercury") {
+  if (normalizedTargetAgent === "mercury") {
     // Mercury handles external tool/API requests independently — it does not
     // go through Hermes routing, keeping the two agent graphs separate.
     const { reply, pendingApprovals } = await handleMercuryRequest(userId, routingText, channel);
     route = { reply, pendingApprovals };
   } else {
-    route = targetAgent
-      ? await routeToAgent(userId, targetAgent, routingText, channel, 0, resolvedContext || undefined)
+    route = normalizedTargetAgent
+      ? await routeToAgent(userId, normalizedTargetAgent, routingText, channel, 0, resolvedContext || undefined)
       : await routeMessage(userId, routingText, channel, resolvedContext || undefined);
   }
 
@@ -109,7 +111,7 @@ export async function sendMessage(
   if (memoryTag) route.reply = `${route.reply}\n\n${memoryTag}`;
 
   const replyRow = await prisma.chatMessage.create({
-    data: { userId, role: "assistant", content: route.reply, channel, targetAgent },
+    data: { userId, role: "assistant", content: route.reply, channel, targetAgent: normalizedTargetAgent },
   });
   await updateSessionAfterResponse(contextChatId, userId, text).catch(() => {});
 

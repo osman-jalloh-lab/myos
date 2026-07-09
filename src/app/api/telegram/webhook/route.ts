@@ -10,6 +10,7 @@ import {
   type TelegramUpdate,
 } from "@/lib/telegram";
 import type { RouteResult } from "@/agents/hermes";
+import { COMMAND_AGENT_PREFIXES } from "@/lib/agent-roster";
 
 // Bot command shortcuts — map Telegram slash commands to natural-language
 // queries so every command fans through the same routeMessage() intent router.
@@ -33,13 +34,11 @@ const BOT_COMMANDS: Record<string, string> = {
 
 // Agent shortcut prefixes: "/iris what's in my inbox today" → ask iris ...
 // "/mercury find me a flight to Atlanta" → Mercury external tool agent
-const AGENT_PREFIXES = ["iris", "kairos", "athena", "plutus", "argus", "mnemosyne", "sophos", "themis", "tyche", "mercury", "prometheus"];
-
 function resolveCommandText(raw: string): { text: string; targetAgent: string | null } {
   const lower = raw.toLowerCase().trim();
 
   // /agent message → route directly to that agent
-  for (const agent of AGENT_PREFIXES) {
+  for (const agent of COMMAND_AGENT_PREFIXES) {
     if (lower.startsWith(`/${agent} `) || lower.startsWith(`/${agent}\n`)) {
       return { text: raw.slice(agent.length + 2).trim(), targetAgent: agent };
     }

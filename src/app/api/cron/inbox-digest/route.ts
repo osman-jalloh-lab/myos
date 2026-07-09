@@ -13,7 +13,7 @@
 // minute-level alerting between digests.
 
 import { prisma } from "@/lib/db";
-import { syncGmailInbox, fetchEmailBody, classify, type EmailMessage, type EmailCategory } from "@/lib/gmail";
+import { syncGmailInbox, fetchEmailBody, classify, getCorrespondentGraph, type EmailMessage, type EmailCategory } from "@/lib/gmail";
 import { classifyEmailRoute, routeToThemis, routeToAthena } from "@/lib/agentHandoff";
 import { sendTelegramMessage } from "@/lib/telegram";
 
@@ -54,7 +54,10 @@ export async function GET(req: Request) {
   const summaries: Array<{ user: string; accounts: number; actionNeeded: number; drafts: number }> = [];
 
   for (const user of users) {
-    const sync = await syncGmailInbox(user.id, 20).catch(() => null);
+    const [sync, correspondents] = await Promise.all([
+      syncGmailInbox(user.id, 20).catch(() => null),
+      getCorrespondentGraph(user.id).catch(() => null),
+    ]);
     if (!sync || sync.accounts.length === 0) continue;
 
     // Tallies keyed by raw account address; sync.accounts (masked) is used
@@ -62,7 +65,7 @@ export async function GET(req: Request) {
     const perAccount = new Map<string, PerAccount>();
     const actionNeeded: EmailMessage[] = [];
     for (const message of sync.messages) {
-      const category = classify(message);
+      const category = classify(message, { correspondents: correspondents ?? undefined });
       if (category === "action_needed") actionNeeded.push(message);
       let row = perAccount.get(message.accountEmail);
       if (!row) {

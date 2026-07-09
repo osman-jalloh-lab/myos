@@ -30,6 +30,7 @@ model User {
   auditLogs        AuditLog[]
   agentTasks       AgentTask[]
   engineeringTasks EngineeringTask[]
+  emailCorrespondents EmailCorrespondent[]
 }
 
 model GoogleAccount {
@@ -49,9 +50,28 @@ model GoogleAccount {
   @@unique([userId, googleSub])
 }
 
+model EmailCorrespondent {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountEmail  String
+  email         String
+  displayName   String?
+  sentCount     Int      @default(0)
+  firstSentAt   DateTime?
+  lastSentAt    DateTime?
+  lastScannedAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([userId, accountEmail, email])
+  @@index([userId, email])
+  @@index([userId, lastScannedAt])
+}
+
 model AgentRun {
   id            String   @id @default(cuid())
-  agentName     String // hermes|iris|kairos|argus|plutus|athena|mnemosyne
+  agentName     String // canonical Hermes agent key; see src/lib/agent-roster.ts
   inputSummary  String?
   outputSummary String?
   modelProvider String?
@@ -84,7 +104,7 @@ model Task {
   dueAt         DateTime?
   status        String    @default("open")
   priority      String    @default("medium")
-  assignedAgent String? // hermes|iris|kairos|argus|plutus|athena|mnemosyne|sophos
+  assignedAgent String? // canonical Hermes agent key; see src/lib/agent-roster.ts
   delegatedBy   String? // "osman" if user-assigned, or the agent name that handed it off
   resolvedAt    DateTime?
   createdAt     DateTime  @default(now())
@@ -250,7 +270,7 @@ model ChatMessage {
   role        String // "user" | "assistant"
   content     String
   channel     String   @default("dashboard") // "dashboard" | "telegram"
-  targetAgent String? // null = general Hermes thread; else iris|kairos|argus|plutus|athena|mnemosyne|sophos
+  targetAgent String? // null = general Hermes thread; else canonical key from src/lib/agent-roster.ts
   createdAt   DateTime @default(now())
 
   @@index([userId, createdAt])

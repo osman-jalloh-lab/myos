@@ -1,37 +1,12 @@
 "use client";
 
 import { useState } from "react";
+import { chatTargetForAgent, normalizeAgentKey, type RosterAgent } from "@/lib/agent-roster";
 import ChatPanel from "./ChatPanel";
 import TaskBoard from "./TaskBoard";
 
-export interface RosterAgent {
-  id: string;
-  letter: string;
-  name: string;
-  role: string;
-  color: string;
-}
-
-const AGENT_EMPTY_STATE: Record<string, string> = {
-  hermes: "Talk to Hermes — the orchestrator. Ask for anything; it routes to the right agent or answers itself.",
-  iris: "Ask Iris about your inbox — unread counts, what needs a reply, or to draft a response (drafts only, never sends).",
-  kairos: "Ask Kairos about your week — what's on the calendar, scheduling conflicts, or where to block focus time.",
-  argus: "Ask Argus what's worth your attention today — synthesized signals and risk-flagged items across your accounts.",
-  plutus: "Ask Plutus about your money — net position, budget status, or debt tracking (read-only, never moves money).",
-  athena: "Ask Athena about your job search — pipeline status, fit scores, or what to tighten on your resume.",
-  mnemo: "Ask Mnemosyne what it remembers — approved facts and context cards relevant to what you're working on.",
-  sophos: "Ask Sophos what's new — recent Anthropic releases or repos worth a look for your stack.",
-  tyche: "Ask Tyche about income opportunities — side income leads, gigs, and what's worth your hours right now.",
-  themis: "Ask Themis about work and I-9 questions — answers grounded only in your loaded workplace knowledge files.",
-  prometheus: "Ask Prometheus to build something — an idea, a website, an app. It can push builds live to GitHub Pages.",
-};
-
-const AGENT_KEY: Record<string, string> = { mnemo: "mnemosyne" };
-
-// The Hermes card targets the general thread — ChatPanel omits the agent
-// param entirely so the message goes through routeMessage(), not routeToAgent().
 function chatAgentName(id: string): string | undefined {
-  return id === "hermes" ? undefined : AGENT_KEY[id] ?? id;
+  return chatTargetForAgent(id) ?? undefined;
 }
 
 export default function AgentRoster({ agents }: { agents: RosterAgent[] }) {
@@ -67,20 +42,20 @@ export default function AgentRoster({ agents }: { agents: RosterAgent[] }) {
                 </div>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: openAgent.color }}>{openAgent.name}</div>
-                  <div style={{ fontSize: 10.5, color: "var(--faint)" }}>{openAgent.role} · private thread</div>
+                  <div style={{ fontSize: 10.5, color: "var(--faint)" }}>{openAgent.role} / private thread</div>
                 </div>
               </div>
-              <button onClick={() => setOpenAgent(null)} style={closeBtn}>✕</button>
+              <button onClick={() => setOpenAgent(null)} style={closeBtn}>x</button>
             </div>
             <div style={{ padding: 14, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 0 }}>
               <ChatPanel
                 agentName={chatAgentName(openAgent.id)}
                 displayName={openAgent.name}
                 accentColor={openAgent.color}
-                emptyStateText={AGENT_EMPTY_STATE[openAgent.id]}
+                emptyStateText={openAgent.emptyStateText}
               />
             </div>
-            <TaskBoard agentName={AGENT_KEY[openAgent.id] ?? openAgent.id} accentColor={openAgent.color} />
+            <TaskBoard agentName={normalizeAgentKey(openAgent.id)} accentColor={openAgent.color} />
           </div>
         </div>
       )}

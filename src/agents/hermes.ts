@@ -46,6 +46,7 @@ import { TYCHE_SOUL } from "@/agents/souls/tyche";
 import { THEMIS_SOUL } from "@/agents/souls/themis";
 import { PROMETHEUS_SOUL } from "@/agents/souls/prometheus";
 import { getPersonalContext } from "@/lib/personalContext";
+import { CHAT_ROSTER_AGENTS, normalizeAgentKey } from "@/lib/agent-roster";
 
 const PERSONAL_CONTEXT = getPersonalContext();
 
@@ -1199,7 +1200,7 @@ ${PROMETHEUS_SOUL}`,
   },
 };
 
-const HERMES_AGENT_ROSTER = Object.keys(AGENT_PROFILES);
+const HERMES_AGENT_ROSTER = CHAT_ROSTER_AGENTS.map((agent) => agent.name).join(", ");
 
 export async function routeToAgent(
   userId: string,
@@ -1215,10 +1216,10 @@ export async function routeToAgent(
     return { reply: "I hit a routing loop — please rephrase your request." };
   }
 
-  const key = agentName.toLowerCase();
+  const key = normalizeAgentKey(agentName);
   const profile = AGENT_PROFILES[key];
   if (!profile) {
-    return { reply: `I don't have an agent called "${agentName}" — the roster is Hermes, ${HERMES_AGENT_ROSTER.map((k) => AGENT_PROFILES[k].displayName).join(", ")}.` };
+    return { reply: `I don't have an agent called "${agentName}" - the roster is ${HERMES_AGENT_ROSTER}.` };
   }
 
   const { cleaned: trimmed, providerOverride } = detectModelOverride(text.trim());
@@ -1461,11 +1462,11 @@ export async function routeMessage(userId: string, text: string, channel?: strin
   const assignment = trimmed.match(/^(?:ask|tell|have|assign)\s+(\w+)\s+to\s+(.+)/i);
   if (assignment) {
     const [, rawAgent, instruction] = assignment;
-    const agentKey = rawAgent.toLowerCase();
+    const agentKey = normalizeAgentKey(rawAgent);
     const profile = AGENT_PROFILES[agentKey];
     if (!profile) {
       return {
-        reply: `I don't have an agent called "${rawAgent}" — the roster is ${HERMES_AGENT_ROSTER.map((k) => AGENT_PROFILES[k].displayName).join(", ")}.`,
+        reply: `I don't have an agent called "${rawAgent}" - the roster is ${HERMES_AGENT_ROSTER}.`,
       };
     }
     const task = await prisma.task.create({

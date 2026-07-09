@@ -44,6 +44,16 @@ export interface InboxSyncSummary {
   accounts: AccountSyncResult[];
 }
 
+export interface CorrespondentGraph {
+  emails: Set<string>;
+  total: number;
+  lastRefreshedAt: string | null;
+}
+
+export interface ClassifyOptions {
+  correspondents?: CorrespondentGraph | Set<string>;
+}
+
 interface GmailHeader {
   name: string;
   value: string;
@@ -58,12 +68,24 @@ interface GmailMessage {
   payload?: { headers?: GmailHeader[] };
 }
 
+const CORRESPONDENT_REFRESH_MS = 24 * 60 * 60 * 1000;
+const SENT_SCAN_MAX_PER_ACCOUNT = 200;
+
 function header(msg: GmailMessage, name: string): string {
   return (
     msg.payload?.headers?.find(
       (h) => h.name.toLowerCase() === name.toLowerCase()
     )?.value ?? ""
   );
+}
+
+function extractEmailAddresses(value: string): string[] {
+  const matches = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) ?? [];
+  return [...new Set(matches.map((email) => email.toLowerCase()))];
+}
+
+function extractSenderEmail(from: string): string | null {
+  return extractEmailAddresses(from)[0] ?? null;
 }
 
 /**
@@ -277,6 +299,163 @@ export async function syncGmailInbox(
   };
 }
 
+type CorrespondentAccumulator = {
+  displayName: string | null;
+  sentCount: number;
+  firstSentAt: Date | null;
+  lastSentAt: Date | null;
+};
+
+function newestDate(a: Date | null, b: Date | null): Date | null {
+  if (!a) return b;
+  if (!b) return a;
+  return a > b ? a : b;
+}
+
+function oldestDate(a: Date | null, b: Date | null): Date | null {
+  if (!a) return b;
+  if (!b) return a;
+  return a < b ? a : b;
+}
+
+function displayNameFromHeader(value: string): string | null {
+  const withoutAddress = value.replace(/<[^>]+>/g, "").trim().replace(/^"|"$/g, "");
+  return withoutAddress || null;
+}
+
+async function latestCorrespondentRefresh(userId: string): Promise<Date | null> {
+  const [row, run] = await Promise.all([
+    prisma.emailCorrespondent.findFirst({
+      where: { userId },
+      orderBy: { lastScannedAt: "desc" },
+      select: { lastScannedAt: true },
+    }).catch(() => null),
+    prisma.agentRun.findFirst({
+      where: { agentName: "email-correspondent-graph", inputSummary: `correspondent_graph_refresh user=${userId}` },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    }).catch(() => null),
+  ]);
+  return newestDate(row?.lastScannedAt ?? null, run?.createdAt ?? null);
+}
+
+export async function refreshCorrespondentGraph(userId: string): Promise<{ scannedAccounts: number; correspondents: number; refreshedAt: string }> {
+  const accounts = await prisma.googleAccount.findMany({
+    where: { userId, scopes: { contains: "gmail" } },
+    select: { id: true, email: true },
+  });
+  const accountEmails = new Set(accounts.map((account) => account.email.toLowerCase()));
+  const refreshedAt = new Date();
+  let scannedAccounts = 0;
+  let correspondents = 0;
+
+  for (const account of accounts) {
+    const byEmail = new Map<string, CorrespondentAccumulator>();
+    try {
+      const token = await getValidToken(account.id);
+      const headers = { Authorization: `Bearer ${token}` };
+      const listParams = new URLSearchParams({
+        maxResults: String(SENT_SCAN_MAX_PER_ACCOUNT),
+        labelIds: "SENT",
+      });
+      const listRes = await fetch(`${GMAIL_API}/messages?${listParams}`, { headers, signal: AbortSignal.timeout(10_000) });
+      if (!listRes.ok) throw new Error(`Gmail sent list ${listRes.status} for ${maskEmail(account.email)}`);
+      const list = (await listRes.json()) as { messages?: { id: string }[] };
+      const ids = list.messages ?? [];
+
+      const fetched = await Promise.allSettled(
+        ids.map(async ({ id }) => {
+          const params = new URLSearchParams({ format: "metadata" });
+          params.append("metadataHeaders", "To");
+          params.append("metadataHeaders", "Cc");
+          params.append("metadataHeaders", "Bcc");
+          params.append("metadataHeaders", "Date");
+          const res = await fetch(`${GMAIL_API}/messages/${id}?${params}`, { headers, signal: AbortSignal.timeout(10_000) });
+          if (!res.ok) throw new Error(`Gmail sent get ${res.status} for ${id}`);
+          return (await res.json()) as GmailMessage;
+        })
+      );
+
+      for (const result of fetched) {
+        if (result.status !== "fulfilled") continue;
+        const msg = result.value;
+        const sentAt = msg.internalDate ? new Date(Number(msg.internalDate)) : (header(msg, "Date") ? new Date(header(msg, "Date")) : null);
+        const recipientsHeader = [header(msg, "To"), header(msg, "Cc"), header(msg, "Bcc")].filter(Boolean).join(", ");
+        const recipients = extractEmailAddresses(recipientsHeader).filter((email) => !accountEmails.has(email));
+        for (const email of recipients) {
+          const existing = byEmail.get(email);
+          byEmail.set(email, {
+            displayName: existing?.displayName ?? displayNameFromHeader(recipientsHeader),
+            sentCount: (existing?.sentCount ?? 0) + 1,
+            firstSentAt: oldestDate(existing?.firstSentAt ?? null, sentAt),
+            lastSentAt: newestDate(existing?.lastSentAt ?? null, sentAt),
+          });
+        }
+      }
+
+      for (const [email, data] of byEmail) {
+        await prisma.emailCorrespondent.upsert({
+          where: { userId_accountEmail_email: { userId, accountEmail: account.email, email } },
+          create: {
+            userId,
+            accountEmail: account.email,
+            email,
+            displayName: data.displayName,
+            sentCount: data.sentCount,
+            firstSentAt: data.firstSentAt,
+            lastSentAt: data.lastSentAt,
+            lastScannedAt: refreshedAt,
+          },
+          update: {
+            displayName: data.displayName,
+            sentCount: data.sentCount,
+            firstSentAt: data.firstSentAt,
+            lastSentAt: data.lastSentAt,
+            lastScannedAt: refreshedAt,
+          },
+        });
+      }
+
+      scannedAccounts += 1;
+      correspondents += byEmail.size;
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "email_correspondent_graph_account_failed",
+        account: maskEmail(account.email),
+        error: error instanceof Error ? error.message.slice(0, 180) : String(error).slice(0, 180),
+      }));
+    }
+  }
+
+  await prisma.agentRun.create({
+    data: {
+      agentName: "email-correspondent-graph",
+      inputSummary: `correspondent_graph_refresh user=${userId}`,
+      outputSummary: `Scanned ${scannedAccounts}/${accounts.length} Gmail account(s); cached ${correspondents} correspondent address(es).`,
+      modelProvider: "internal",
+      status: scannedAccounts > 0 || accounts.length === 0 ? "completed" : "failed",
+    },
+  }).catch(() => undefined);
+
+  return { scannedAccounts, correspondents, refreshedAt: refreshedAt.toISOString() };
+}
+
+export async function getCorrespondentGraph(userId: string, options: { forceRefresh?: boolean } = {}): Promise<CorrespondentGraph> {
+  const latest = await latestCorrespondentRefresh(userId);
+  const stale = !latest || Date.now() - latest.getTime() > CORRESPONDENT_REFRESH_MS;
+  if (options.forceRefresh || stale) {
+    await refreshCorrespondentGraph(userId);
+  }
+
+  const rows = await prisma.emailCorrespondent.findMany({
+    where: { userId },
+    select: { email: true, lastScannedAt: true },
+  }).catch(() => []);
+  const emails = new Set(rows.map((row) => row.email.toLowerCase()));
+  const lastRefreshedAt = rows.reduce<Date | null>((latestDate, row) => newestDate(latestDate, row.lastScannedAt), null);
+  return { emails, total: emails.size, lastRefreshedAt: lastRefreshedAt?.toISOString() ?? latest?.toISOString() ?? null };
+}
+
 const NEWSLETTER_HINTS = ["unsubscribe", "newsletter", "digest"];
 // Automated-sender address patterns. Demote-only: a match moves mail out of
 // action_needed, never into it, so a false positive just files noise lower.
@@ -354,12 +533,20 @@ function hasFinancialScamLanguage(subject: string, snippet: string): boolean {
   return FINANCIAL_SCAM_HINTS.some((hint) => text.includes(hint));
 }
 
+function correspondentSet(input: ClassifyOptions["correspondents"]): Set<string> | null {
+  if (!input) return null;
+  return input instanceof Set ? input : input.emails;
+}
+
 /** Heuristic, metadata-only classification — no LLM call needed for Lean Mode. */
-export function classify(message: EmailMessage): EmailCategory {
+export function classify(message: EmailMessage, options: ClassifyOptions = {}): EmailCategory {
   const labels = message.labels;
   const from = message.from.toLowerCase();
   const subject = message.subject.toLowerCase();
   const snippet = message.snippet.toLowerCase();
+  const senderEmail = extractSenderEmail(message.from);
+  const correspondents = correspondentSet(options.correspondents);
+  const hasCorresponded = Boolean(senderEmail && correspondents?.has(senderEmail));
 
   // Demote known marketing / job-spam senders before any action_needed path.
   if (LOW_PRIORITY_SENDER_DOMAINS.some((d) => from.includes(d))) {
@@ -385,6 +572,9 @@ export function classify(message: EmailMessage): EmailCategory {
   if (NEWSLETTER_HINTS.some((h) => subject.includes(h) || snippet.includes(h))) {
     return "newsletter";
   }
+  if (message.isUnread && correspondents && senderEmail && !hasCorresponded && isLikelyOneWayServiceSender(from)) {
+    return "notification";
+  }
   // Bulk-sender headers catch automated senders the category labels and sender
   // lists above missed — new job boards and marketing blasts demote here
   // without anyone maintaining an allowlist.
@@ -392,11 +582,11 @@ export function classify(message: EmailMessage): EmailCategory {
     return "newsletter";
   }
   // action_needed requires positive evidence of a real correspondent: Gmail
-  // importance, the personal category, or (by elimination above) a non-bulk,
-  // non-automated From address. Unread mail with no such evidence files as a
-  // notification instead of flooding the priority list.
+  // importance, the personal category, an actual sent-mail relationship, or
+  // (by elimination above) a non-bulk, non-automated From address. Unread mail
+  // with no such evidence files as a notification instead of flooding priority.
   if (message.isUnread) {
-    return message.isImportant || labels.includes("CATEGORY_PERSONAL") || isLikelyHumanSender(from)
+    return hasCorresponded || message.isImportant || labels.includes("CATEGORY_PERSONAL") || isLikelyHumanSender(from)
       ? "action_needed"
       : "notification";
   }
@@ -420,8 +610,23 @@ const AUTOMATED_FROM_HINTS = [
   "team@",
 ];
 
+const SERVICE_NOTIFICATION_HINTS = [
+  "workday",
+  "myworkday",
+  "service-now",
+  "servicenow",
+  "salesforce",
+  "okta",
+  "docusign",
+];
+
 function isLikelyHumanSender(from: string): boolean {
   return !AUTOMATED_FROM_HINTS.some((h) => from.includes(h));
+}
+
+function isLikelyOneWayServiceSender(from: string): boolean {
+  return AUTOMATED_FROM_HINTS.some((h) => from.includes(h))
+    || SERVICE_NOTIFICATION_HINTS.some((h) => from.includes(h));
 }
 
 export interface TriageResult {
@@ -433,7 +638,10 @@ export interface TriageResult {
 
 /** Groups inbox messages by category and surfaces what needs attention first. */
 export async function triage(userId: string, maxPerAccount = 15): Promise<TriageResult> {
-  const messages = await fetchInboxMessages(userId, maxPerAccount);
+  const [messages, correspondents] = await Promise.all([
+    fetchInboxMessages(userId, maxPerAccount),
+    getCorrespondentGraph(userId),
+  ]);
 
   const byCategory: Record<EmailCategory, EmailMessage[]> = {
     action_needed: [],
@@ -444,7 +652,7 @@ export async function triage(userId: string, maxPerAccount = 15): Promise<Triage
   };
 
   for (const message of messages) {
-    byCategory[classify(message)].push(message);
+    byCategory[classify(message, { correspondents })].push(message);
   }
 
   return {

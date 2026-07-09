@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import BuilderOffice from "./BuilderOffice";
 import LiveBuildConsole from "./LiveBuildConsole";
+import AgentRoster from "@/components/AgentRoster";
 import HermesNousChatPanel from "@/components/HermesNousChatPanel";
-import AgentRoster, { type RosterAgent } from "@/components/AgentRoster";
+import { agentColor, CHAT_ROSTER_AGENTS } from "@/lib/agent-roster";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -372,13 +373,6 @@ function approvalLabel(action: ApprovalAction): string {
     return action.actionType;
   }
 }
-
-const AGENT_COLORS: Record<string, string> = {
-  hermes: "#A78BFA", iris: "#F472B6", kairos: "#34D399",
-  argus: "#60A5FA", plutus: "#FBBF24", athena: "#E879F9",
-  mnemosyne: "#2DD4BF", sophos: "#FB923C", themis: "#F43F5E",
-  prometheus: "#38BDF8",
-};
 
 function average(values: number[]): number {
   const usable = values.filter((value) => Number.isFinite(value));
@@ -960,23 +954,6 @@ function CompactHermesConsole({ initialMessages }: { initialMessages: ChatMessag
 
 // ── Projects panel ────────────────────────────────────────────────────────────
 
-// Every agent with a chat profile in AGENT_PROFILES (src/agents/hermes.ts),
-// plus the Hermes card which targets the general thread. Mercury has no chat
-// profile — it's a delegated tool agent reached through the Hermes thread.
-const ROSTER_AGENTS: RosterAgent[] = [
-  { id: "hermes", letter: "H", name: "Hermes", role: "orchestrator — ask anything", color: "#A78BFA" },
-  { id: "iris", letter: "I", name: "Iris", role: "email & communication", color: "#60A5FA" },
-  { id: "kairos", letter: "K", name: "Kairos", role: "calendar & time", color: "#A78BFA" },
-  { id: "argus", letter: "A", name: "Argus", role: "daily brief & signals", color: "#FBBF24" },
-  { id: "plutus", letter: "P", name: "Plutus", role: "finance (read-only)", color: "#34D399" },
-  { id: "athena", letter: "Λ", name: "Athena", role: "jobs & resume", color: "#FBBF24" },
-  { id: "mnemo", letter: "M", name: "Mnemosyne", role: "memory", color: "#2DD4BF" },
-  { id: "sophos", letter: "S", name: "Sophos", role: "skills & capability scout", color: "#7DD3FC" },
-  { id: "tyche", letter: "Y", name: "Tyche", role: "income opportunities", color: "#A3E635" },
-  { id: "themis", letter: "Θ", name: "Themis", role: "workplace knowledge (I-9)", color: "#FB7185" },
-  { id: "prometheus", letter: "Π", name: "Prometheus", role: "idea forge & builder", color: "#F97316" },
-];
-
 function AgentTalkPanel() {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: 14, alignItems: "stretch" }}>
@@ -984,10 +961,9 @@ function AgentTalkPanel() {
         <div style={{ marginBottom: 12 }}>
           <div style={{ color: "#94A3B8", fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase" }}>Talk to your agents</div>
           <h2 style={{ margin: "6px 0 0", fontSize: 24, fontFamily: "Fraunces, serif" }}>Agent Roster</h2>
-          <div style={{ marginTop: 4, color: "#647089", fontSize: 12 }}>Click an agent to open its private thread. Replies come from the agent&apos;s own read tools; anything outbound still goes through approvals.</div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))", gap: 6 }}>
-          <AgentRoster agents={ROSTER_AGENTS} />
+          <AgentRoster agents={CHAT_ROSTER_AGENTS} />
         </div>
       </div>
       <HermesNousChatPanel />
@@ -1112,7 +1088,12 @@ function AgentOfficesPanel({
 
 function ProjectsPanel({ projects }: { projects: Project[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const toggle = (id: string) => setExpanded((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggle = (id: string) => setExpanded((s) => {
+    const n = new Set(s);
+    if (n.has(id)) n.delete(id);
+    else n.add(id);
+    return n;
+  });
 
   if (projects.length === 0) {
     return (
@@ -1245,7 +1226,7 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
                         {t.title}
                       </span>
                       {t.assignedAgent && (
-                        <span style={{ fontSize: 11, color: AGENT_COLORS[t.assignedAgent] ?? "#94A3B8" }}>{t.assignedAgent}</span>
+                        <span style={{ fontSize: 11, color: agentColor(t.assignedAgent) }}>{t.assignedAgent}</span>
                       )}
                       <span style={badgeStyle(statusColor(t.status))}>{statusLabel(t.status)}</span>
                     </div>
@@ -1926,7 +1907,7 @@ function LogsPanel({ runs, audit }: { runs: AgentRun[]; audit: AuditEntry[] }) {
         {merged.slice(0, 60).map((entry, i) => {
           if (entry._type === "run") {
             const r = entry as AgentRun & { _type: "run" };
-            const color = AGENT_COLORS[r.agentName] ?? "#94A3B8";
+            const color = agentColor(r.agentName);
             return (
               <div key={r.id} style={{ display: "flex", gap: 12, padding: "10px 0", borderBottom: i < merged.length - 1 ? "1px solid rgba(40,50,74,0.5)" : "none" }}>
                 <div style={{ width: 28, height: 28, borderRadius: "50%", background: `${color}20`, border: `1px solid ${color}40`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color, fontWeight: 700, flexShrink: 0 }}>

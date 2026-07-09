@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { normalizeAgentKey } from "@/lib/agent-roster";
 
 interface TaskView {
   id: string;
@@ -24,21 +25,22 @@ const STATUS_COLOR: Record<string, string> = {
  */
 export default function TaskBoard({ agentName, accentColor }: { agentName: string; accentColor: string }) {
   const [tasks, setTasks] = useState<TaskView[] | null>(null);
+  const canonicalAgent = normalizeAgentKey(agentName);
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`/api/tasks?agent=${encodeURIComponent(agentName)}`)
+    fetch(`/api/tasks?agent=${encodeURIComponent(canonicalAgent)}`)
       .then((r) => r.json())
       .then((data) => { if (!cancelled) setTasks(data.tasks ?? []); })
       .catch(() => { if (!cancelled) setTasks([]); });
     return () => { cancelled = true; };
-  }, [agentName]);
+  }, [canonicalAgent]);
 
   if (tasks === null) return null;
   if (tasks.length === 0) return null;
 
   return (
-    <div style={wrap}>
+    <div style={{ ...wrap, borderTopColor: `color-mix(in srgb, ${accentColor} 24%, var(--line))` }}>
       <div style={label}>TASKS ASSIGNED TO THIS AGENT</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {tasks.slice(0, 5).map((t) => (

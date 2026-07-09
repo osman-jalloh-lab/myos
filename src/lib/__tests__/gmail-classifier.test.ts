@@ -42,4 +42,28 @@ describe("gmail classify", () => {
 
     expect(result).toBe("action_needed");
   });
+
+  it("demotes one-way Workday-style service mail when the sender is not in the correspondent graph", () => {
+    const result = classify(message({
+      subject: "Action required: review your Workday notification",
+      from: "Workday <notifications@myworkday.com>",
+      snippet: "You have a new task waiting in Workday.",
+      labels: ["UNREAD", "IMPORTANT", "CATEGORY_PERSONAL"],
+      isImportant: true,
+    }), { correspondents: new Set() });
+
+    expect(result).toBe("notification");
+  });
+
+  it("promotes unread mail from a real correspondent even without Gmail importance", () => {
+    const result = classify(message({
+      subject: "Can you send the notes?",
+      from: "Jordan Lee <jordan.lee@example.com>",
+      snippet: "Please send those notes when you can.",
+      labels: ["UNREAD"],
+      isImportant: false,
+    }), { correspondents: new Set(["jordan.lee@example.com"]) });
+
+    expect(result).toBe("action_needed");
+  });
 });

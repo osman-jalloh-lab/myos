@@ -10,7 +10,7 @@
 // queue for Osman to review and copy-paste to Gmail himself.
 
 import { prisma } from "@/lib/db";
-import { fetchInboxMessages, fetchEmailBody } from "@/lib/gmail";
+import { classify, fetchInboxMessages, fetchEmailBody, getCorrespondentGraph } from "@/lib/gmail";
 import { sendTelegramMessage } from "@/lib/telegram";
 import { classifyEmailRoute, routeToThemis, routeToAthena } from "@/lib/agentHandoff";
 import type { InlineButton } from "@/lib/telegram";
@@ -86,8 +86,12 @@ export async function GET(req: Request) {
     }
 
     let emails;
+    let correspondents;
     try {
-      emails = await fetchInboxMessages(user.id, 20);
+      [emails, correspondents] = await Promise.all([
+        fetchInboxMessages(user.id, 20),
+        getCorrespondentGraph(user.id),
+      ]);
     } catch {
       continue;
     }
@@ -96,7 +100,7 @@ export async function GET(req: Request) {
     const actionEmails = emails.filter((m) => {
       const receivedAt = new Date(m.receivedAt);
       const isRecent = now.getTime() - receivedAt.getTime() < RECENCY_MS;
-      return isRecent && isActionNeeded(m.subject, m.snippet, m.from);
+      return isRecent && classify(m, { correspondents }) === "action_needed" && isActionNeeded(m.subject, m.snippet, m.from);
     });
 
     for (const email of actionEmails) {

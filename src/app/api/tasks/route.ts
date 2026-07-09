@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { createTask, listTasks, assignTask } from "@/lib/tasks";
-
-const ROSTER = ["hermes", "iris", "kairos", "argus", "plutus", "athena", "mnemosyne", "sophos"];
+import { isTaskAssignableAgent, normalizeAgentKey } from "@/lib/agent-roster";
 
 /**
  * GET  /api/tasks?agent=<name>&status=<status>  — list tasks, optionally scoped
@@ -38,9 +37,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "title is required" }, { status: 400 });
   }
   const agent = body.assignedAgent?.trim().toLowerCase();
-  if (agent && !ROSTER.includes(agent)) {
+  if (agent && !isTaskAssignableAgent(agent)) {
     return NextResponse.json({ error: `unknown agent "${agent}"` }, { status: 400 });
   }
+  const assignedAgent = agent ? normalizeAgentKey(agent) : null;
 
   const task = await createTask(session.user.id, {
     title: body.title.trim(),
@@ -48,8 +48,8 @@ export async function POST(req: Request) {
     priority: body.priority?.trim() || undefined,
     source: "dashboard",
   });
-  if (!agent) return NextResponse.json({ task });
+  if (!assignedAgent) return NextResponse.json({ task });
 
-  const assigned = await assignTask(session.user.id, task.id, agent);
+  const assigned = await assignTask(session.user.id, task.id, assignedAgent);
   return NextResponse.json({ task: assigned });
 }

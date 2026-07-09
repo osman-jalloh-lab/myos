@@ -4,6 +4,7 @@ import { chatHistory, channelHistory, persistExecutedMessage, sendMessage } from
 import { handleBuildIntake } from "@/lib/build-intake";
 import { shouldUseExecutionLayer } from "@/lib/hermes-execution/detect-execution-request";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
+import { normalizeAgentKey } from "@/lib/agent-roster";
 
 /**
  * GET  /api/chat?agent=<name>  — recent chat history for a thread
@@ -31,7 +32,8 @@ export async function GET(req: Request) {
     const messages = await channelHistory(session.user.id, "telegram", 30);
     return NextResponse.json({ messages });
   }
-  const agent = params.get("agent");
+  const rawAgent = params.get("agent");
+  const agent = rawAgent ? normalizeAgentKey(rawAgent) : null;
   const messages = await chatHistory(session.user.id, 50, agent || null);
   return NextResponse.json({ messages });
   } catch (error) {
@@ -57,7 +59,8 @@ export async function POST(req: Request) {
 
   const trimmed = body.message.trim();
   const contextChatId = `dashboard:shared:${session.user.id}`;
-  const intake = !body.agentName
+  const targetAgent = body.agentName?.trim() ? normalizeAgentKey(body.agentName) : null;
+  const intake = !targetAgent
     ? await handleBuildIntake(contextChatId, session.user.id, trimmed).catch(() => ({ action: "none" as const }))
     : { action: "none" as const };
   if (intake.action === "ask") {
@@ -79,7 +82,7 @@ export async function POST(req: Request) {
   // When HERMES_EXECUTION_ENABLED=true and the message matches an action intent,
   // proxy through /api/hermes/execute and merge the execution result into the
   // standard chat reply shape so the existing UI receives the same structure.
-  if (!body.agentName && shouldUseExecutionLayer(executionMessage)) {
+  if (!targetAgent && shouldUseExecutionLayer(executionMessage)) {
     try {
       const execRes = await fetch(
         new URL("/api/hermes/execute", process.env.NEXTAUTH_URL ?? "http://localhost:3000").toString(),
@@ -115,7 +118,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const result = await sendMessage(session.user.id, trimmed, "dashboard", body.agentName?.trim() || null);
+    const result = await sendMessage(session.user.id, trimmed, "dashboard", targetAgent);
     return NextResponse.json({ userMessage: result.userMessage, reply: result.reply });
   } catch (error) {
     console.error("[/api/chat] POST failed", error);

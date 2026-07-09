@@ -15,6 +15,7 @@ import { releaseWatch } from "@/agents/sophos";
 import { incomeBrief, passiveIncomeScan, gigScout, campusJobScan } from "@/agents/tyche";
 import { logHandoff, recentDecisions } from "@/agents/hermes";
 import { listApprovals } from "@/lib/approvals";
+import { TASK_ASSIGNABLE_AGENT_KEYS } from "@/lib/agent-roster";
 
 export type Cadence = "daily_am" | "daily_pm" | "weekly" | "monthly" | "on_trigger";
 
@@ -111,7 +112,7 @@ async function runAgentTask(task: AgentTask): Promise<unknown> {
           where: { createdAt: { gte: since } },
           _max: { createdAt: true },
         });
-        const allAgents = ["hermes", "iris", "kairos", "argus", "plutus", "athena", "mnemosyne", "sophos"];
+        const allAgents = TASK_ASSIGNABLE_AGENT_KEYS;
         const active = new Set(runs.map((r) => r.agentName));
         const stalled = allAgents.filter((a) => !active.has(a));
         const summary = stalled.length === 0
