@@ -139,6 +139,14 @@ interface ChatMessage {
   content: string;
   channel?: string;
   createdAt: string;
+  quickActions?: ChatQuickAction[];
+}
+
+interface ChatQuickAction {
+  id: string;
+  label: string;
+  value: string;
+  description?: string;
 }
 
 interface MemoryOfficeData {
@@ -910,17 +918,17 @@ function CompactHermesConsole({ initialMessages }: { initialMessages: ChatMessag
     setMessages(initialMessages);
   }, [initialMessages]);
 
-  const send = async () => {
-    if (!input.trim() || sending) return;
-    const text = input.trim();
-    setInput("");
+  const send = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
+    if (!text || sending) return;
+    if (!overrideText) setInput("");
     setSending(true);
     setMessages((prev) => [...prev, { id: `tmp-${Date.now()}`, role: "user", content: text, channel: "dashboard", createdAt: new Date().toISOString() }]);
     try {
       const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
-      const data = await res.json().catch(() => null) as { reply?: { content?: string } } | null;
+      const data = await res.json().catch(() => null) as { reply?: { content?: string; quickActions?: ChatQuickAction[] } } | null;
       if (res.ok && data?.reply?.content) {
-        setMessages((prev) => [...prev, { id: `reply-${Date.now()}`, role: "assistant", content: data.reply!.content!, channel: "dashboard", createdAt: new Date().toISOString() }]);
+        setMessages((prev) => [...prev, { id: `reply-${Date.now()}`, role: "assistant", content: data.reply!.content!, quickActions: data.reply!.quickActions, channel: "dashboard", createdAt: new Date().toISOString() }]);
       }
     } finally {
       setSending(false);
@@ -934,7 +942,18 @@ function CompactHermesConsole({ initialMessages }: { initialMessages: ChatMessag
       </div>
       <div style={{ height: 112, overflow: "auto", display: "flex", flexDirection: "column", gap: 6, paddingRight: 4 }}>
         {messages.slice(-6).map((message) => (
-          <div key={message.id} style={{ alignSelf: message.role === "user" ? "flex-end" : "flex-start", maxWidth: "92%", padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(93,111,143,0.2)", background: message.role === "user" ? "rgba(167,139,250,0.14)" : "rgba(8,13,24,0.44)", color: "#D8DEEB", fontSize: 11, lineHeight: 1.35, whiteSpace: "pre-wrap" }}>{message.content}</div>
+          <div key={message.id} style={{ alignSelf: message.role === "user" ? "flex-end" : "flex-start", maxWidth: "92%" }}>
+            <div style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid rgba(93,111,143,0.2)", background: message.role === "user" ? "rgba(167,139,250,0.14)" : "rgba(8,13,24,0.44)", color: "#D8DEEB", fontSize: 11, lineHeight: 1.35, whiteSpace: "pre-wrap" }}>{message.content}</div>
+            {message.role === "assistant" && message.quickActions?.length ? (
+              <div style={{ display: "grid", gap: 5, marginTop: 6 }}>
+                {message.quickActions.map((action) => (
+                  <button key={action.id} type="button" disabled={sending} onClick={() => void send(action.value)} title={action.description} style={{ textAlign: "left", borderRadius: 8, border: "1px solid rgba(52,211,153,0.36)", background: "rgba(52,211,153,0.12)", color: "#34D399", padding: "6px 8px", fontSize: 11, fontWeight: 800, cursor: sending ? "not-allowed" : "pointer" }}>
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         ))}
         {messages.length === 0 && <div style={{ color: "#647089", fontSize: 12 }}>No dashboard commands yet.</div>}
       </div>
@@ -1970,10 +1989,10 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const send = async () => {
-    if (!input.trim() || sending) return;
-    const text = input.trim();
-    setInput("");
+  const send = async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
+    if (!text || sending) return;
+    if (!overrideText) setInput("");
     setSending(true);
 
     const userMsg: ChatMessage = { id: `tmp-${Date.now()}`, role: "user", content: text, channel: "dashboard", createdAt: new Date().toISOString() };
@@ -1982,9 +2001,9 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
     try {
       const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: text }) });
       if (res.ok) {
-        const data = await res.json() as { reply?: { content?: string }; userMessage?: { id?: string } };
+        const data = await res.json() as { reply?: { content?: string; quickActions?: ChatQuickAction[] }; userMessage?: { id?: string } };
         if (data.reply?.content) {
-          const assistantMsg: ChatMessage = { id: `reply-${Date.now()}`, role: "assistant", content: data.reply.content, channel: "dashboard", createdAt: new Date().toISOString() };
+          const assistantMsg: ChatMessage = { id: `reply-${Date.now()}`, role: "assistant", content: data.reply.content, quickActions: data.reply.quickActions, channel: "dashboard", createdAt: new Date().toISOString() };
           setMessages((prev) => [...prev, assistantMsg]);
         }
       }
@@ -2030,6 +2049,23 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
                 }}>
                   {m.content}
                 </div>
+                {!isUser && m.quickActions?.length ? (
+                  <div style={{ display: "grid", gap: 7, marginTop: 8 }}>
+                    {m.quickActions.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        disabled={sending}
+                        onClick={() => void send(action.value)}
+                        title={action.description}
+                        style={{ textAlign: "left", borderRadius: 8, border: "1px solid rgba(52,211,153,0.36)", background: "rgba(52,211,153,0.12)", color: "#34D399", padding: "8px 10px", cursor: sending ? "not-allowed" : "pointer", opacity: sending ? 0.65 : 1 }}
+                      >
+                        <span style={{ display: "block", fontSize: 12, fontWeight: 800 }}>{action.label}</span>
+                        {action.description && <span style={{ display: "block", marginTop: 3, color: "#94A3B8", fontSize: 11, lineHeight: 1.35 }}>{action.description}</span>}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
                 <div style={{ fontSize: 10, color: "#4B5563", marginTop: 4, display: "flex", gap: 6, justifyContent: isUser ? "flex-end" : "flex-start" }}>
                   <span style={{ color: channelColor, fontWeight: 600 }}>{channelLabel}</span>
                   <span>{timeAgo(m.createdAt)}</span>

@@ -71,6 +71,7 @@ export async function POST(req: Request) {
         ...result.reply,
         content: intake.answer,
         executionStatus: "waiting_for_requirements",
+        quickActions: intake.options,
         artifacts: [],
         toolCalls: [],
       },

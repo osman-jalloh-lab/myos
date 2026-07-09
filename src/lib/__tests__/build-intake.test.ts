@@ -29,7 +29,18 @@ describe("handleBuildIntake", () => {
   it("asks build requirements one at a time before returning a build prompt", async () => {
     await expect(handleBuildIntake("chat_1", "user_1", "Build me a watch marketplace")).resolves.toMatchObject({
       action: "ask",
+      answer: "What type of build should this become?",
+      options: expect.arrayContaining([
+        expect.objectContaining({ label: "Interactive web app" }),
+      ]),
+    });
+
+    await expect(handleBuildIntake("chat_1", "user_1", "Interactive marketplace app")).resolves.toMatchObject({
+      action: "ask",
       answer: "Who is the audience for this build?",
+      options: expect.arrayContaining([
+        expect.objectContaining({ label: "Customers" }),
+      ]),
     });
 
     await expect(handleBuildIntake("chat_1", "user_1", "Collectors")).resolves.toMatchObject({
@@ -53,6 +64,7 @@ describe("handleBuildIntake", () => {
       message: expect.stringContaining("Builder intake answers:"),
     });
     if (ready.action === "ready") {
+      expect(ready.message).toContain("Build type: Interactive marketplace app");
       expect(ready.message).toContain("Audience: Collectors");
       expect(ready.message).toContain("Primary outcome: Inquiry and concierge");
       expect(ready.message).toContain("Style: Modern luxury");

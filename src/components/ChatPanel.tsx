@@ -9,6 +9,14 @@ interface ChatMessageView {
   channel: "dashboard" | "telegram";
   targetAgent: string | null;
   createdAt: string;
+  quickActions?: ChatQuickAction[];
+}
+
+interface ChatQuickAction {
+  id: string;
+  label: string;
+  value: string;
+  description?: string;
 }
 
 export interface ChatPanelProps {
@@ -51,10 +59,10 @@ export default function ChatPanel({ agentName, displayName = "Hermes", accentCol
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  async function send() {
-    const text = input.trim();
+  async function send(overrideText?: string) {
+    const text = (overrideText ?? input).trim();
     if (!text || sending) return;
-    setInput("");
+    if (!overrideText) setInput("");
     setSending(true);
     setMessages((prev) => [
       ...prev,
@@ -109,8 +117,27 @@ export default function ChatPanel({ agentName, displayName = "Hermes", accentCol
         ) : (
           messages.map((m) => (
             <div key={m.id} style={{ ...bubbleRow, justifyContent: m.role === "user" ? "flex-end" : "flex-start" }}>
-              <div style={{ ...bubble, ...(m.role === "user" ? { ...userBubble, background: `color-mix(in srgb, ${accentColor} 16%, transparent)` } : assistantBubble) }}>
-                {m.content}
+              <div style={{ maxWidth: "78%" }}>
+                <div style={{ ...bubble, maxWidth: "100%", ...(m.role === "user" ? { ...userBubble, background: `color-mix(in srgb, ${accentColor} 16%, transparent)` } : assistantBubble) }}>
+                  {m.content}
+                </div>
+                {m.role === "assistant" && m.quickActions?.length ? (
+                  <div style={quickActionWrap}>
+                    {m.quickActions.map((action) => (
+                      <button
+                        key={action.id}
+                        type="button"
+                        onClick={() => void send(action.value)}
+                        disabled={sending}
+                        title={action.description}
+                        style={quickActionButton}
+                      >
+                        <span style={quickActionLabel}>{action.label}</span>
+                        {action.description && <span style={quickActionDescription}>{action.description}</span>}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </div>
           ))
@@ -130,7 +157,7 @@ export default function ChatPanel({ agentName, displayName = "Hermes", accentCol
           style={inputBox}
           disabled={sending}
         />
-        <button onClick={send} disabled={sending || !input.trim()} style={{ ...sendBtn, background: accentColor }}>
+        <button onClick={() => void send()} disabled={sending || !input.trim()} style={{ ...sendBtn, background: accentColor }}>
           {sending ? "…" : "Send"}
         </button>
       </div>
@@ -180,4 +207,35 @@ const sendBtn: React.CSSProperties = {
   color: "#1a1410", border: "none",
   borderRadius: 9, padding: "0 18px", fontSize: 12.5, fontWeight: 600,
   cursor: "pointer",
+};
+
+const quickActionWrap: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 7,
+  marginTop: 8,
+};
+
+const quickActionButton: React.CSSProperties = {
+  textAlign: "left",
+  borderRadius: 8,
+  border: "1px solid rgba(52,211,153,0.36)",
+  background: "rgba(52,211,153,0.12)",
+  color: "#34D399",
+  padding: "8px 10px",
+  cursor: "pointer",
+};
+
+const quickActionLabel: React.CSSProperties = {
+  display: "block",
+  fontSize: 12,
+  fontWeight: 800,
+};
+
+const quickActionDescription: React.CSSProperties = {
+  display: "block",
+  marginTop: 3,
+  color: "var(--muted)",
+  fontSize: 11,
+  lineHeight: 1.35,
 };

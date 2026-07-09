@@ -24,8 +24,9 @@ export interface BuildProjectContext {
   intake?: {
     status: "collecting" | "ready";
     originalRequest: string;
-    pendingQuestion: "audience" | "mode" | "style" | "features" | null;
+    pendingQuestion: "siteType" | "audience" | "mode" | "style" | "features" | null;
     answers: {
+      siteType?: string;
       audience?: string;
       mode?: string;
       style?: string;
