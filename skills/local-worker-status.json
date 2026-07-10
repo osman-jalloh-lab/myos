@@ -1,0 +1,198 @@
+{
+  "id": "local-worker-status",
+  "name": "Local Worker Status",
+  "description": "Diagnoses whether the local Hermes worker, Ollama runtime, Hermes Nous runtime, and local execution loop are online, reachable, and processing jobs.",
+  "category": "development",
+  "ownerAgents": [
+    "hermes",
+    "prometheus",
+    "argus"
+  ],
+  "tags": [
+    "local-worker",
+    "diagnostics",
+    "ollama",
+    "queue",
+    "execution",
+    "heartbeat"
+  ],
+  "safetyClass": "read_only",
+  "source": "hermes-os",
+  "purpose": "Diagnose whether the local Hermes worker, Ollama runtime, and local execution loop are online, reachable, and processing jobs.",
+  "whenToUse": [
+    "User says the local agent is not working or not functioning",
+    "User asks whether the local worker is online, offline, stale, or busy",
+    "User asks why a build did not run or did not route to the local worker",
+    "User reports jobs stuck, queue not processing, worker not claiming tasks, or no heartbeat",
+    "User asks about Ollama or local runtime reachability",
+    "User asks for safe diagnostic status of local execution without changing files"
+  ],
+  "whenNotToUse": [
+    "Do not use for general repo implementation when the worker is not the focus",
+    "Do not use for HR, I-9, job fit, resume, writing polish, email drafting, or calendar tasks",
+    "Do not use to start, stop, or mutate worker state without explicit user action",
+    "Do not call localhost from Vercel or the browser as a diagnostic shortcut"
+  ],
+  "strongSignals": [
+    "local agent not working",
+    "local worker",
+    "worker offline",
+    "local agent not functioning",
+    "ollama not reachable",
+    "jobs stuck",
+    "queue not processing",
+    "worker heartbeat",
+    "last heartbeat",
+    "worker not claiming",
+    "local execution loop",
+    "nothing is building",
+    "why didn't it build",
+    "why did this not route to the local worker"
+  ],
+  "negativeSignals": [
+    "build a new feature",
+    "commit and push",
+    "rewrite this message",
+    "draft email",
+    "i-9",
+    "job application",
+    "score a role",
+    "resume"
+  ],
+  "requiredContext": [
+    "Latest worker heartbeat if available",
+    "Queue pending and failed counts",
+    "Last claimed job and last completed job if available",
+    "Safe worker error, last fetch error, or known cloud/local boundary limitation"
+  ],
+  "missingContextQuestions": [
+    "Are you asking for worker status only, or should I also inspect why a specific build did not run?",
+    "Which task, project, or build request should I check if this is about one queued job?",
+    "Are you running the local worker on this machine with npm run worker:local?"
+  ],
+  "safetyRules": [
+    "Read-only diagnostic only",
+    "Do not call localhost from Vercel directly",
+    "If the app cannot verify the local worker from cloud, say so clearly and instruct the user to run the worker locally",
+    "Never expose secrets, tokens, raw environment values, or sensitive logs",
+    "Do not start, stop, restart, or mutate jobs without an explicit user request and the existing execution path"
+  ],
+  "outputContract": {
+    "format": "Worker status -> Queue status -> Last heartbeat -> Last job claimed -> Last job completed -> Ollama status if available -> Likely cause -> Next step.",
+    "mustInclude": [
+      "Worker status",
+      "Queue status",
+      "Last heartbeat",
+      "Last job claimed",
+      "Last job completed",
+      "Ollama status if available",
+      "Likely cause",
+      "Next step"
+    ],
+    "mustAvoid": [
+      "Expose secrets, auth tokens, raw env values, or private paths beyond safe labels",
+      "Call localhost from Vercel directly",
+      "Claim the worker is online without heartbeat evidence",
+      "Mutate queue, files, or worker process state from a read-only diagnostic",
+      "Give direct implementation instructions that bypass approval gates"
+    ],
+    "tone": "clear, diagnostic, action-oriented"
+  },
+  "approvalRequiredFor": [
+    "worker state changes",
+    "job mutations",
+    "queue retries"
+  ],
+  "positiveExamples": [
+    "My local agent is not functioning.",
+    "Is the local worker offline?",
+    "Ollama is not reachable from Hermes.",
+    "Why did this not route to the local worker?",
+    "Jobs are stuck in the queue.",
+    "Nothing is building right now.",
+    "Show me the last worker heartbeat."
+  ],
+  "negativeExamples": [
+    "Build Provider Setup Center.",
+    "Rewrite this email to my manager.",
+    "Score this GRC internship for me.",
+    "What should HR do with an I-9 receipt?"
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "My local agent is not functioning.",
+      "shouldMatch": true,
+      "expectedSkill": "local-worker-status",
+      "reason": "Positive local agent diagnostic.",
+      "minimumScore": 85
+    },
+    {
+      "input": "Is the local worker offline?",
+      "shouldMatch": true,
+      "expectedSkill": "local-worker-status",
+      "reason": "Positive worker status check.",
+      "minimumScore": 85
+    },
+    {
+      "input": "Ollama is not reachable from Hermes.",
+      "shouldMatch": true,
+      "expectedSkill": "local-worker-status",
+      "reason": "Positive local runtime diagnostic.",
+      "minimumScore": 80
+    },
+    {
+      "input": "Why did this not route to the local worker?",
+      "shouldMatch": true,
+      "expectedSkill": "local-worker-status",
+      "reason": "Positive local worker routing diagnostic.",
+      "minimumScore": 85
+    },
+    {
+      "input": "Jobs are stuck in the queue.",
+      "shouldMatch": true,
+      "expectedSkill": "local-worker-status",
+      "reason": "Positive queue diagnostic.",
+      "minimumScore": 80
+    },
+    {
+      "input": "The worker still is not claiming it.",
+      "shouldMatch": true,
+      "expectedSkill": "local-worker-status",
+      "reason": "Ambiguous worker diagnostic; ask which task or build failed.",
+      "minimumScore": 55
+    },
+    {
+      "input": "Why didn't it build?",
+      "shouldMatch": true,
+      "expectedSkill": "local-worker-status",
+      "reason": "Ambiguous build diagnostic should ask for task/project context.",
+      "minimumScore": 65
+    },
+    {
+      "input": "Check Vercel deployment.",
+      "shouldMatch": false,
+      "expectedSkill": "build-validation-runner",
+      "reason": "Deployment status belongs to build validation/deployment readiness."
+    },
+    {
+      "input": "Build Provider Setup Center.",
+      "shouldMatch": false,
+      "expectedSkill": "build-orchestrator",
+      "reason": "Build feature belongs to build-orchestrator."
+    },
+    {
+      "input": "Rewrite this email to my manager.",
+      "shouldMatch": false,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Writing request should not route to local-worker-status."
+    },
+    {
+      "input": "Score this GRC internship for me.",
+      "shouldMatch": false,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Career/GRC request should not route to local-worker-status."
+    }
+  ],
+  "lastReviewedAt": "2026-07-10",
+  "version": "1.0.0"
+}

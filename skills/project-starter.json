@@ -1,0 +1,187 @@
+{
+  "id": "project-starter",
+  "name": "Project Starter",
+  "description": "Guided skill for starting a new project from idea through architecture into first build plan.",
+  "category": "build",
+  "ownerAgents": [
+    "prometheus"
+  ],
+  "tags": [
+    "project",
+    "bootstrap",
+    "architecture",
+    "plan",
+    "mvp"
+  ],
+  "safetyClass": "approval_required",
+  "source": "hermes-os",
+  "purpose": "Turn a vague idea into a grounded project plan without jumping straight to code unless asked.",
+  "whenToUse": [
+    "Start a new project",
+    "Create a project scaffold",
+    "From idea to plan",
+    "What stack should I use?",
+    "Design MVP",
+    "Project bootstrap"
+  ],
+  "whenNotToUse": [
+    "Rewrite an email",
+    "Answer HR/I-9 questions",
+    "Score a job",
+    "Create a normal task",
+    "Explain something without changing code"
+  ],
+  "strongSignals": [
+    "start a new project",
+    "project bootstrap",
+    "scaffold this",
+    "stack?",
+    "architecture for",
+    "mvp",
+    "from idea",
+    "what should I use for",
+    "i want to build",
+    "build a local task app",
+    "cheapest stack",
+    "one-page project"
+  ],
+  "weakSignals": [
+    "new project",
+    "scaffold",
+    "starter code",
+    "first version",
+    "minimal viable product"
+  ],
+  "negativeSignals": [
+    "rewrite this message",
+    "draft email",
+    "I-9",
+    "job application",
+    "creating a reminder",
+    "score a role"
+  ],
+  "requiredContext": [
+    "Preferred stack or host constraints",
+    "Whether the project is web, API, CLI, or local app",
+    "Expected developer experience baseline",
+    "Whether this is a learning project or deploy target"
+  ],
+  "missingContextQuestions": [
+    "Do you have a preferred stack, host, or app type?",
+    "Is this a learning project or a real user-facing product?",
+    "Should the plan assume local machine or cloud deployment?"
+  ],
+  "outputContract": {
+    "format": "Structured project plan with architecture and MVP steps.",
+    "mustInclude": [
+      "project name",
+      "goal",
+      "target users",
+      "core features",
+      "data model",
+      "pages/routes",
+      "tools needed",
+      "mvp plan",
+      "build phases",
+      "risks",
+      "first implementation step"
+    ],
+    "mustAvoid": [
+      "jumping to implementation",
+      "skipping architecture",
+      "assuming tooling without confirmation"
+    ]
+  },
+  "approvalRequiredFor": [
+    "new folder structure",
+    "scaffold creation"
+  ],
+  "positiveExamples": [
+    "Start a new pharmacy marketplace project.",
+    "I want to build a local task app.",
+    "Scaffold a new Deepgram voice project.",
+    "Create an architecture plan for a ToolSmart SaaS MVP.",
+    "What is the cheapest stack for a one-page project?"
+  ],
+  "negativeExamples": [
+    "Rewrite this email to my manager.",
+    "Draft a recruiter follow-up.",
+    "What should HR do with an I-9 TNC?",
+    "Create a reminder for tomorrow.",
+    "Score this GRC role for me."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "Start a new pharmacy marketplace project.",
+      "shouldMatch": true,
+      "expectedSkill": "project-starter",
+      "reason": "Positive project-start request with clear new-project vocabulary.",
+      "minimumScore": 85
+    },
+    {
+      "input": "I want to build a local task app.",
+      "shouldMatch": true,
+      "expectedSkill": "project-starter",
+      "reason": "Positive bootstrap request without existing repo scaffold.",
+      "minimumScore": 85
+    },
+    {
+      "input": "Scaffold a new Deepgram voice project.",
+      "shouldMatch": true,
+      "expectedSkill": "project-starter",
+      "reason": "Positive scaffold request with clear new-project intent.",
+      "minimumScore": 75
+    },
+    {
+      "input": "Create an architecture plan for a ToolSmart SaaS MVP.",
+      "shouldMatch": true,
+      "expectedSkill": "project-starter",
+      "reason": "Positive architecture-planning request for a new product.",
+      "minimumScore": 85
+    },
+    {
+      "input": "What is the cheapest stack for a one-page project?",
+      "shouldMatch": true,
+      "expectedSkill": "project-starter",
+      "reason": "Weak bootstrap question still belongs to project-starter.",
+      "minimumScore": 65
+    },
+    {
+      "input": "Rewrite this email to my manager.",
+      "shouldMatch": false,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Writing request should not route to project-starter."
+    },
+    {
+      "input": "Draft a recruiter follow-up.",
+      "shouldMatch": false,
+      "expectedSkill": "job-application-ops",
+      "reason": "Career/writing request should not route to project-starter."
+    },
+    {
+      "input": "Add a route in my existing app.",
+      "shouldMatch": false,
+      "expectedSkill": "build-orchestrator",
+      "reason": "Existing project change request belongs to build-orchestrator."
+    },
+    {
+      "input": "Score this GRC role for me.",
+      "shouldMatch": false,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Career screening request should not route to project-starter."
+    },
+    {
+      "input": "Create a reminder for tomorrow.",
+      "shouldMatch": false,
+      "expectedSkill": "none",
+      "reason": "Task creation is not project bootstrap."
+    }
+  ],
+  "lastReviewedAt": "2026-07-10",
+  "version": "1.0.0",
+  "safetyRules": [
+    "Keep planning separate from implementation until the user asks to build.",
+    "Do not create folders, scaffold files, or install packages without explicit approval.",
+    "Call out assumptions about stack, hosting, and data storage."
+  ]
+}

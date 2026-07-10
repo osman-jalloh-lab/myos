@@ -73,6 +73,37 @@ const DOMAIN_ALIASES: Record<string, string[]> = {
     "personal context", "my background", "my preferences", "remembered context", "my voice",
     "osman", "my certifications", "security+", "cysa+", "school planning", "career planning",
   ],
+  "build-orchestrator": [
+    "build", "implement", "fix", "upgrade", "code", "repo", "repository", "route", "api",
+    "component", "provider setup", "model council", "run tests", "run build", "commit",
+    "push", "deploy", "debug", "bug", "skills page", "wire this up", "add endpoint",
+    "change the ui", "edit the app", "dashboard", "dashboard ui", "fix dashboard",
+    "fix ui", "i-9 dashboard", "pull request", "typecheck", "lint",
+  ],
+  "local-worker-status": [
+    "local worker", "local agent", "worker offline", "local agent not working",
+    "agent not functioning", "ollama not reachable", "jobs stuck", "queue not processing",
+    "why didn't it build", "why did this not route to the local worker", "worker heartbeat",
+    "last heartbeat", "worker not claiming", "local execution loop", "nothing is building"
+  ],
+  "build-validation-runner": [
+    "run tests", "run build", "run typecheck", "run lint", "prisma generate",
+    "deployment readiness", "vercel status", "safe to push", "safe to deploy",
+    "check vercel deployment", "vercel deployment", "deployment status",
+    "check deployment", "verify validation", "validation after changes",
+    "typecheck", "lint", "validate", "validation", "pipeline"
+  ],
+  "project-starter": [
+    "start a project", "create a marketplace", "build a landing page", "design a system",
+    "start from scratch", "scaffold this", "new project", "mvp", "architecture",
+    "phases", "build an app", "make a website", "i want to build", "build a local task app",
+    "cheapest stack", "one-page project"
+  ],
+  "repo-change-planner": [
+    "plan the files", "files to inspect first", "expected edits", "rollback plan",
+    "validation commands", "user approval checkpoint", "plan changes", "approval checkpoint",
+    "inspect files", "before editing", "change plan"
+  ],
 };
 
 const SPECIFIC_SKILLS = new Set([
@@ -80,6 +111,11 @@ const SPECIFIC_SKILLS = new Set([
   "student-work-authorization-guard",
   "grc-risk-role-screener",
   "it-help-desk-trainer",
+  "build-orchestrator",
+  "local-worker-status",
+  "project-starter",
+  "repo-change-planner",
+  "build-validation-runner",
 ]);
 
 const BROAD_SUPPORT_SKILLS = new Set([
@@ -173,16 +209,40 @@ function ambiguousRequest(message: string, messageWords: string[], scoreBeforePe
   return false;
 }
 
+export function isLocalWorkerDiagnosticRequest(message: string): boolean {
+  const text = normalize(message);
+  return /worker offline|local agent not functioning|local agent not working|local agent.*not functioning|local agent.*not working|agent not functioning|agent not working|ollama|jobs stuck|queue not processing|worker heartbeat|last heartbeat|worker not claiming|worker.*not.*claiming|local execution loop|nothing is building/.test(text)
+    || /local worker.*(status|health|heartbeat|online|offline|stale|busy|reachable|not working|not functioning)|is the local worker/.test(text)
+    || /why (didn t|did not).*(build|route)|why.*not route.*local worker|not route.*local worker/.test(text);
+}
+
+export function isBuildLikeRequest(message: string): boolean {
+  const text = normalize(message);
+  if (isLocalWorkerDiagnosticRequest(message)) return true;
+  return /\b(build|implement|upgrade|code|repo|repository|route|api|component|deploy|debug|typecheck|lint)\b/.test(text)
+    || /\b(run|npm)\s+(tests?|test|build|lint|typecheck|tsc)\b/.test(text)
+    || /\b(commit|push)\b/.test(text)
+    || /\bprovider setup|model council|local worker|add endpoint|wire this up|change the ui|edit the app|pull request\b/.test(text)
+    || /\bfix\b.*\b(bug|page|route|api|component|dashboard|ui|app|build|test|tests|code|repo|skills)\b/.test(text)
+    || /\b(add|create|make|write)\b.*\b(feature|route|endpoint|api|component|page|ui|app|skills|provider|model council)\b/.test(text);
+}
+
 export function taskTypeFor(message: string): string {
   const text = normalize(message);
-  if (/\bi-?9\b|form i 9|e-verify|everify|employment eligibility|m-274|section 2|section 3|reverification|tnc/.test(text)) return "hr_compliance";
-  if (/\bf-?1\b|cpt|opt|stem opt|sponsorship|student work authorization|international office|on-campus|off-campus/.test(text)) return "student_work_authorization";
+  if (/\b(i-?9|form i 9|e-verify|everify|employment eligibility|m-274|section 2|section 3|reverification|tnc)\b/.test(text) && !/\b(build|implement|fix|page|ui|dashboard|api|component|app)\b/.test(text)) return "hr_compliance";
+  if (/\b(f-?1|cpt|opt|stem opt|sponsorship|student work authorization|international office|on-campus|off-campus)\b/.test(text)) return "student_work_authorization";
   if (/help desk|service desk|ticket|troubleshoot|active directory|vpn|mfa|printer|windows login|cannot log in|can t log in|can't log in|login issue|tier 1|tier 2/.test(text)) return "it_support";
   if (/\bgrc\b|soc 2|soc2|nist|rmf|iso 27001|controls testing|audit evidence|risk management|compliance analyst/.test(text)) return "grc_role_screen";
   if (/resume|cover letter|interview|job application|ats|recruiter|internship|full-time|role|apply/.test(text)) return "career";
   if (/rewrite|humanize|tone|less robotic|sound natural|text message|email|reply|draft/.test(text)) return "communications";
   if (/calendar|meeting|schedule|deadline|appointment/.test(text)) return "scheduling";
-  if (/build|app|site|frontend|component|feature/.test(text)) return "build";
+  if (isLocalWorkerDiagnosticRequest(message)) return "local_worker_diagnostics";
+  if (/check vercel|vercel deployment|deployment status|deploy status|latest deployment|production deployment|is (it|this) deployed|did (it|this) deploy|deployed yet/i.test(text)) return "deployment_status";
+  if (/run tests|run build|run typecheck|run lint|prisma generate|safe to deploy|safe to push|deployment readiness|validate/i.test(text)) return "build_validation";
+  if (/\b(plan the files|files to inspect first|rollback plan|validation commands|approval checkpoint|plan code changes|what files should i inspect|files should i inspect)\b/i.test(text)
+    || /\b(plan|outline|map)\b.*\b(files|edits|changes|api route changes|route changes|rollback|validation commands)\b/i.test(text)) return "repo_change";
+  if (/start a project|build a landing page|create a marketplace|design a system|scaffold this|mvp plan|architecture|start a new .* project|new .* project|i want to build (a|an) .* (app|website|project)|build (a|an) .* (app|website|project) from scratch|cheapest stack|what stack/i.test(text)) return "project_start";
+  if (isBuildLikeRequest(message) || /build|app|site|frontend|component|feature/i.test(text)) return "build";
   return "general";
 }
 
@@ -194,6 +254,11 @@ export function inferAgent(message: string, explicitAgent?: string | null): stri
   if (type === "it_support") return "sophos";
   if (type === "communications") return "iris";
   if (type === "scheduling") return "kairos";
+  if (type === "local_worker_diagnostics") return "argus";
+  if (type === "build_validation") return "argus";
+  if (type === "deployment_status") return "argus";
+  if (type === "repo_change") return "prometheus";
+  if (type === "project_start") return "prometheus";
   if (type === "build") return "prometheus";
   return "hermes";
 }
@@ -297,7 +362,7 @@ export function scoreRegisteredSkill(skill: ScorableSkill, message: string, agen
     reasons.push("specific skill boost");
   }
 
-  if (BROAD_SUPPORT_SKILLS.has(skill.id) && !aliasHits.length && strongHits.length <= 1 && /(i-?9|e-verify|grc|soc 2|nist|cpt|opt|f-?1|vpn|active directory|ticket)/i.test(message)) {
+  if (BROAD_SUPPORT_SKILLS.has(skill.id) && !aliasHits.length && strongHits.length <= 1 && /(i-?9|e-verify|grc|soc 2|nist|cpt|opt|f-?1|vpn|active directory|ticket|local worker|local agent|provider setup|model council|run tests|run build)/i.test(message)) {
     score -= 8;
     reasons.push("more specific skill likely applies");
   }

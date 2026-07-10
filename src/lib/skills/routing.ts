@@ -6,6 +6,8 @@ import {
 } from "@/lib/skills/registry";
 import {
   inferAgent,
+  isBuildLikeRequest,
+  isLocalWorkerDiagnosticRequest,
   MIN_CONFIDENCE,
   normalize,
   scoreRegisteredSkill,
@@ -89,6 +91,11 @@ const SPECIFIC_PRIMARY_SKILLS = new Set([
   "student-work-authorization-guard",
   "grc-risk-role-screener",
   "it-help-desk-trainer",
+  "build-orchestrator",
+  "local-worker-status",
+  "project-starter",
+  "repo-change-planner",
+  "build-validation-runner",
 ]);
 
 const BROAD_PRIMARY_SKILLS = new Set([
@@ -194,6 +201,38 @@ function supportingPriority(primary: SkillRegistryEntry, candidate: SkillRegistr
     if (candidate.id === "writing-humanizer" && wantsWritingSupport(message)) return 12;
   }
 
+  if (primary.id === "build-orchestrator") {
+    if (candidate.id === "local-worker-status" && isLocalWorkerDiagnosticRequest(message)) return 28;
+    if (candidate.id === "i9-hr-compliance-specialist" && /\bi-?9\b|e-verify|everify|employment eligibility/.test(text)) return 24;
+    if (candidate.id === "personal-context-anchor" && /provider setup|model council|my os|hermes os|my repo|my app/.test(text)) return 10;
+  }
+
+  if (primary.id === "local-worker-status") {
+    if (candidate.id === "build-orchestrator" && isBuildLikeRequest(message)) return 22;
+    if (candidate.id === "build-validation-runner" && /run tests|run build|run typecheck|run lint|vercel status|safe to deploy|safe to push|validate/i.test(text)) return 18;
+  }
+
+  if (primary.id === "build-orchestrator") {
+    if (candidate.id === "repo-change-planner" && /\bplan the files|files to inspect first|rollback plan|validation commands|plan code changes/i.test(text)) return 24;
+    if (candidate.id === "build-validation-runner" && /run tests|run build|run typecheck|run lint|prisma generate|vercel status|safe to deploy|safe to push|validate/i.test(text)) return 20;
+    if (candidate.id === "project-starter" && /start a project|scaffold this|new project|mvp|architecture|phases/i.test(text)) return 18;
+  }
+
+  if (primary.id === "project-starter") {
+    if (candidate.id === "build-orchestrator" && /build|implement|fix|create|add|feature|route|api|component|page|ui|app/i.test(text)) return 22;
+    if (candidate.id === "repo-change-planner" && /\bplan the files|files to inspect first|rollback plan|validation commands|plan code changes/i.test(text)) return 12;
+  }
+
+  if (primary.id === "repo-change-planner") {
+    if (candidate.id === "build-orchestrator" && isBuildLikeRequest(message)) return 24;
+    if (candidate.id === "build-validation-runner" && /run tests|run build|run typecheck|run lint|prisma generate|vercel status|safe to deploy|safe to push|validate/i.test(text)) return 18;
+  }
+
+  if (primary.id === "build-validation-runner") {
+    if (candidate.id === "build-orchestrator" && isBuildLikeRequest(message)) return 20;
+    if (candidate.id === "local-worker-status" && /local worker|ollama|queue not processing|worker offline|jobs stuck|not build/i.test(text)) return 18;
+  }
+
   return 0;
 }
 
@@ -214,7 +253,22 @@ function selectSupportingSkills(scored: ScoredSkill[], primary: ScoredSkill, mes
     .slice(0, slots);
 }
 
-function selectPrimarySkill(scored: ScoredSkill[]): ScoredSkill | null {
+function preferredPrimarySkillIds(message: string): string[] {
+  const taskType = taskTypeFor(message);
+  if (taskType === "local_worker_diagnostics") return ["local-worker-status"];
+  if (taskType === "build_validation" || taskType === "deployment_status") return ["build-validation-runner"];
+  if (taskType === "repo_change") return ["repo-change-planner"];
+  if (taskType === "project_start") return ["project-starter"];
+  if (taskType === "build") return ["build-orchestrator"];
+  return [];
+}
+
+function selectPrimarySkill(scored: ScoredSkill[], message: string): ScoredSkill | null {
+  for (const id of preferredPrimarySkillIds(message)) {
+    const preferred = scored.find((entry) => entry.skill.id === id && entry.score >= MIN_CONFIDENCE);
+    if (preferred) return preferred;
+  }
+
   const best = scored.find((entry) => entry.score >= MIN_CONFIDENCE) ?? null;
   if (!best) return null;
   if (!BROAD_PRIMARY_SKILLS.has(best.skill.id)) return best;
@@ -233,8 +287,16 @@ function qualityWarningsFor(skills: ResolvedSkill[]): string[] {
   });
 }
 
-function buildExplanation(primary: ResolvedSkill | null, supporting: ResolvedSkill[], rejected: RejectedSkill[], consideredCount: number): string {
+function buildLikeNoMatchReason(message: string): string | null {
+  return isBuildLikeRequest(message)
+    ? "Build-like request detected, but no builder skill matched. Check build-orchestrator registration and local worker status."
+    : null;
+}
+
+function buildExplanation(primary: ResolvedSkill | null, supporting: ResolvedSkill[], rejected: RejectedSkill[], consideredCount: number, message: string): string {
   if (!primary) {
+    const buildLike = buildLikeNoMatchReason(message);
+    if (buildLike) return buildLike;
     const best = rejected[0];
     return best
       ? `No skill crossed the confidence threshold. Best candidate was ${best.id} at ${best.score}/100 because ${best.reason}`
@@ -248,7 +310,8 @@ function buildExplanation(primary: ResolvedSkill | null, supporting: ResolvedSki
 
 export function formatSkillsUsed(resolution: SkillResolution): string {
   if (!resolution.matched || !resolution.primarySkill) {
-    return `Skills used: none matched (${resolution.confidence}% confidence). Normal agent/model path used.`;
+    const buildLike = /^Build-like request detected/i.test(resolution.reason) ? ` ${resolution.reason}` : "";
+    return `Skills used: none matched (${resolution.confidence}% confidence).${buildLike} Normal agent/model path used.`;
   }
   const supporting = resolution.supportingSkills.length
     ? ` Supporting: ${resolution.supportingSkills.map((skill) => `${skill.id} (${skill.confidence}%)`).join(", ")}.`
@@ -320,7 +383,7 @@ export async function resolveRelevantSkills({
       || a.skill.name.localeCompare(b.skill.name)
     );
 
-  const primaryScored = selectPrimarySkill(scored);
+  const primaryScored = selectPrimarySkill(scored, message);
   const supportingScored = primaryScored ? selectSupportingSkills(scored, primaryScored, message, limit - 1) : [];
   const primarySkill = primaryScored ? toResolvedSkill(primaryScored, "primary") : null;
   const supportingSkills = supportingScored.map((entry) => toResolvedSkill(entry, "supporting"));
@@ -337,15 +400,19 @@ export async function resolveRelevantSkills({
   const missingContextQuestions = unique(resolvedSkills.flatMap((skill) => skill.missingContextQuestions)).slice(0, 6);
   const qualityWarnings = qualityWarningsFor(resolvedSkills);
   const topScore = scored[0]?.score ?? 0;
-  const explanation = buildExplanation(primarySkill, supportingSkills, rejectedSkills, candidates.length);
+  const taskType = taskTypeFor(message);
+  const explanation = buildExplanation(primarySkill, supportingSkills, rejectedSkills, candidates.length, message);
+  const noMatchReason = primarySkill
+    ? primarySkill.reason
+    : buildLikeNoMatchReason(message) ?? "No enabled skill matched this message strongly enough.";
 
   return {
     matched: Boolean(primarySkill),
     agentName: inferredAgent,
     projectId,
-    taskType: taskTypeFor(message),
+    taskType,
     confidence: primarySkill?.confidence ?? topScore,
-    reason: primarySkill?.reason ?? "No enabled skill matched this message strongly enough.",
+    reason: noMatchReason,
     consideredSkillCount: candidates.length,
     skills: resolvedSkills,
     primarySkill,

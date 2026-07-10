@@ -1,0 +1,226 @@
+{
+  "id": "build-orchestrator",
+  "name": "Build Orchestrator",
+  "description": "Recognize build, code-change, UI-change, debugging, validation, commit, push, and deployment-prep requests and route them to safe build planning or local execution.",
+  "category": "build",
+  "ownerAgents": [
+    "hermes",
+    "prometheus",
+    "argus",
+    "fugu"
+  ],
+  "tags": [
+    "build",
+    "code",
+    "repo",
+    "local-worker",
+    "validation",
+    "deployment"
+  ],
+  "safetyClass": "approval_required",
+  "source": "hermes-os",
+  "purpose": "Route build, code-change, UI-change, debugging, validation, commit, push, and deployment-prep requests to the correct workflow while preserving approval gates.",
+  "whenToUse": [
+    "Build a feature",
+    "Implement this",
+    "Fix this bug",
+    "Upgrade the app",
+    "Change the UI",
+    "Add an API route",
+    "Wire up local worker",
+    "Run tests",
+    "Run build",
+    "Start validation pipeline",
+    "Commit",
+    "Push",
+    "Deploy"
+  ],
+  "whenNotToUse": [
+    "Rewrite an email",
+    "Answer HR/I-9 questions",
+    "Score a job",
+    "Draft a recruiter reply",
+    "Create a normal task"
+  ],
+  "strongSignals": [
+    "build",
+    "implement",
+    "fix",
+    "upgrade",
+    "change ui",
+    "add endpoint",
+    "run tests",
+    "run build",
+    "commit",
+    "push",
+    "deploy",
+    "plan validation",
+    "local worker",
+    "dashboard ui",
+    "fix dashboard",
+    "fix ui",
+    "pricing page",
+    "update route"
+  ],
+  "negativeSignals": [
+    "rewrite this message",
+    "draft email",
+    "i-9",
+    "job application",
+    "resume",
+    "calendar",
+    "dating text"
+  ],
+  "requiredContext": [
+    "Target system area",
+    "Whether the user wants plan-only or implementation",
+    "Available local worker / Hermes Nous runtime state if relevant"
+  ],
+  "missingContextQuestions": [
+    "What exact area should be changed?",
+    "Should this be plan-only or implemented now?",
+    "Should this be approved before commit, push, or deploy?"
+  ],
+  "safetyRules": [
+    "Always inspect before changing.",
+    "Prefer plan-first unless user explicitly asks to implement.",
+    "Never write to .env or .env.local.",
+    "Never modify auth, middleware, migrations, or deployment config without explicit approval.",
+    "Never push to main automatically.",
+    "Run builds/tests first if workflow supports it before marking ready."
+  ],
+  "outputContract": {
+    "format": "Build intent detected -> Target system area -> Risk level -> Files to inspect -> Proposed plan -> Execution path -> Validation commands -> Approval needed before durable action.",
+    "mustInclude": [
+      "Build intent detected",
+      "Target system area",
+      "Risk level",
+      "Files to inspect",
+      "Proposed plan",
+      "Execution path",
+      "Validation commands",
+      "Approval needed before durable action"
+    ],
+    "mustAvoid": [
+      "Skipping repo inspection",
+      "Auto-committing or auto-pushing",
+      "Modifying .env or .env.local",
+      "Bypassing approval gates",
+      "Exposing secrets"
+    ]
+  },
+  "approvalRequiredFor": [
+    "file edits",
+    "branch creation",
+    "commits",
+    "pushes",
+    "deployment",
+    "prisma generate"
+  ],
+  "positiveExamples": [
+    "Build Provider Setup Center.",
+    "Fix the Skills page date bug.",
+    "Add Model Council v1.",
+    "Run tests and build.",
+    "Commit and push this change.",
+    "Create a route for provider setup.",
+    "Wire up the local worker.",
+    "Debug the API route failure."
+  ],
+  "negativeExamples": [
+    "Rewrite this email to my manager.",
+    "Draft a recruiter follow-up.",
+    "What should HR do about an I-9 TNC?",
+    "Create a reminder for tomorrow.",
+    "Tell me how routes work without changing anything."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "Build Provider Setup Center.",
+      "shouldMatch": true,
+      "expectedSkill": "build-orchestrator",
+      "reason": "Explicit feature request with build intent.",
+      "minimumScore": 85
+    },
+    {
+      "input": "Fix the Skills page date bug.",
+      "shouldMatch": true,
+      "expectedSkill": "build-orchestrator",
+      "reason": "Explicit bug fix request.",
+      "minimumScore": 85
+    },
+    {
+      "input": "Add Model Council v1.",
+      "shouldMatch": true,
+      "expectedSkill": "build-orchestrator",
+      "reason": "Existing-app feature request.",
+      "minimumScore": 75
+    },
+    {
+      "input": "Commit and push this change.",
+      "shouldMatch": true,
+      "expectedSkill": "build-orchestrator",
+      "reason": "Direct commit/push request with approval gate.",
+      "minimumScore": 80
+    },
+    {
+      "input": "Wire up the local worker.",
+      "shouldMatch": true,
+      "expectedSkill": "build-orchestrator",
+      "reason": "Implementation request involving the local worker.",
+      "minimumScore": 80
+    },
+    {
+      "input": "Can you update that route?",
+      "shouldMatch": true,
+      "expectedSkill": "build-orchestrator",
+      "reason": "Ambiguous code-change request needs repo context.",
+      "minimumScore": 55
+    },
+    {
+      "input": "Fix the I-9 dashboard UI.",
+      "shouldMatch": true,
+      "expectedSkill": "build-orchestrator",
+      "reason": "Mixed-domain UI fix with strong build intent.",
+      "minimumScore": 75
+    },
+    {
+      "input": "Run tests and build.",
+      "shouldMatch": false,
+      "expectedSkill": "build-validation-runner",
+      "reason": "Validation should route to build-validation-runner as primary."
+    },
+    {
+      "input": "Check Vercel deployment.",
+      "shouldMatch": false,
+      "expectedSkill": "build-validation-runner",
+      "reason": "Deployment status should route to build-validation-runner as primary."
+    },
+    {
+      "input": "Rewrite my email to my manager.",
+      "shouldMatch": false,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Email polish is not a build skill match."
+    },
+    {
+      "input": "Draft an I-9 follow-up email.",
+      "shouldMatch": false,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "HR drafting is not a build match."
+    },
+    {
+      "input": "What should HR do after an I-9 TNC?",
+      "shouldMatch": false,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "HR compliance question should not go to build."
+    },
+    {
+      "input": "Create a reminder for tomorrow.",
+      "shouldMatch": false,
+      "expectedSkill": "none",
+      "reason": "Calendar/task automation is not a build route."
+    }
+  ],
+  "version": "1.0.0",
+  "lastReviewedAt": "2026-07-10"
+}

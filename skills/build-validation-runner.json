@@ -1,0 +1,191 @@
+{
+  "id": "build-validation-runner",
+  "name": "Build Validation Runner",
+  "description": "Run or recommend validation commands after code changes.",
+  "category": "build",
+  "ownerAgents": [
+    "argus"
+  ],
+  "tags": [
+    "build",
+    "validation",
+    "tests",
+    "lint",
+    "typecheck",
+    "deployment"
+  ],
+  "safetyClass": "approval_required",
+  "source": "hermes-os",
+  "purpose": "Run checks after changes and turn failures into specific next steps instead of vague build errors.",
+  "whenToUse": [
+    "Run tests and build",
+    "Run typecheck",
+    "Run lint",
+    "Run build",
+    "Prisma generate",
+    "Deployment readiness",
+    "Vercel status",
+    "Verify changes are safe to ship"
+  ],
+  "whenNotToUse": [
+    "Rewrite an email",
+    "Answer HR/I-9 questions",
+    "Score a job",
+    "Draft a recruiter reply",
+    "Create a normal task",
+    "Explain something without changing code"
+  ],
+  "strongSignals": [
+    "run tests",
+    "run build",
+    "run typecheck",
+    "run lint",
+    "prisma generate",
+    "deployment readiness",
+    "vercel status",
+    "check vercel deployment",
+    "vercel deployment",
+    "deployment status",
+    "is this safe to push",
+    "safe to deploy",
+    "check deployment",
+    "verify validation",
+    "validation after changes"
+  ],
+  "weakSignals": [
+    "check build",
+    "run checks",
+    "validating",
+    "readiness",
+    "deployment",
+    "pipeline"
+  ],
+  "negativeSignals": [
+    "email",
+    "i-9",
+    "job application",
+    "resume",
+    "rewrite",
+    "calendar",
+    "dating text",
+    "lease message"
+  ],
+  "requiredContext": [
+    "Commands to run",
+    "Latest change set",
+    "Environment assumptions"
+  ],
+  "missingContextQuestions": [
+    "Do you want typecheck, lint, tests, and build?",
+    "Should this check deployment status as well?"
+  ],
+  "safetyRules": [
+    "Do not run destructive commands unless asked",
+    "Never touch secrets or env values while validating",
+    "Clearly separate read checks from write-capable deploy steps",
+    "Preserve existing approval gates for deploy actions"
+  ],
+  "outputContract": {
+    "format": "Validation report with clear pass/fail outcomes.",
+    "mustInclude": [
+      "Commands run",
+      "Results",
+      "Failures",
+      "Likely cause",
+      "Fix recommendation",
+      "Safe to push",
+      "Safe to deploy"
+    ],
+    "mustAvoid": [
+      "Vague status",
+      "Skipping likely cause",
+      "Recommending deploy before failures are explained"
+    ]
+  },
+  "approvalRequiredFor": [
+    "deploy steps"
+  ],
+  "positiveExamples": [
+    "Run tests and build.",
+    "Run typecheck, lint, tests, and build.",
+    "Check Vercel deployment status after this change.",
+    "Validate provider setup before deploying.",
+    "Is this safe to push?"
+  ],
+  "negativeExamples": [
+    "Rewrite my email to my manager.",
+    "Help me answer an I-9 question.",
+    "Draft a recruiter follow-up.",
+    "Create a task to follow up tomorrow.",
+    "Explain how Next.js routing works."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "Run tests and build.",
+      "shouldMatch": true,
+      "expectedSkill": "build-validation-runner",
+      "reason": "Exact validation request.",
+      "minimumScore": 90
+    },
+    {
+      "input": "Run typecheck, lint, tests, and build.",
+      "shouldMatch": true,
+      "expectedSkill": "build-validation-runner",
+      "reason": "Full validation pipeline request.",
+      "minimumScore": 90
+    },
+    {
+      "input": "Check Vercel deployment.",
+      "shouldMatch": true,
+      "expectedSkill": "build-validation-runner",
+      "reason": "Deployment validation request.",
+      "minimumScore": 80
+    },
+    {
+      "input": "Is this safe to push?",
+      "shouldMatch": true,
+      "expectedSkill": "build-validation-runner",
+      "reason": "Validation request with safety intent.",
+      "minimumScore": 85
+    },
+    {
+      "input": "Verify validation after changes.",
+      "shouldMatch": true,
+      "expectedSkill": "build-validation-runner",
+      "reason": "Ambiguous validation request.",
+      "minimumScore": 75
+    },
+    {
+      "input": "Rewrite this email to my manager.",
+      "shouldMatch": false,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Writing request should not route to validation."
+    },
+    {
+      "input": "Draft a recruiter follow-up.",
+      "shouldMatch": false,
+      "expectedSkill": "job-application-ops",
+      "reason": "Job request should not route to validation."
+    },
+    {
+      "input": "What should HR do about an I-9 TNC?",
+      "shouldMatch": false,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "HR compliance request should not route to validation."
+    },
+    {
+      "input": "Create a reminder for tomorrow.",
+      "shouldMatch": false,
+      "expectedSkill": "none",
+      "reason": "Task creation is not validation."
+    },
+    {
+      "input": "Tell me how Next.js routing works.",
+      "shouldMatch": false,
+      "expectedSkill": "none",
+      "reason": "Explanation-only request is not validation."
+    }
+  ],
+  "version": "1.0.0",
+  "lastReviewedAt": "2026-07-10"
+}
