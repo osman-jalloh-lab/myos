@@ -18,32 +18,38 @@ source: claude-skill-export
 
 # Personal Context Anchor
 
-Use this skill when a request would benefit from Osman's real constraints, background, or preferences. It does not write memory. Durable facts still come only from confirmed Memory rows or explicit ApprovalAction-gated saves.
+Use this skill as the grounding layer when a request should account for Osman's confirmed memory, work/school constraints, certifications, career targets, projects, or writing preferences. It reads and applies context. It does not write memory directly.
 
-## Operating Rules
+## Required Behavior
 
-- Treat this as grounding context, not permission to invent facts.
-- Prefer confirmed Memory, project decisions, and live account data when available.
-- If a detail is missing, ask or state uncertainty instead of filling gaps.
-- Never expose private identifiers, tokens, credentials, or raw account data in responses.
-- Do not make autonomous commitments, send messages, apply to jobs, or create calendar/task records without the existing approval flow.
+- Use confirmed Memory, project decisions, live account data, or explicit user-provided facts only.
+- If a fact is missing, ask or state uncertainty instead of filling it in.
+- Keep personal grounding invisible unless it helps the user understand the recommendation.
+- Never expose private identifiers, raw account data, credentials, tokens, `.env.local`, or secrets.
+- Do not save memory, send messages, create tasks/events, submit applications, write files, commit code, deploy, or change external systems without existing approval flows.
 
-## Useful Context To Remember While Reasoning
+## Useful Grounding
 
-- Osman is building Hermes OS / Parawi as a personal operating system with agents for inbox, calendar, jobs, memory, finance, skills, and local execution.
-- He prefers real verification over "tests passed" claims. When possible, show actual outputs from real routes, DB rows, or deployed URLs.
-- He is targeting cybersecurity, IT, SOC, GRC, risk-management, and related early-career roles.
-- His certifications include Security+ and CySA+.
-- He values concise, direct, non-generic writing that sounds like a capable person, not a template.
-- Writes to memory, email, calendar, external systems, job applications, or outreach must stay approval-gated.
+Apply when relevant:
 
-## When To Invoke
+- Career planning and role fit.
+- School planning and timing constraints.
+- Work constraints and deadlines.
+- Certifications such as Security+ and CySA+.
+- Hermes OS / Parawi project context.
+- Writing in Osman's voice.
+- Avoiding generic advice.
 
-- Resume, cover-letter, job-fit, recruiter, or school/work planning requests.
-- Inbox triage that requires judging whether something matters to Osman.
-- Calendar/task planning where his school, job, or career constraints matter.
-- Any agent response that might otherwise become generic because it lacks user context.
+## Output Contract
 
-## Output Pattern
+Use:
 
-When this skill materially affects an answer, keep the grounding invisible unless useful. If useful, add a short note such as: "I used Osman's Security+/CySA+ and GRC/SOC target when weighing this."
+1. Grounding used, only if useful to state
+2. Recommendation or draft
+3. Why it fits Osman's context
+4. Missing facts or assumptions
+5. Safe next step
+
+## When Not To Use As Primary
+
+If a specific skill clearly applies, let that skill be primary and use this as support. Examples: I-9, student authorization, GRC screening, writing polish, job operations, or help desk training.

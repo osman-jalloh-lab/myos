@@ -1,8 +1,11 @@
 {
+  "id": "grc-risk-role-screener",
   "name": "career.grc.risk_screener",
   "description": "Screens GRC, risk, compliance, audit, SOC 2, NIST, controls, and security analyst roles against Osman's Security+/CySA+ background.",
   "category": "career",
   "agent": "athena",
+  "ownerAgents": ["athena", "sophos", "hermes"],
+  "tags": ["grc", "risk-management", "compliance", "soc2", "nist", "audit", "cybersecurity"],
   "inputs": {
     "message": {
       "type": "string",
@@ -21,5 +24,199 @@
     "score this risk management job",
     "does this compliance analyst role match Security+ and CySA+?",
     "what resume angle should I use for this SOC 2 role?"
-  ]
+  ],
+  "purpose": "Determine whether a GRC, IT risk, compliance, controls, SOC 2, NIST, RMF, ISO 27001, audit evidence, policy, or security analyst role is a realistic fit, and distinguish true IT/security GRC from finance risk, legal compliance, and senior audit ownership roles.",
+  "whenToUse": [
+    "The listing mentions GRC, governance, risk, compliance, SOC 2, NIST CSF, NIST 800-53, RMF, ISO 27001, controls testing, audit evidence, policy, or compliance analyst work.",
+    "The user asks whether a GRC/risk/compliance/security analyst role fits Security+, CySA+, SOC, IT support, or early-career cybersecurity goals.",
+    "The request needs a distinction between true IT/security GRC and finance risk, legal compliance, senior audit, or non-technical compliance roles.",
+    "The user asks for a GRC resume angle, missing skills, framework gaps, or apply/maybe/skip recommendation.",
+    "The job is a role listing and should pair with Job Application Ops for application workflow."
+  ],
+  "whenNotToUse": [
+    "Do not use as primary for general job ops with no GRC, IT risk, controls, audit, compliance, or security governance content.",
+    "Do not use for pure finance risk, credit risk, legal compliance, or privacy-law roles without IT/security overlap.",
+    "Do not use for senior audit manager, director, principal, CPA-only, CISA-only, or CISSP-only roles unless the user wants a quick skip rationale.",
+    "Do not use to draft recruiter outreach as primary when the main task is writing tone."
+  ],
+  "strongSignals": [
+    "GRC",
+    "governance risk compliance",
+    "risk management",
+    "risk job",
+    "SOC 2",
+    "SOC2",
+    "NIST CSF",
+    "NIST 800-53",
+    "RMF",
+    "ISO 27001",
+    "controls testing",
+    "audit evidence",
+    "policy",
+    "compliance analyst",
+    "security analyst",
+    "third-party risk",
+    "vendor risk",
+    "control owner",
+    "risk register",
+    "security compliance",
+    "security governance",
+    "too senior"
+  ],
+  "weakSignals": [
+    "audit support",
+    "evidence collection",
+    "framework mapping",
+    "risk assessment",
+    "control testing",
+    "access review"
+  ],
+  "negativeSignals": [
+    "pure finance risk",
+    "credit risk",
+    "market risk",
+    "legal compliance only",
+    "privacy counsel",
+    "senior audit manager",
+    "director of audit",
+    "requires CPA",
+    "requires CISA as hard requirement",
+    "send recruiter email now",
+    "I-9 document request"
+  ],
+  "requiredContext": [
+    "Role title, company, seniority, required years, and must-have certifications.",
+    "Whether the role involves IT/security controls, audit evidence, frameworks, policy, risk assessment, or pure non-technical compliance.",
+    "Known tools/frameworks in the listing such as SOC 2, NIST, RMF, ISO 27001, GRC platforms, SIEM, IAM, or cloud.",
+    "User goal: apply/maybe/skip, resume angle, skill gap analysis, or job application workflow."
+  ],
+  "missingContextQuestions": [
+    "Can you paste the listing or the responsibilities and requirements section?",
+    "Does the role mention IT/security controls, SOC 2, NIST, RMF, ISO 27001, audit evidence, or policy work?",
+    "What seniority and hard requirements are listed?",
+    "Do you want a GRC fit score only or a full Apply/Maybe/Skip job plan?"
+  ],
+  "outputContract": {
+    "format": "Role category -> Fit score -> True GRC vs other risk -> Why it fits -> Risks/seniority -> Resume angle -> Missing skills -> Apply/Maybe/Skip.",
+    "mustInclude": [
+      "Whether the role is true IT/security GRC, finance risk, legal compliance, senior audit, or entry-level analyst.",
+      "Fit score and Apply/Maybe/Skip recommendation.",
+      "Concrete match to Security+, CySA+, SOC, IT support, or cybersecurity goals when relevant.",
+      "Framework or tool gaps such as SOC 2, NIST, RMF, ISO 27001, controls testing, audit evidence, IAM, or GRC platforms.",
+      "Resume angle and next learning priority."
+    ],
+    "mustAvoid": [
+      "Do not treat every risk/compliance role as cybersecurity GRC.",
+      "Do not invent audit, framework, policy, or control-testing experience.",
+      "Do not ignore hard seniority or certification requirements.",
+      "Do not send outreach or update trackers.",
+      "Do not bury a clear Skip recommendation when the role is not aligned."
+    ],
+    "tone": "analytical, direct, realistic, encouraging"
+  },
+  "safetyRules": [
+    "Keep the screen read-only unless paired with a job application action that requires approval.",
+    "Do not invent user experience with frameworks, audits, or tools.",
+    "Flag seniority, certification, legal, finance, and non-security mismatches clearly.",
+    "Prefer true IT/security GRC evidence over keyword-only matches.",
+    "Pair with Job Application Ops for resume/outreach/tracker actions."
+  ],
+  "approvalRequiredFor": [
+    "Sending recruiter messages",
+    "Submitting applications",
+    "Updating application trackers",
+    "Creating resume or cover-letter files",
+    "Saving durable memory about role status"
+  ],
+  "positiveExamples": [
+    "Score this GRC internship against my Security+ and CySA+ background.",
+    "Does this SOC 2 compliance analyst role fit me?",
+    "Is this NIST 800-53 controls testing job true cybersecurity GRC?",
+    "What resume angle should I use for this ISO 27001 risk analyst role?",
+    "Is this third-party risk analyst job too senior?",
+    "This risk job looks okay. Should I apply?"
+  ],
+  "negativeExamples": [
+    "Can I use this I-9 receipt for Section 2?",
+    "Make this text message sound flirty-light.",
+    "Write a ticket note for Active Directory password reset."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "Score this GRC internship against my Security+ and CySA+ background.",
+      "shouldMatch": true,
+      "minimumScore": 85,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Positive specific GRC internship screen."
+    },
+    {
+      "input": "Does this SOC 2 compliance analyst role fit me?",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Positive SOC 2 compliance analyst role."
+    },
+    {
+      "input": "Is this NIST 800-53 controls testing job true cybersecurity GRC?",
+      "shouldMatch": true,
+      "minimumScore": 85,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Positive NIST controls testing and true GRC distinction."
+    },
+    {
+      "input": "What resume angle should I use for this ISO 27001 risk analyst role?",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Positive ISO 27001 risk analyst resume angle."
+    },
+    {
+      "input": "Is this third-party risk analyst job too senior?",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Positive third-party risk and seniority screen."
+    },
+    {
+      "input": "I need a safe HR reply about an I-9 document.",
+      "shouldMatch": false,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Negative I-9 HR compliance."
+    },
+    {
+      "input": "Make this recruiter email less robotic.",
+      "shouldMatch": false,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Negative writing/tone request without GRC screen."
+    },
+    {
+      "input": "Write a VPN troubleshooting ticket note.",
+      "shouldMatch": false,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Negative IT help desk ticket."
+    },
+    {
+      "input": "This risk job looks okay. Should I apply?",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Ambiguous risk role; should ask whether it is IT/security GRC or finance/legal risk."
+    },
+    {
+      "input": "Can you screen this compliance analyst role?",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Ambiguous compliance role; needs listing details and IT/security distinction."
+    },
+    {
+      "input": "Score this GRC internship and tell me whether to apply.",
+      "shouldMatch": true,
+      "minimumScore": 85,
+      "expectedSkill": "grc-risk-role-screener",
+      "reason": "Multi-skill: GRC should be primary and Job Application Ops should support."
+    }
+  ],
+  "version": "2.0.0",
+  "lastReviewedAt": "2026-07-10"
 }

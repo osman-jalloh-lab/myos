@@ -4,6 +4,7 @@ import { runSkillScout } from "@/lib/skill-scout/github";
 import {
   checkDuplicateSkill,
   getRegisteredSkills,
+  PERSONAL_SKILL_IDS,
   setSkillEnabled,
   testSkillMatch,
 } from "@/lib/skills/registry";
@@ -15,25 +16,22 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const refresh = url.searchParams.get("refresh") === "1";
   const skills = await getRegisteredSkills(session.user.id, refresh);
-  const personalSkillIds = [
-    "personal-context-anchor",
-    "i9-hr-compliance-specialist",
-    "job-application-ops",
-    "it-help-desk-trainer",
-    "grc-risk-role-screener",
-    "student-work-authorization-guard",
-    "writing-humanizer",
-  ];
-
   return NextResponse.json({
     skills,
     registry: {
       refreshed: refresh,
       lastUpdated: new Date().toISOString(),
-      personalSkills: personalSkillIds.map((id) => ({
+      personalSkills: PERSONAL_SKILL_IDS.map((id) => ({
         id,
         present: skills.some((skill) => skill.id === id),
       })),
+      quality: {
+        average: skills.length ? Math.round(skills.reduce((sum, skill) => sum + skill.skillQualityScore, 0) / skills.length) : 0,
+        personalAverage: PERSONAL_SKILL_IDS.length
+          ? Math.round(PERSONAL_SKILL_IDS.reduce((sum, id) => sum + (skills.find((skill) => skill.id === id)?.skillQualityScore ?? 0), 0) / PERSONAL_SKILL_IDS.length)
+          : 0,
+        personalBelow85: PERSONAL_SKILL_IDS.filter((id) => (skills.find((skill) => skill.id === id)?.skillQualityScore ?? 0) < 85),
+      },
     },
   });
 }

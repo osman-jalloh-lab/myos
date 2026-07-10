@@ -1,8 +1,11 @@
 {
+  "id": "it-help-desk-trainer",
   "name": "it.helpdesk.trainer",
   "description": "Coaches IT help desk troubleshooting, ticket notes, escalation summaries, and support interview practice.",
   "category": "career",
   "agent": "sophos",
+  "ownerAgents": ["sophos", "athena", "hermes"],
+  "tags": ["it-support", "help-desk", "troubleshooting", "tickets", "training", "tier-1", "tier-2"],
   "inputs": {
     "message": {
       "type": "string",
@@ -21,5 +24,195 @@
     "write a clean ticket note for this issue",
     "how should I troubleshoot a login problem?",
     "coach me through a tier 1 support scenario"
-  ]
+  ],
+  "purpose": "Coach tier 1/tier 2 IT support work: troubleshooting structure, ticket notes, Active Directory, Windows login issues, network issues, hardware, printers, VPN, MFA, escalation summaries, customer-facing responses, and help desk interview prep.",
+  "whenToUse": [
+    "The user asks for troubleshooting steps, a ticket note, escalation summary, or customer-facing response for an IT support issue.",
+    "The request mentions help desk, service desk, tier 1, tier 2, Active Directory, Windows login, network, hardware, printer, VPN, MFA, or password reset.",
+    "The user wants interview prep for IT support, help desk, troubleshooting, documentation, or customer service scenarios.",
+    "The user asks how to structure notes with Issue, Impact, Steps taken, Likely cause, Next step, Escalation note, and Customer-facing response.",
+    "The request needs calm support language and factual documentation rather than generic writing polish."
+  ],
+  "whenNotToUse": [
+    "Do not use for general job application scoring unless the role is specifically IT support/help desk and the user asks for training or interview prep.",
+    "Do not use for I-9, E-Verify, CPT/OPT, GRC, or general writing polish as the primary skill.",
+    "Do not use to make real changes to systems, accounts, tickets, directories, VPN, MFA, printers, or devices.",
+    "Do not invent diagnostics, logs, device details, usernames, or resolution status."
+  ],
+  "strongSignals": [
+    "help desk",
+    "service desk",
+    "ticket note",
+    "troubleshooting steps",
+    "Active Directory",
+    "Windows login issue",
+    "cannot log in",
+    "network troubleshooting",
+    "hardware issue",
+    "printer issue",
+    "VPN not connecting",
+    "MFA issue",
+    "password reset",
+    "escalation summary",
+    "customer-facing response",
+    "tier 1 support",
+    "tier 2 support",
+    "support interview",
+    "issue impact steps taken",
+    "likely cause next step"
+  ],
+  "weakSignals": [
+    "technical support",
+    "user cannot log in",
+    "connection problem",
+    "device issue",
+    "support scenario",
+    "documentation"
+  ],
+  "negativeSignals": [
+    "I-9 document request",
+    "E-Verify notice",
+    "CPT OPT sponsorship",
+    "GRC role score",
+    "make this email sound human",
+    "send ticket update now",
+    "reset the password in production",
+    "change Active Directory account",
+    "commit code"
+  ],
+  "requiredContext": [
+    "The user symptom, error message, affected device/app/account/network, and when it started.",
+    "Impact and scope: one user or many, one device or many, one app or service-wide.",
+    "Troubleshooting already attempted and results.",
+    "Whether the desired output is troubleshooting steps, ticket notes, escalation summary, customer response, or interview answer."
+  ],
+  "missingContextQuestions": [
+    "What is the exact symptom or error message, and when did it start?",
+    "Is it affecting one user/device/app or multiple users/devices/services?",
+    "What troubleshooting steps have already been tried and what changed?",
+    "Do you need internal ticket notes, an escalation note, a customer-facing response, or interview practice?"
+  ],
+  "outputContract": {
+    "format": "Issue -> Impact -> Steps taken -> Likely cause -> Next step -> Escalation note -> Customer-facing response.",
+    "mustInclude": [
+      "Issue summary.",
+      "Impact and scope.",
+      "Troubleshooting steps taken or recommended.",
+      "Likely cause stated cautiously.",
+      "Next step, escalation note, and customer-facing response when requested."
+    ],
+    "mustAvoid": [
+      "Do not invent logs, diagnostics, device names, users, or resolution status.",
+      "Do not blame the user.",
+      "Do not perform real account, directory, VPN, MFA, printer, or device changes.",
+      "Do not expose credentials or private identifiers.",
+      "Do not overcomplicate tier 1 notes with unsupported assumptions."
+    ],
+    "tone": "calm, factual, customer-service oriented"
+  },
+  "safetyRules": [
+    "Coach and draft only; do not modify real systems or accounts.",
+    "Document only facts provided or clearly mark assumptions.",
+    "Avoid asking for passwords, secrets, private keys, or unnecessary personal identifiers.",
+    "Escalate when access, permissions, outage scope, security risk, or repeated failure exceeds tier 1/tier 2 scope.",
+    "Keep customer-facing language respectful and non-blaming."
+  ],
+  "approvalRequiredFor": [
+    "Changing accounts, directory objects, devices, network settings, VPN, MFA, or printers",
+    "Sending customer or internal ticket updates",
+    "Creating or modifying external tickets",
+    "Saving durable memory about support incidents",
+    "Writing files or running scripts"
+  ],
+  "positiveExamples": [
+    "Write a ticket note for VPN not connecting.",
+    "Walk me through troubleshooting an Active Directory login issue.",
+    "Create an escalation summary for MFA failing after a phone change.",
+    "Help me answer a tier 1 support interview question.",
+    "Draft a customer-facing response for a printer issue.",
+    "The user cannot log in. What now?"
+  ],
+  "negativeExamples": [
+    "Score this GRC internship.",
+    "Draft an HR reply about an I-9 receipt.",
+    "Make this recruiter email less robotic."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "Write a ticket note for VPN not connecting.",
+      "shouldMatch": true,
+      "minimumScore": 85,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Positive VPN ticket note request."
+    },
+    {
+      "input": "Walk me through troubleshooting an Active Directory login issue.",
+      "shouldMatch": true,
+      "minimumScore": 85,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Positive Active Directory login troubleshooting."
+    },
+    {
+      "input": "Create an escalation summary for MFA failing after a phone change.",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Positive MFA escalation summary."
+    },
+    {
+      "input": "Help me answer a tier 1 support interview question.",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Positive help desk interview prep."
+    },
+    {
+      "input": "Draft a customer-facing response for a printer issue.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Positive printer support response."
+    },
+    {
+      "input": "Score this GRC internship against Security+.",
+      "shouldMatch": false,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Negative GRC role screen."
+    },
+    {
+      "input": "Draft a safe I-9 Section 2 response.",
+      "shouldMatch": false,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Negative I-9 HR compliance."
+    },
+    {
+      "input": "Make this recruiter email sound less robotic.",
+      "shouldMatch": false,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Negative writing polish request."
+    },
+    {
+      "input": "The user cannot log in. What now?",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Ambiguous login issue; should ask scope, error, and system."
+    },
+    {
+      "input": "Can you make a ticket note for this issue?",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Ambiguous ticket note; should ask symptom, impact, and steps."
+    },
+    {
+      "input": "Write a customer-facing response for VPN not connecting.",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "it-help-desk-trainer",
+      "reason": "Multi-skill: Help Desk Trainer primary, Writing Humanizer can support tone."
+    }
+  ],
+  "version": "2.0.0",
+  "lastReviewedAt": "2026-07-10"
 }

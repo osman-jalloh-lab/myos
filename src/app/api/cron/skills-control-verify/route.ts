@@ -37,6 +37,8 @@ export async function GET(req: Request) {
       safetyClass: skill?.safetyClass ?? null,
       source: skill?.source ?? null,
       validationStatus: skill?.validationStatus ?? null,
+      skillQualityScore: skill?.skillQualityScore ?? null,
+      skillQualityBand: skill?.skillQualityBand ?? null,
       triggerExamples: skill?.triggerExamples ?? [],
     };
   });
@@ -45,6 +47,7 @@ export async function GET(req: Request) {
 
   return Response.json({
     ok: required.every((skill) => skill.present && skill.validationStatus === "valid")
+      && required.every((skill) => Number(skill.skillQualityScore ?? 0) >= 85)
       && duplicate.duplicate
       && /already installed; no action taken/i.test(duplicate.message)
       && Boolean(match?.matched),

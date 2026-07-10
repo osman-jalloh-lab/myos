@@ -241,12 +241,47 @@ interface SkillView {
   problemSolved: string;
   instructionFile: string | null;
   instructionPreview: string | null;
+  purpose: string;
+  whenToUse: string[];
+  whenNotToUse: string[];
+  strongSignals: string[];
+  weakSignals: string[];
+  negativeSignals: string[];
+  requiredContext: string[];
+  missingContextQuestions: string[];
+  outputContract: { format: string; mustInclude: string[]; mustAvoid: string[]; tone?: string };
+  safetyRules: string[];
+  approvalRequiredFor: string[];
+  positiveExamples: string[];
+  negativeExamples: string[];
+  evaluationPrompts: Array<{ input: string; shouldMatch: boolean; minimumScore?: number; expectedSkill?: string; reason: string }>;
+  version: string;
+  lastReviewedAt: string | null;
+  skillQualityScore: number;
+  skillQualityBand: "Excellent" | "Strong" | "Usable" | "Weak" | "Needs upgrade";
+  qualityWarnings: string[];
 }
 
 interface SkillRegistryData {
   refreshed: boolean;
   lastUpdated: string;
   personalSkills: Array<{ id: string; present: boolean }>;
+  quality?: {
+    average: number;
+    personalAverage: number;
+    personalBelow85: string[];
+  };
+}
+
+interface SkillTestResult {
+  matched: boolean;
+  score: number;
+  reason: string;
+  matchedSignals?: string[];
+  negativeMatches?: string[];
+  missingContextQuestions?: string[];
+  skillQualityScore?: number;
+  skillQualityBand?: SkillView["skillQualityBand"];
 }
 
 interface SkillCandidate {
@@ -388,6 +423,13 @@ function statusColor(status: string): string {
 
 function statusLabel(status: string): string {
   return status.replace(/_/g, " ");
+}
+
+function qualityColor(score: number): string {
+  if (score >= 90) return "#34D399";
+  if (score >= 75) return "#60A5FA";
+  if (score >= 60) return "#FBBF24";
+  return "#F87171";
 }
 
 function localPreviewPort(url: string | null | undefined): string | null {
@@ -1744,7 +1786,7 @@ function SkillsPanel({
   onScout: (repoUrl: string) => Promise<void>;
   onRefresh: () => Promise<void>;
   onSetEnabled: (skillId: string, enabled: boolean) => Promise<void>;
-  onTestMatch: (skillId: string, message: string) => Promise<{ matched: boolean; score: number; reason: string }>;
+  onTestMatch: (skillId: string, message: string) => Promise<SkillTestResult>;
   onAddDuplicateProbe: (candidateName: string) => Promise<string>;
   onApprove: (id: string) => Promise<void>;
   onReject: (id: string) => Promise<void>;
@@ -1755,7 +1797,7 @@ function SkillsPanel({
   const [error, setError] = useState<string | null>(null);
   const [openSkill, setOpenSkill] = useState<string | null>(null);
   const [matchText, setMatchText] = useState("score this SOC analyst role against my Security+ and CySA+ background");
-  const [matchResult, setMatchResult] = useState<Record<string, string>>({});
+  const [matchResult, setMatchResult] = useState<Record<string, SkillTestResult>>({});
   const [duplicateMessage, setDuplicateMessage] = useState<string | null>(null);
   const scout = async () => {
     if (!repoUrl.trim()) return;
@@ -1789,6 +1831,11 @@ function SkillsPanel({
   const lastUsed = skills.filter((skill) => skill.lastUsedAt).sort((a, b) => new Date(b.lastUsedAt ?? 0).getTime() - new Date(a.lastUsedAt ?? 0).getTime()).slice(0, 6);
   const validCount = skills.filter((skill) => skill.validationStatus === "valid").length;
   const personalPresent = registry?.personalSkills.filter((skill) => skill.present).length ?? 0;
+  const averageQuality = skills.length ? Math.round(skills.reduce((sum, skill) => sum + skill.skillQualityScore, 0) / skills.length) : 0;
+  const strongCoreCount = registry?.personalSkills.filter((item) => {
+    const skill = skills.find((entry) => entry.id === item.id);
+    return item.present && (skill?.skillQualityScore ?? 0) >= 85;
+  }).length ?? 0;
 
   const scoutApprovals = approvals.filter((approval) => approval.actionType === "skill_scout_import");
 
@@ -1831,6 +1878,7 @@ function SkillsPanel({
           <div style={{ display: "grid", gap: 6, minWidth: 190 }}>
             <span style={badgeStyle("#34D399")}>{validCount} valid metadata</span>
             <span style={badgeStyle("#FBBF24")}>{skills.filter((skill) => skill.validationStatus !== "valid").length} warnings</span>
+            <span style={badgeStyle(qualityColor(registry?.quality?.personalAverage ?? averageQuality))}>Core quality {registry?.quality?.personalAverage ?? averageQuality}%</span>
             <span style={badgeStyle("#60A5FA")}>{registry?.lastUpdated ? `Updated ${timeAgo(registry.lastUpdated)}` : "Live registry"}</span>
           </div>
         </div>
@@ -1839,8 +1887,8 @@ function SkillsPanel({
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
         {[
           ["Installed Skills", installed.length, "#34D399"],
-          ["Recently Added", recentlyAdded.length, "#60A5FA"],
-          ["Recommended", recommended.length, "#FBBF24"],
+          ["Avg Quality", `${averageQuality}%`, qualityColor(averageQuality)],
+          ["Core >=85", `${strongCoreCount}/7`, strongCoreCount === 7 ? "#34D399" : "#FBBF24"],
           ["Usage Count", skills.reduce((sum, skill) => sum + skill.usageCount, 0), "#A78BFA"],
         ].map(([label, value, color]) => (
           <div key={label} style={{ ...cardStyle, padding: 14 }}>
@@ -1968,6 +2016,7 @@ function SkillsPanel({
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
               {skill.ownerAgents.map((agent) => <span key={agent} style={badgeStyle(agentColor(agent))}>{agent}</span>)}
               <span style={badgeStyle(skill.safetyClass === "read_only" ? "#34D399" : skill.safetyClass === "approval_required" ? "#FBBF24" : "#F87171")}>{statusLabel(skill.safetyClass)}</span>
+              <span style={badgeStyle(qualityColor(skill.skillQualityScore))}>{skill.skillQualityScore} {skill.skillQualityBand}</span>
               <span style={badgeStyle(skill.estimatedCostSaving === "high" ? "#34D399" : skill.estimatedCostSaving === "medium" ? "#60A5FA" : "#94A3B8")}>{skill.estimatedCostSaving} savings</span>
               <span style={badgeStyle(skill.validationStatus === "valid" ? "#34D399" : skill.validationStatus === "missing_metadata" ? "#FBBF24" : "#F87171")}>{statusLabel(skill.validationStatus)}</span>
             </div>
@@ -1979,22 +2028,51 @@ function SkillsPanel({
               <span>{skill.lastUsedAt ? `Last used ${timeAgo(skill.lastUsedAt)}` : "Never used"}</span>
             </div>
             {skill.validationWarnings.length > 0 && <div style={{ color: "#FBBF24", fontSize: 11, marginBottom: 9 }}>{skill.validationWarnings.join(" ")}</div>}
+            {skill.qualityWarnings.length > 0 && <div style={{ color: "#FBBF24", fontSize: 11, marginBottom: 9 }}>Quality: {skill.qualityWarnings.slice(0, 2).join(" ")}</div>}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
               <button onClick={() => void onSetEnabled(skill.id, !skill.enabled)} style={smallButtonStyle(skill.enabled ? "#94A3B8" : "#34D399")}>{skill.enabled ? "Disable" : "Enable"}</button>
-              <button onClick={() => setOpenSkill(openSkill === skill.id ? null : skill.id)} style={smallButtonStyle("#60A5FA")}>Open Instructions</button>
+              <button onClick={() => setOpenSkill(openSkill === skill.id ? null : skill.id)} style={smallButtonStyle("#60A5FA")}>Details</button>
               <button
-                onClick={() => void onTestMatch(skill.id, matchText).then((result) => setMatchResult((prev) => ({ ...prev, [skill.id]: `${result.score}/100 - ${result.reason}` })))}
+                onClick={() => void onTestMatch(skill.id, matchText).then((result) => setMatchResult((prev) => ({ ...prev, [skill.id]: result })))}
                 style={smallButtonStyle("#A78BFA")}
               >
                 Test Match
               </button>
             </div>
             {openSkill === skill.id && (
-              <pre style={{ margin: "10px 0 0", maxHeight: 220, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", color: "#94A3B8", fontSize: 11, border: "1px solid rgba(93,111,143,0.22)", borderRadius: 8, padding: 10, background: "rgba(14,20,36,0.58)" }}>
-                {skill.instructionPreview ?? "No SKILL.md instructions found."}
-              </pre>
+              <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8 }}>
+                  <SkillSignalBlock title="Strong Signals" color="#34D399" items={skill.strongSignals} />
+                  <SkillSignalBlock title="When Not" color="#F87171" items={skill.whenNotToUse} />
+                  <SkillSignalBlock title="Output Must Include" color="#60A5FA" items={skill.outputContract.mustInclude} />
+                  <SkillSignalBlock title="Safety Rules" color="#FBBF24" items={skill.safetyRules} />
+                </div>
+                <div style={{ padding: 10, border: "1px solid rgba(93,111,143,0.22)", borderRadius: 8, background: "rgba(14,20,36,0.38)", color: "#94A3B8", fontSize: 11, lineHeight: 1.45 }}>
+                  <div style={{ color: "#D8DEEB", fontWeight: 800, marginBottom: 4 }}>Output contract</div>
+                  {skill.outputContract.format}
+                </div>
+                <div style={{ padding: 10, border: "1px solid rgba(93,111,143,0.22)", borderRadius: 8, background: "rgba(14,20,36,0.38)", color: "#94A3B8", fontSize: 11, lineHeight: 1.45 }}>
+                  <div style={{ color: "#D8DEEB", fontWeight: 800, marginBottom: 4 }}>Eval examples</div>
+                  {skill.evaluationPrompts.slice(0, 4).map((prompt) => (
+                    <div key={`${skill.id}-${prompt.input}`} style={{ marginBottom: 5 }}>
+                      <span style={{ color: prompt.shouldMatch ? "#34D399" : "#F87171", fontWeight: 800 }}>{prompt.shouldMatch ? "match" : "reject"}</span>
+                      {" "}{prompt.input}
+                    </div>
+                  ))}
+                </div>
+                <pre style={{ maxHeight: 180, overflow: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word", color: "#94A3B8", fontSize: 11, border: "1px solid rgba(93,111,143,0.22)", borderRadius: 8, padding: 10, background: "rgba(14,20,36,0.58)", margin: 0 }}>
+                  {skill.instructionPreview ?? "No SKILL.md instructions found."}
+                </pre>
+              </div>
             )}
-            {matchResult[skill.id] && <div style={{ color: "#C4B5FD", fontSize: 11, marginTop: 8 }}>{matchResult[skill.id]}</div>}
+            {matchResult[skill.id] && (
+              <div style={{ color: "#C4B5FD", fontSize: 11, marginTop: 8, lineHeight: 1.45 }}>
+                <strong>{matchResult[skill.id].matched ? "Matched" : "Rejected"}: {matchResult[skill.id].score}/100</strong>
+                <div>{matchResult[skill.id].reason}</div>
+                {Boolean(matchResult[skill.id].matchedSignals?.length) && <div>Signals: {matchResult[skill.id].matchedSignals?.slice(0, 5).join(", ")}</div>}
+                {Boolean(matchResult[skill.id].negativeMatches?.length) && <div style={{ color: "#F87171" }}>Negative: {matchResult[skill.id].negativeMatches?.slice(0, 4).join(", ")}</div>}
+              </div>
+            )}
           </div>
         ))}
         </div>
@@ -2006,6 +2084,19 @@ function SkillsPanel({
             style={{ flex: 1, minWidth: 0, background: "rgba(14,20,36,0.72)", border: "1px solid #28324A", borderRadius: 8, padding: "9px 10px", color: "#F1F4FB", fontSize: 12, outline: "none" }}
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SkillSignalBlock({ title, color, items }: { title: string; color: string; items: string[] }) {
+  return (
+    <div style={{ padding: 10, border: `1px solid ${color}33`, borderRadius: 8, background: `${color}0F`, minWidth: 0 }}>
+      <div style={{ color, fontSize: 10, fontWeight: 900, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>{title}</div>
+      <div style={{ display: "grid", gap: 4 }}>
+        {(items.length ? items.slice(0, 5) : ["No metadata yet"]).map((item) => (
+          <div key={`${title}-${item}`} style={{ color: "#D8DEEB", fontSize: 11, lineHeight: 1.35, overflowWrap: "anywhere" }}>{item}</div>
+        ))}
       </div>
     </div>
   );
@@ -2777,7 +2868,7 @@ export default function CommandCenterClient() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "testMatch", skillId, message }),
     });
-    const data = await res.json() as { result?: { matched: boolean; score: number; reason: string }; error?: string };
+    const data = await res.json() as { result?: SkillTestResult; error?: string };
     if (!res.ok || !data.result) throw new Error(data.error ?? "Skill match failed.");
     await refreshSkills();
     return data.result;

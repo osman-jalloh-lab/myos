@@ -1,8 +1,11 @@
 {
+  "id": "i9-hr-compliance-specialist",
   "name": "hr.i9.compliance",
   "description": "Draft careful HR/I-9/E-Verify guidance and approval-gated email responses without giving legal advice or bypassing approvals.",
   "category": "work",
   "agent": "themis",
+  "ownerAgents": ["themis", "iris", "hermes"],
+  "tags": ["i9", "e-verify", "hr-compliance", "work-authorization", "onboarding"],
   "inputs": {
     "message": {
       "type": "string",
@@ -21,5 +24,198 @@
     "what should I do with this E-Verify notice?",
     "turn this HR compliance email into next steps",
     "does this work authorization message need action?"
-  ]
+  ],
+  "purpose": "Guide Form I-9, E-Verify, reverification, document review, receipt, TNC, and HR compliance messaging with cautious non-legal language and approval-gated drafts.",
+  "whenToUse": [
+    "A request mentions Form I-9, I-9 Section 1, Section 2, Section 3, E-Verify, reverification, TNC, employment eligibility, document review, receipts, or HR onboarding compliance.",
+    "The user needs a safe next-step checklist for I-9 deadlines, late completion, correction, remote document review, or reverification.",
+    "The user asks for a draft HR response about acceptable documents, I-797A/C, I-94, foreign passport, EAD, Permanent Resident Card, or Social Security card restrictions.",
+    "The request asks whether an I-9 or E-Verify notice needs action without enough facts to give a final compliance answer.",
+    "The agent needs to warn that employees choose which acceptable documents to present."
+  ],
+  "whenNotToUse": [
+    "Do not use as the primary skill for general writing polish with no HR, I-9, E-Verify, or employment eligibility issue.",
+    "Do not use for student CPT/OPT eligibility unless the issue is also an employer I-9, E-Verify, or onboarding document question.",
+    "Do not use to provide legal advice, final USCIS interpretations, or instructions to discriminate based on citizenship or immigration status.",
+    "Do not use to send an email, submit E-Verify, alter an HR record, or create a calendar/task without the existing approval flow."
+  ],
+  "strongSignals": [
+    "Form I-9",
+    "I-9 email",
+    "I-9 document request",
+    "I-9 Section 1",
+    "I-9 Section 2",
+    "I-9 Section 3",
+    "E-Verify",
+    "tentative nonconfirmation",
+    "TNC notice",
+    "reverification",
+    "employment eligibility verification",
+    "remote document review",
+    "I-797A",
+    "I-797C",
+    "I-94",
+    "foreign passport",
+    "Employment Authorization Document",
+    "EAD",
+    "Permanent Resident Card",
+    "restricted Social Security card",
+    "receipt rule",
+    "late I-9 completion",
+    "I-9 correction"
+  ],
+  "weakSignals": [
+    "new hire paperwork",
+    "onboarding documents",
+    "HR compliance email",
+    "work authorization document",
+    "identity document",
+    "deadline from HR"
+  ],
+  "negativeSignals": [
+    "choose which document the employee must present",
+    "send the email now",
+    "create the calendar event",
+    "commit this code",
+    "lease email",
+    "general resume rewrite",
+    "legal advice only",
+    "immigration strategy unrelated to employer verification"
+  ],
+  "requiredContext": [
+    "Whether this is Section 1, Section 2, Section 3, E-Verify, reverification, correction, receipt, TNC, or remote review.",
+    "Known dates: hire date, first day of employment, notice date, deadline, reverification date, or late-completion date.",
+    "The exact HR message or facts provided, without inventing immigration status or document details.",
+    "Whether the user is asking for analysis, a checklist, or a draft response."
+  ],
+  "missingContextQuestions": [
+    "Which I-9 or E-Verify step is involved: Section 1, Section 2, Section 3, reverification, correction, receipt, TNC, or remote review?",
+    "What exact deadline or date is shown in the HR notice?",
+    "What facts are already known from the employee or HR message?",
+    "Are you asking for a safe checklist only, or a draft response that should stay approval-gated?"
+  ],
+  "outputContract": {
+    "format": "Issue -> Known facts -> Missing facts -> Deadline/risk check -> Safe next step -> Approval-gated draft if requested.",
+    "mustInclude": [
+      "A clear statement that this is not legal advice.",
+      "A missing facts checklist when the request is incomplete.",
+      "The employee-choice-of-documents rule when documents are discussed.",
+      "Deadline identification or a note that the deadline is unknown.",
+      "Approval-gated status for any outbound HR draft."
+    ],
+    "mustAvoid": [
+      "Do not tell an employee which acceptable document to present.",
+      "Do not request unnecessary sensitive documents.",
+      "Do not invent immigration, identity, or employment authorization facts.",
+      "Do not auto-send emails or modify HR/E-Verify records.",
+      "Do not make final legal conclusions."
+    ],
+    "tone": "calm, precise, non-alarming, HR-safe"
+  },
+  "safetyRules": [
+    "Use safe, non-legal language and state uncertainty when facts are missing.",
+    "Do not tell an employee which document to present for I-9; employees choose from acceptable documents.",
+    "Do not ask for extra documents beyond what is necessary for the stated I-9 or E-Verify process.",
+    "Outbound HR messages are drafts only and require ApprovalAction before sending.",
+    "Do not submit E-Verify, edit HR records, create calendar events, or write files from skill guidance.",
+    "Do not expose secrets, credentials, or raw private account data."
+  ],
+  "approvalRequiredFor": [
+    "Sending or replying to HR email",
+    "Creating or updating an email draft",
+    "Creating calendar reminders or tasks",
+    "Changing HR, onboarding, I-9, or E-Verify records",
+    "Any durable memory write"
+  ],
+  "positiveExamples": [
+    "I need to ask an employee for their I-9 document.",
+    "What should I do with this E-Verify TNC notice?",
+    "Draft a safe HR reply about an I-797A and I-94 for I-9.",
+    "The new hire completed Section 1 late. What should HR say?",
+    "Can a receipt be used for Section 2 and what deadline matters?",
+    "Make this I-9 email to HR sound less robotic."
+  ],
+  "negativeExamples": [
+    "Make this lease email sound warmer.",
+    "Score this GRC analyst internship for me.",
+    "Write a VPN troubleshooting ticket note."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "I need to ask an employee for their I-9 document.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Positive I-9 document request; must warn that the employee chooses documents."
+    },
+    {
+      "input": "What should I do with this E-Verify tentative nonconfirmation notice?",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Positive E-Verify TNC workflow."
+    },
+    {
+      "input": "Draft a safe HR reply about an I-797A and I-94 for a new hire I-9.",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Positive I-9 document and draft request with approval gate."
+    },
+    {
+      "input": "The hire completed Section 1 late and HR wants a correction note.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Positive Section 1 late completion and correction."
+    },
+    {
+      "input": "Can we use a receipt for Section 2 remote document review?",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Positive receipt and remote review workflow."
+    },
+    {
+      "input": "Make this lease email sound friendlier.",
+      "shouldMatch": false,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Negative general writing request with no I-9 or HR compliance issue."
+    },
+    {
+      "input": "Score this GRC internship against my Security+ background.",
+      "shouldMatch": false,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Negative career screening belongs to GRC and job application skills."
+    },
+    {
+      "input": "Write a ticket note for VPN not connecting.",
+      "shouldMatch": false,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Negative IT support ticket request."
+    },
+    {
+      "input": "This I-9 document looks off. Is it okay?",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Ambiguous I-9 document review; should match but ask for missing facts."
+    },
+    {
+      "input": "HR says there is an E-Verify deadline but I only have this screenshot.",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Ambiguous E-Verify deadline; should flag missing exact date and notice text."
+    },
+    {
+      "input": "Make this I-9 email to HR sound less robotic.",
+      "shouldMatch": true,
+      "minimumScore": 70,
+      "expectedSkill": "i9-hr-compliance-specialist",
+      "reason": "Multi-skill: I-9 should pair with Writing Humanizer for tone."
+    }
+  ],
+  "version": "2.0.0",
+  "lastReviewedAt": "2026-07-10"
 }

@@ -1,8 +1,11 @@
 {
+  "id": "job-application-ops",
   "name": "job.application.ops",
   "description": "Runs job-search operations for Athena: fit checks, ATS-aware resume/cover-letter drafting, app tracking, and approval-gated recruiter outreach.",
   "category": "career",
   "agent": "athena",
+  "ownerAgents": ["athena", "iris", "hermes"],
+  "tags": ["jobs", "applications", "resume", "cover-letter", "ats", "recruiters", "career"],
   "inputs": {
     "message": {
       "type": "string",
@@ -21,5 +24,196 @@
     "tailor my resume for this GRC analyst job",
     "draft a follow-up to this recruiter",
     "track this application as applied"
-  ]
+  ],
+  "purpose": "Operate Osman's job-search workflow: screen listings, decide Apply/Maybe/Skip, tailor ATS resume angles, prepare cover letters and recruiter follow-ups, and keep outreach or tracker updates approval-gated.",
+  "whenToUse": [
+    "The user asks to score, screen, apply to, skip, track, or compare a job, internship, full-time role, SOC role, GRC role, risk role, IT support role, or cybersecurity role.",
+    "The request asks for ATS resume tailoring, cover letter positioning, recruiter follow-up, interview prep framing, or application tracking.",
+    "The request needs an Apply/Maybe/Skip recommendation, fit score, resume angle, missing skills, risks, and next step.",
+    "The role may involve internship vs full-time tradeoffs, start dates, student authorization, or sponsorship and should pair with the authorization guard.",
+    "The request includes outreach or sending but must remain approval-gated."
+  ],
+  "whenNotToUse": [
+    "Do not use as the primary skill for a pure GRC/NIST/SOC 2/control-testing role screen when GRC Risk Role Screener is more specific.",
+    "Do not use as the primary skill for F-1/CPT/OPT/sponsorship legal-risk wording when Student Work Authorization Guard is more specific.",
+    "Do not use for generic writing polish with no job, recruiter, resume, cover letter, or application context.",
+    "Do not use to submit applications, send messages, create files, commit code, or update external systems without approval."
+  ],
+  "strongSignals": [
+    "job fit scoring",
+    "fit score",
+    "should I apply",
+    "Apply Maybe Skip",
+    "ATS resume tailoring",
+    "cover letter",
+    "recruiter message",
+    "recruiter follow-up",
+    "application tracking",
+    "track this application",
+    "applied after I approve",
+    "SOC analyst role",
+    "GRC role",
+    "risk role",
+    "IT support role",
+    "cybersecurity analyst role",
+    "internship vs full-time",
+    "entry-level analyst",
+    "resume angle",
+    "missing skills",
+    "next step for application",
+    "approval-gated outreach"
+  ],
+  "weakSignals": [
+    "job listing",
+    "career opportunity",
+    "hiring manager",
+    "interview",
+    "role description",
+    "application deadline"
+  ],
+  "negativeSignals": [
+    "pure I-9 compliance question",
+    "E-Verify notice",
+    "pure CPT OPT legal advice",
+    "make this lease email warmer",
+    "VPN ticket note",
+    "send the recruiter email now",
+    "commit this resume file"
+  ],
+  "requiredContext": [
+    "Role title, company, job description, location, employment type, and deadline if available.",
+    "User goal: apply, maybe, skip, tailor resume, draft follow-up, track status, or prepare interview answer.",
+    "Known constraints such as internship vs full-time, start date, sponsorship wording, school schedule, or location.",
+    "Confirmed background only: Security+, CySA+, IT/cyber/GRC/SOC targets, projects, and experience the system already knows or the user provides."
+  ],
+  "missingContextQuestions": [
+    "What is the role title, company, and job description or listing text?",
+    "Are you trying to decide Apply/Maybe/Skip, tailor a resume, draft outreach, or track the application?",
+    "Is this internship, full-time, part-time, remote, hybrid, or on-site, and are there start-date constraints?",
+    "Do you want a fit score only or also a resume angle and next step?"
+  ],
+  "outputContract": {
+    "format": "Apply/Maybe/Skip -> Fit score -> Why it fits -> Risks -> Resume angle -> Missing skills -> Next step -> Approval-gated draft if requested.",
+    "mustInclude": [
+      "Apply, Maybe, or Skip recommendation.",
+      "Fit score with concrete reasons.",
+      "Why it fits Osman's Security+/CySA+ and target roles when relevant.",
+      "Risks or constraints including sponsorship, timing, seniority, location, or hard requirements.",
+      "Resume angle, missing skills, and next step."
+    ],
+    "mustAvoid": [
+      "Do not invent employment history, degrees, certifications, projects, or application status.",
+      "Do not overstate experience with tools or frameworks.",
+      "Do not send recruiter outreach or submit applications.",
+      "Do not update external trackers or write files without approval.",
+      "Do not ignore a more specific GRC or work-authorization skill."
+    ],
+    "tone": "direct, practical, encouraging, realistic"
+  },
+  "safetyRules": [
+    "Use only confirmed user background or role text; do not invent credentials or experience.",
+    "Keep recruiter emails, cover letters, applications, tracker updates, and file writes approval-gated.",
+    "Flag work authorization or start-date risks and pair with Student Work Authorization Guard when needed.",
+    "Prefer realistic fit and targeted applications over generic optimism.",
+    "Do not expose private data, secrets, or raw account details."
+  ],
+  "approvalRequiredFor": [
+    "Sending recruiter, hiring manager, school, or HR messages",
+    "Submitting applications",
+    "Creating or updating cover letters, resumes, or files",
+    "Updating application trackers",
+    "Saving durable memory about job status or personal constraints"
+  ],
+  "positiveExamples": [
+    "Score this SOC analyst role and tell me Apply, Maybe, or Skip.",
+    "Tailor my resume angle for this GRC analyst job.",
+    "Draft a recruiter follow-up for this application.",
+    "Track this application as applied after I approve it.",
+    "This role looks interesting. Should I apply?",
+    "Can you help with this recruiter message?",
+    "Is this internship better than a full-time IT support role for me?"
+  ],
+  "negativeExamples": [
+    "What should HR say about an I-9 TNC notice?",
+    "Can I work off-campus before OPT starts?",
+    "Write a ticket note for a printer issue."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "Score this SOC analyst role and tell me Apply, Maybe, or Skip.",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "job-application-ops",
+      "reason": "Positive job fit scoring with required output template."
+    },
+    {
+      "input": "Tailor my resume angle for this GRC analyst job.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "job-application-ops",
+      "reason": "Positive ATS resume tailoring for a role."
+    },
+    {
+      "input": "Draft a recruiter follow-up for my application.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "job-application-ops",
+      "reason": "Positive recruiter follow-up with approval gate."
+    },
+    {
+      "input": "Track this application as applied after I approve it.",
+      "shouldMatch": true,
+      "minimumScore": 70,
+      "expectedSkill": "job-application-ops",
+      "reason": "Positive application tracking, approval required."
+    },
+    {
+      "input": "Is this internship better than a full-time IT support role for me?",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "job-application-ops",
+      "reason": "Positive internship vs full-time career decision."
+    },
+    {
+      "input": "What should HR do with an I-9 Section 2 receipt?",
+      "shouldMatch": false,
+      "expectedSkill": "job-application-ops",
+      "reason": "Negative I-9 compliance belongs to I-9 HR skill."
+    },
+    {
+      "input": "Can I start off-campus before OPT is approved?",
+      "shouldMatch": false,
+      "expectedSkill": "job-application-ops",
+      "reason": "Negative student authorization is more specific."
+    },
+    {
+      "input": "Write a customer-facing VPN ticket response.",
+      "shouldMatch": false,
+      "expectedSkill": "job-application-ops",
+      "reason": "Negative IT help desk request."
+    },
+    {
+      "input": "This role looks interesting. Should I apply?",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "job-application-ops",
+      "reason": "Ambiguous role screen; should ask for listing details."
+    },
+    {
+      "input": "Can you help with this recruiter message?",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "job-application-ops",
+      "reason": "Ambiguous recruiter/application request; needs message and goal."
+    },
+    {
+      "input": "My internship asks if I need sponsorship and I want to apply.",
+      "shouldMatch": true,
+      "minimumScore": 70,
+      "expectedSkill": "job-application-ops",
+      "reason": "Multi-skill: Job Application Ops should support Student Work Authorization Guard."
+    }
+  ],
+  "version": "2.0.0",
+  "lastReviewedAt": "2026-07-10"
 }

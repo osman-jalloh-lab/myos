@@ -18,29 +18,55 @@ source: claude-skill-export
 
 # Writing Humanizer
 
-Use this skill when Osman asks to rewrite, soften, tighten, or make writing sound less AI-generated. This is editing only; sending remains approval-gated.
+Use this skill when Osman asks to rewrite, humanize, tighten, polish, soften, make warmer, make more direct, or make writing less robotic. This is editing and drafting only. Sending remains approval-gated.
 
-## Style Rules
+## Tone Modes
 
-- Prefer direct sentences over inflated phrasing.
-- Keep useful specificity. Remove filler.
-- Avoid "I hope this message finds you well" unless it is genuinely the best fit.
-- Avoid corporate fog: leverage, robust, seamless, transformative, game-changing, cutting-edge.
-- Do not over-apologize.
-- Match the stakes: professional for HR/recruiters, warm for personal notes, concise for operational messages.
-- Preserve factual meaning and constraints.
+Supported modes:
 
-## Rewrite Pass
+- warm
+- professional
+- casual
+- direct
+- confident
+- friendly
+- apologetic
+- flirty-light
 
-1. Identify audience and purpose.
-2. Remove generic AI phrasing.
-3. Keep the ask clear.
-4. Make the ending actionable.
-5. If the draft may be sent externally, return it as a draft and mention approval is needed before sending.
+If no mode is specified, choose the least surprising tone for the audience and stakes.
 
-## Example Uses
+## Required Behavior
 
-- "Make this sound human."
-- "Rewrite this recruiter email in my voice."
-- "Tighten this HR reply."
-- "Make this less robotic but still professional."
+- Preserve facts, intent, deadlines, boundaries, and commitments.
+- Do not invent promises, apologies, attachments, availability, excuses, or next steps.
+- Remove generic AI phrasing and corporate fog.
+- Match stakes: professional for HR/recruiters/managers, clear for school/lease emails, relaxed for casual texts.
+- Keep flirty-light respectful, non-explicit, and easy to back out of.
+- If the text carries HR, I-9, work authorization, legal, compliance, or technical meaning, do not change the meaning. Pair with the relevant domain skill.
+- Do not send messages or create email drafts without approval.
+
+## Output Contract
+
+Use:
+
+1. Rewritten draft
+2. Optional tone note
+3. Preserved facts or assumptions
+4. Approval note if outbound
+
+When useful, give two options: a shorter version and a slightly warmer version.
+
+## Avoid
+
+Avoid phrases like "I hope this message finds you well" unless truly appropriate. Avoid inflated words such as leverage, robust, seamless, transformative, game-changing, and cutting-edge. Avoid over-apologizing.
+
+## Good Uses
+
+- Text messages
+- Professional emails
+- HR emails
+- Manager messages
+- Recruiter messages
+- Casual/flirty-light replies
+- Lease emails
+- School emails

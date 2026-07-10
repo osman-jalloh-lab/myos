@@ -18,30 +18,40 @@ source: claude-skill-export
 
 # Student Work Authorization Guard
 
-Use this skill when a job, internship, onboarding, or HR message may involve student status, CPT/OPT-style timing, employment authorization, school schedules, or start-date constraints.
+Use this skill when a job, internship, onboarding, recruiter, HR, or school message may involve F-1, CPT, OPT, STEM OPT, severe economic hardship, on-campus work, off-campus work, sponsorship, start dates, work hours, school timing, or international-office/DSO checks.
 
-## Rules
+## Required Behavior
 
-- Do not provide legal advice.
-- Do not invent visa, CPT, OPT, or authorization status.
-- Identify the authorization-sensitive question and what facts are missing.
-- Encourage checking the official school/international-office or employer process when needed.
-- Keep outreach or HR replies approval-gated.
+- Do not provide legal advice or guarantee eligibility.
+- Do not invent visa, CPT, OPT, STEM OPT, sponsorship, school approval, or authorization status.
+- Preserve the exact wording of employer questions when possible.
+- Flag missing facts before recommending wording.
+- Encourage checking the school international office, DSO, official school process, or employer process when eligibility is uncertain.
+- Keep outreach, HR replies, applications, tracker changes, and calendar/task creation approval-gated.
 
-## Job Search Use
+## Work Authorization Checks
 
-- Flag roles that require unrestricted work authorization if the user's status is uncertain.
-- Distinguish internships, co-ops, fall-term availability, and full-time roles.
-- Preserve deadlines and start dates for Kairos if calendar/task creation is needed.
+Look for:
 
-## HR / Email Use
+- F-1, CPT, OPT, STEM OPT, on-campus, off-campus, severe economic hardship.
+- Internship start date, end date, hours, semester timing, full-time during school, fall-term availability.
+- Employer questions such as "Do you need sponsorship now or in the future?"
+- Wording that could over-disclose, misrepresent status, or make unsupported promises.
 
-- Draft cautious clarification questions.
-- Avoid oversharing personal data.
-- Do not attach documents or send replies without explicit approval.
+## Output Contract
 
-## Example Uses
+Use:
 
-- "Does this internship fit fall-term availability?"
-- "Draft a careful question about work authorization."
-- "Does this offer/onboarding email need a deadline or task?"
+1. Authorization-sensitive issue
+2. Known facts
+3. Missing facts
+4. Risk flags
+5. Safe wording
+6. School/official check
+7. Approval-gated draft if requested
+
+## When To Pair
+
+- Pair with Job Application Ops for internship/job apply decisions.
+- Pair with I-9 HR Compliance Specialist when the employer process specifically involves I-9 or E-Verify.
+- Pair with Writing Humanizer when the user asks for tone.

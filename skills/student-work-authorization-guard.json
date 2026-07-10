@@ -1,8 +1,11 @@
 {
+  "id": "student-work-authorization-guard",
   "name": "student.work_authorization.guard",
   "description": "Keeps job, internship, and HR advice aware of student work-authorization and timing constraints without legal advice or unapproved outreach.",
   "category": "career",
   "agent": "athena",
+  "ownerAgents": ["athena", "themis", "kairos", "hermes"],
+  "tags": ["student", "work-authorization", "internship", "cpt", "opt", "sponsorship", "hr"],
   "inputs": {
     "message": {
       "type": "string",
@@ -21,5 +24,194 @@
     "draft a work authorization clarification question",
     "does this onboarding email need action?",
     "is this full-time role risky for student constraints?"
-  ]
+  ],
+  "purpose": "Guard career, internship, onboarding, and HR advice when F-1, CPT, OPT, STEM OPT, sponsorship, severe economic hardship, on-campus work, off-campus work, or start-date timing may affect what the user can safely say or do.",
+  "whenToUse": [
+    "The request mentions F-1, CPT, OPT, STEM OPT, sponsorship, international student status, school authorization, on-campus work, off-campus work, or severe economic hardship.",
+    "The user asks how to answer work authorization, sponsorship, eligibility, start-date, or internship timing questions.",
+    "A job or internship listing may require unrestricted authorization, immediate start, full-time availability, or employment terms that could conflict with student constraints.",
+    "An HR or onboarding message asks for authorization details and the user needs cautious wording.",
+    "A deadline or start date may need Kairos awareness but should not create calendar events without approval."
+  ],
+  "whenNotToUse": [
+    "Do not use for general job-fit screening with no work authorization, sponsorship, student status, or timing issue.",
+    "Do not use for employer Form I-9 or E-Verify procedure unless the request specifically includes student authorization concerns.",
+    "Do not use to give legal advice, guarantee eligibility, or replace school/international-office guidance.",
+    "Do not use to send emails, apply to roles, or update trackers without approval."
+  ],
+  "strongSignals": [
+    "F-1 student",
+    "CPT",
+    "Curricular Practical Training",
+    "OPT",
+    "Optional Practical Training",
+    "STEM OPT",
+    "severe economic hardship",
+    "on-campus work",
+    "off-campus work",
+    "internship start date",
+    "internship timing",
+    "work authorization wording",
+    "work authorization clarification question",
+    "sponsorship question",
+    "do you need sponsorship",
+    "authorization on the application",
+    "international office",
+    "DSO check",
+    "school authorization",
+    "student employment",
+    "full-time during school",
+    "fall internship availability"
+  ],
+  "weakSignals": [
+    "start date constraint",
+    "availability during semester",
+    "offer letter authorization",
+    "internship eligibility",
+    "HR onboarding question"
+  ],
+  "negativeSignals": [
+    "pure resume tailoring",
+    "general GRC fit score",
+    "choose I-9 document",
+    "send this reply now",
+    "legal advice",
+    "tax advice",
+    "unrelated technical support ticket"
+  ],
+  "requiredContext": [
+    "The user's actual current authorization status, if explicitly provided.",
+    "Whether the role is on-campus, off-campus, internship, co-op, full-time, part-time, remote, or volunteer.",
+    "The proposed start date, work hours, semester timing, and employer wording.",
+    "Whether the user has already checked with the school international office or DSO."
+  ],
+  "missingContextQuestions": [
+    "Is this role on-campus or off-campus, and is it an internship, co-op, part-time role, or full-time role?",
+    "What start date, hours, and semester timing does the employer require?",
+    "What exact work authorization or sponsorship question are they asking?",
+    "Have you confirmed the relevant process with your school international office or DSO?"
+  ],
+  "outputContract": {
+    "format": "Authorization-sensitive issue -> Known facts -> Missing facts -> Risk flags -> Safe wording -> School/official check -> Approval-gated draft if requested.",
+    "mustInclude": [
+      "A clear note that this is not legal advice.",
+      "Missing facts that affect CPT, OPT, STEM OPT, on-campus, off-campus, or sponsorship wording.",
+      "A recommendation to verify with the school international office/DSO when eligibility is uncertain.",
+      "Cautious wording that preserves facts and avoids over-disclosure.",
+      "Approval-gated status for any outbound draft."
+    ],
+    "mustAvoid": [
+      "Do not invent visa, CPT, OPT, STEM OPT, or sponsorship status.",
+      "Do not guarantee eligibility or authorize work.",
+      "Do not tell the user to misrepresent sponsorship or work authorization needs.",
+      "Do not send replies, create events, write files, or apply to jobs.",
+      "Do not expose private immigration details unless the user provided and requested them."
+    ],
+    "tone": "cautious, practical, non-legal, career-aware"
+  },
+  "safetyRules": [
+    "Do not provide legal advice or guarantee immigration/work eligibility.",
+    "Use only facts the user provided or confirmed memory; flag uncertainty.",
+    "Recommend official school/international-office or DSO checks when needed.",
+    "Keep HR, recruiter, and employer replies as approval-gated drafts.",
+    "Do not create calendar events, tasks, applications, or tracker updates without approval."
+  ],
+  "approvalRequiredFor": [
+    "Sending employer, recruiter, school, or HR messages",
+    "Creating or updating drafts",
+    "Creating calendar events or reminders",
+    "Submitting applications or updating application trackers",
+    "Saving durable memory about authorization status"
+  ],
+  "positiveExamples": [
+    "My internship asks if I need sponsorship. How should I answer?",
+    "Does this fall internship fit F-1 CPT timing?",
+    "Draft a careful work authorization clarification question for a recruiter.",
+    "Can I work off-campus before OPT starts?",
+    "The offer starts before my school approval. What should I ask HR?",
+    "They asked about authorization on the application. What do I put?"
+  ],
+  "negativeExamples": [
+    "Score this GRC job based only on SOC 2 and NIST.",
+    "Make this text sound warmer with no visa or work topic.",
+    "Write a Windows login troubleshooting ticket."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "My internship asks if I need sponsorship. How should I answer?",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Positive sponsorship and internship wording."
+    },
+    {
+      "input": "Does this fall internship fit F-1 CPT timing?",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Positive F-1 CPT and internship timing."
+    },
+    {
+      "input": "Draft a careful work authorization clarification question for a recruiter.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Positive authorization wording and approval-gated draft."
+    },
+    {
+      "input": "Can I work off-campus before OPT starts?",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Positive off-campus and OPT concern."
+    },
+    {
+      "input": "The offer starts before school authorization is approved. What should I ask HR?",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Positive start-date and school authorization constraint."
+    },
+    {
+      "input": "Score this SOC 2 compliance analyst role against Security+.",
+      "shouldMatch": false,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Negative GRC role screening without student authorization issue."
+    },
+    {
+      "input": "Rewrite this lease email to sound nicer.",
+      "shouldMatch": false,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Negative writing request with no work authorization issue."
+    },
+    {
+      "input": "Turn VPN not connecting into a help desk ticket note.",
+      "shouldMatch": false,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Negative IT support ticket."
+    },
+    {
+      "input": "This internship has a weird start date. Is it okay?",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Ambiguous internship timing; should ask for authorization and date details."
+    },
+    {
+      "input": "They asked about authorization on the application. What do I put?",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Ambiguous authorization wording; should ask for exact question and status."
+    },
+    {
+      "input": "My internship asks if I need sponsorship and I want to apply anyway.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "student-work-authorization-guard",
+      "reason": "Multi-skill: authorization guard should pair with Job Application Ops."
+    }
+  ],
+  "version": "2.0.0",
+  "lastReviewedAt": "2026-07-10"
 }

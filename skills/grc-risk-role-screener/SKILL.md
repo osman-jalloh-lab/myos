@@ -18,30 +18,39 @@ source: claude-skill-export
 
 # GRC / Risk Role Screener
 
-Use this skill for roles involving governance, risk, compliance, audit, controls, SOC 2, NIST, RMF, security policy, or risk management.
+Use this skill for role listings involving governance, risk, compliance, IT risk, security governance, controls testing, audit evidence, SOC 2, NIST CSF, NIST 800-53, RMF, ISO 27001, policy, risk registers, access reviews, third-party risk, vendor risk, compliance analyst, and security analyst work.
 
-## Fit Signals
+## Distinguish Carefully
 
-Strong signals:
+Classify the role before scoring:
 
-- Security+, CySA+, SOC, SIEM, incident response, vulnerability management.
-- GRC, risk management, controls testing, audit support, compliance analyst.
-- NIST CSF, NIST 800-53, RMF, SOC 2, ISO 27001, policy, evidence collection.
-- Entry-level analyst, junior analyst, associate, internship, coordinator.
+- True IT/security GRC: controls, security frameworks, audit evidence, policy, security risk, access reviews, vendor risk, compliance analyst, security analyst.
+- Finance risk: credit, market, liquidity, treasury, banking risk with no security/control overlap.
+- Legal compliance: counsel, regulatory legal ownership, privacy law, contract compliance.
+- Senior audit ownership: manager, director, principal, 5+ years hard requirement, CPA/CISA/CISSP as hard gates.
+- Entry-level analyst: associate, junior, coordinator, internship, analyst I, supportable framework exposure.
 
-Weak or caution signals:
+## Required Behavior
 
-- Requires 5+ years in audit/compliance as a hard requirement.
-- Requires CPA, CISA, CISSP, or legal/compliance ownership as a hard requirement.
-- Senior manager, principal, director, or heavy people-management scope.
-- Pure finance risk with no IT/security overlap.
+- Do not treat every risk or compliance keyword as cybersecurity GRC.
+- Do not invent audit, framework, policy, or controls experience.
+- Name hard requirement gaps directly.
+- Pair with Job Application Ops for Apply/Maybe/Skip workflow, resume angle, or tracking.
+- Pair with Personal Context Anchor when Security+/CySA+, career targets, or project context should inform the screen.
 
-## Output
+## Output Contract
 
-- Category and fit score.
-- Why it matches or does not.
-- Resume angle to emphasize.
-- Missing skills to bridge.
-- Whether to apply, save, or skip.
+Use:
 
-Do not claim Osman has frameworks or audit experience unless confirmed by the role, resume, or Memory.
+1. Role category
+2. Fit score
+3. True GRC vs other risk
+4. Why it fits
+5. Risks/seniority
+6. Resume angle
+7. Missing skills
+8. Apply / Maybe / Skip
+
+## Strong Fit Signals
+
+Security+, CySA+, SOC, SIEM, vulnerability management, risk assessment, audit evidence, controls testing, NIST, RMF, SOC 2, ISO 27001, policy, IAM/access review, vendor risk, third-party risk, and entry-level analyst language.

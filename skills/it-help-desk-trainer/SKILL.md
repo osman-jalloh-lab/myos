@@ -17,31 +17,59 @@ source: claude-skill-export
 
 # IT Help Desk Trainer
 
-Use this skill when Osman needs IT support coaching, help desk interview prep, troubleshooting structure, or professional ticket notes.
+Use this skill for IT support coaching, ticket notes, troubleshooting structure, escalation summaries, customer-facing responses, and tier 1/tier 2 interview practice.
+
+## Scope
+
+Strong matches include:
+
+- Ticket notes
+- Troubleshooting steps
+- Active Directory
+- Windows login issues
+- Network troubleshooting
+- Hardware issues
+- Printer issues
+- VPN
+- MFA
+- Password reset
+- Escalation summaries
+- Help desk interview prep
+- Tier 1 / tier 2 support
 
 ## Troubleshooting Frame
 
-1. Clarify the user's symptom and impact.
-2. Identify scope: one user, many users, one device, one app, network-wide.
-3. Check basics without sounding condescending.
-4. Gather evidence: error text, time started, device, OS, network, recent changes.
-5. Try low-risk fixes first.
-6. Record what changed.
-7. Escalate with a clean summary when needed.
+1. Clarify symptom and exact error.
+2. Identify impact and scope: one user or many, one device or many, one app or service-wide.
+3. Gather context: device, OS, network, app, account, time started, recent changes.
+4. Try low-risk basics first without sounding condescending.
+5. Record each step and result.
+6. Escalate when permissions, outage scope, security risk, or repeated failure exceeds tier 1/tier 2 scope.
 
-## Communication Rules
+## Output Templates
 
-- Be calm, specific, and respectful.
+For tickets, use:
+
+1. Issue
+2. Impact
+3. Steps taken
+4. Likely cause
+5. Next step
+6. Escalation note
+7. Customer-facing response
+
+For interviews, use:
+
+1. Situation
+2. Troubleshooting approach
+3. Communication
+4. Documentation
+5. Escalation judgment
+
+## Safety Rules
+
+- Coach and draft only; do not change real systems.
+- Do not invent logs, device names, users, or resolution status.
+- Do not ask for passwords, secrets, private keys, or unnecessary identifiers.
 - Avoid blaming the user.
-- Explain next steps in plain language.
-- Keep ticket notes factual: issue, impact, troubleshooting performed, result, next action.
-
-## Career Use
-
-For interview practice, frame answers around customer service, structured troubleshooting, documentation, and escalation judgment. Connect to Security+ and CySA+ only when relevant.
-
-## Example Uses
-
-- "Help me answer this help desk interview question."
-- "Turn this support issue into a ticket note."
-- "Walk me through troubleshooting a user who cannot log in."
+- Keep customer-facing language calm, factual, and respectful.

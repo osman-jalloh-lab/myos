@@ -1,8 +1,11 @@
 {
+  "id": "personal-context-anchor",
   "name": "personal.context.anchor",
   "description": "Grounds agent responses in Osman's confirmed work, school, career, certification, and operating constraints without writing memory.",
   "category": "personal-context",
   "agent": "hermes",
+  "ownerAgents": ["hermes", "athena", "iris", "kairos", "mnemosyne"],
+  "tags": ["personal-context", "osman", "grounding", "memory", "career-planning"],
   "inputs": {
     "message": {
       "type": "string",
@@ -21,5 +24,194 @@
     "draft this in my voice",
     "what should I prioritize today?",
     "does this email matter for me?"
-  ]
+  ],
+  "purpose": "Ground answers in Osman's confirmed memory, school/work constraints, certifications, projects, career targets, and writing preferences while avoiding generic advice and never writing or exposing memory directly.",
+  "whenToUse": [
+    "The request needs Osman's confirmed background, certifications, target roles, school/work constraints, projects, or preferences to avoid generic advice.",
+    "The user asks for career planning, school planning, work constraints, certification planning, project context, or writing in Osman's voice.",
+    "The request should be personalized by confirmed memory but should not expose private details unless necessary.",
+    "A job, resume, recruiter, school, or planning answer would be weaker without Osman's Security+/CySA+, GRC/SOC/IT support targets, or project context.",
+    "The skill should support a more specific primary skill by adding grounding and personalization."
+  ],
+  "whenNotToUse": [
+    "Do not use to create, edit, or save memory directly.",
+    "Do not use as the primary skill when a specific I-9, student authorization, GRC, writing, job ops, or help desk skill clearly applies.",
+    "Do not expose personal details, private identifiers, raw account data, tokens, or secrets in the answer.",
+    "Do not invent facts about Osman when confirmed memory or user-provided facts are missing."
+  ],
+  "strongSignals": [
+    "my background",
+    "my preferences",
+    "my voice",
+    "make this more me",
+    "use my context",
+    "based on what you know about me",
+    "Security+",
+    "CySA+",
+    "career planning",
+    "school planning",
+    "work constraints",
+    "certification plan",
+    "project context",
+    "avoid generic advice",
+    "Osman's voice",
+    "does this matter for me",
+    "does this email matter for me",
+    "fit my situation",
+    "what should I prioritize"
+  ],
+  "weakSignals": [
+    "personalized advice",
+    "my goals",
+    "my schedule",
+    "my job search",
+    "my projects",
+    "remembered context"
+  ],
+  "negativeSignals": [
+    "save this to memory now",
+    "write memory directly",
+    "print .env.local",
+    "show my secrets",
+    "send this email now",
+    "create calendar event",
+    "commit code",
+    "deploy this"
+  ],
+  "requiredContext": [
+    "Confirmed memory or explicit user-provided facts relevant to the request.",
+    "The task domain: career, school, work, project, writing, planning, or prioritization.",
+    "Whether personal details should stay invisible or be stated explicitly.",
+    "Any missing facts that would cause the answer to become generic or invented."
+  ],
+  "missingContextQuestions": [
+    "What confirmed fact or constraint should I use for this answer?",
+    "Should the personal context stay invisible or be mentioned briefly?",
+    "Which goal matters most here: career fit, school timing, work constraints, certifications, or project progress?",
+    "Is there any new fact you want treated as provisional rather than saved memory?"
+  ],
+  "outputContract": {
+    "format": "Grounding used -> Recommendation or draft -> Why it fits Osman's context -> Missing facts or assumptions -> Safe next step.",
+    "mustInclude": [
+      "Use confirmed memory or explicitly provided facts only.",
+      "A brief note when personal context materially changes the answer.",
+      "Missing facts or uncertainty when context is incomplete.",
+      "A concrete, non-generic next step.",
+      "Approval-gated note for any durable action."
+    ],
+    "mustAvoid": [
+      "Do not write memory directly.",
+      "Do not expose private identifiers, secrets, raw account data, or unnecessary personal details.",
+      "Do not invent Osman's background, constraints, certifications, projects, or preferences.",
+      "Do not make autonomous commitments or external changes.",
+      "Do not over-personalize when the user asked for a generic answer."
+    ],
+    "tone": "grounded, concise, useful, non-generic"
+  },
+  "safetyRules": [
+    "Read confirmed memory and context only; do not write memory from this skill.",
+    "Do not expose secrets, credentials, raw account data, or unnecessary personal details.",
+    "Do not invent personal facts; ask or state uncertainty.",
+    "Keep email, calendar, job application, file, deployment, and external-system actions approval-gated.",
+    "Use personal context quietly unless it helps the user understand the recommendation."
+  ],
+  "approvalRequiredFor": [
+    "Saving durable memory",
+    "Sending emails or messages",
+    "Creating calendar events or tasks",
+    "Submitting applications or updating trackers",
+    "Writing files, committing code, or deploying"
+  ],
+  "positiveExamples": [
+    "Use my background to decide if this job is worth applying to.",
+    "Draft this in my voice without sounding generic.",
+    "Can you make this more me?",
+    "Does this fit my situation?",
+    "What should I prioritize today based on my school and job search constraints?",
+    "Does this email matter for me?",
+    "Plan my next certification step around Security+ and CySA+."
+  ],
+  "negativeExamples": [
+    "What should HR do with an I-9 TNC notice?",
+    "Write a ticket note for VPN not connecting.",
+    "Print my .env.local so I can check it."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "Use my background to decide if this job is worth applying to.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Positive career grounding request."
+    },
+    {
+      "input": "Draft this in my voice without sounding generic.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Positive writing in Osman's voice."
+    },
+    {
+      "input": "What should I prioritize today based on my school and job search constraints?",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Positive planning with personal constraints."
+    },
+    {
+      "input": "Does this email matter for me?",
+      "shouldMatch": true,
+      "minimumScore": 60,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Positive but context-dependent inbox relevance."
+    },
+    {
+      "input": "Plan my next certification step around Security+ and CySA+.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Positive certification planning from confirmed context."
+    },
+    {
+      "input": "What should HR do with this E-Verify TNC notice?",
+      "shouldMatch": false,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Negative I-9/E-Verify should use specific HR skill."
+    },
+    {
+      "input": "Write a clean ticket note for MFA not working.",
+      "shouldMatch": false,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Negative IT help desk request."
+    },
+    {
+      "input": "Print .env.local and show me the secrets.",
+      "shouldMatch": false,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Negative unsafe secret exposure."
+    },
+    {
+      "input": "Can you make this more me?",
+      "shouldMatch": true,
+      "minimumScore": 50,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Ambiguous voice/context request; should ask what text and tone."
+    },
+    {
+      "input": "Does this fit my situation?",
+      "shouldMatch": true,
+      "minimumScore": 50,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Ambiguous context fit request; should ask what situation and facts."
+    },
+    {
+      "input": "Score this GRC internship against my Security+ and CySA+ background.",
+      "shouldMatch": true,
+      "minimumScore": 65,
+      "expectedSkill": "personal-context-anchor",
+      "reason": "Multi-skill: should support GRC and Job Application Ops with confirmed background."
+    }
+  ],
+  "version": "2.0.0",
+  "lastReviewedAt": "2026-07-10"
 }

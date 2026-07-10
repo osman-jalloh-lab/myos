@@ -147,6 +147,12 @@ export async function sendMessage(
     reason: "Skill routing could not inspect the registry, so the normal agent/model path was used.",
     skills: [],
     consideredSkillCount: 0,
+    primarySkill: null,
+    supportingSkills: [],
+    rejectedSkills: [],
+    qualityWarnings: [],
+    missingContextQuestions: [],
+    explanation: "Skill routing failed before a v2 explanation could be generated.",
   }));
   const run = await createExecutionRun({
     userId,
@@ -211,6 +217,20 @@ export async function sendMessage(
         taskType: skillResolution.taskType,
         confidence: skillResolution.confidence,
         reason: skillResolution.reason,
+        explanation: skillResolution.explanation,
+        primarySkill: skillResolution.primarySkill ? {
+          id: skillResolution.primarySkill.id,
+          confidence: skillResolution.primarySkill.confidence,
+          quality: skillResolution.primarySkill.skillQualityScore,
+        } : null,
+        supportingSkills: skillResolution.supportingSkills.map((skill) => ({
+          id: skill.id,
+          confidence: skill.confidence,
+          quality: skill.skillQualityScore,
+        })),
+        rejectedSkills: skillResolution.rejectedSkills.slice(0, 5),
+        missingContextQuestions: skillResolution.missingContextQuestions,
+        qualityWarnings: skillResolution.qualityWarnings,
         skills: skillResolution.skills.map((skill) => ({
           id: skill.id,
           confidence: skill.confidence,

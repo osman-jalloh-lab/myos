@@ -1,8 +1,11 @@
 {
+  "id": "writing-humanizer",
   "name": "writing.humanizer",
   "description": "Rewrites drafts so they sound clear, specific, and human while preserving facts and approval gates for outbound messages.",
   "category": "communication",
   "agent": "hermes",
+  "ownerAgents": ["hermes", "iris", "athena", "themis"],
+  "tags": ["writing", "voice", "email", "humanizer", "editing", "tone"],
   "inputs": {
     "message": {
       "type": "string",
@@ -21,5 +24,199 @@
     "rewrite this email in my voice",
     "make this less robotic",
     "tighten this recruiter message"
-  ]
+  ],
+  "purpose": "Rewrite text messages, professional emails, HR emails, manager messages, recruiter messages, casual or flirty-light replies, lease emails, and school emails so they sound warm, direct, and human while preserving facts and never inventing commitments.",
+  "whenToUse": [
+    "The user asks to rewrite, humanize, tighten, polish, soften, make warmer, make more direct, or make less robotic.",
+    "The text is an email, text message, HR reply, manager message, recruiter message, lease email, school email, or casual/flirty-light reply.",
+    "The user requests a tone mode such as warm, professional, casual, direct, confident, friendly, apologetic, or flirty-light.",
+    "A domain-specific primary skill needs tone support for a safe draft.",
+    "The user wants Osman's voice without generic AI phrasing."
+  ],
+  "whenNotToUse": [
+    "Do not use as primary when the main task is legal/compliance correctness, work authorization analysis, GRC screening, or IT troubleshooting rather than wording.",
+    "Do not use to invent facts, promises, apologies, deadlines, attachments, or commitments.",
+    "Do not use to send the message or create an email draft without approval.",
+    "Do not use for long-form content generation when the user did not provide facts or a draft."
+  ],
+  "strongSignals": [
+    "make this sound human",
+    "make this better",
+    "less robotic",
+    "rewrite this",
+    "humanize",
+    "fix the tone",
+    "in my voice",
+    "tone mode warm",
+    "tone mode professional",
+    "tone mode casual",
+    "tone mode direct",
+    "tone mode confident",
+    "tone mode friendly",
+    "tone mode apologetic",
+    "tone mode flirty-light",
+    "not too much",
+    "recruiter message",
+    "HR email",
+    "manager message",
+    "lease email",
+    "school email",
+    "text message",
+    "warm but direct"
+  ],
+  "weakSignals": [
+    "polish",
+    "tighten",
+    "soften",
+    "make it nicer",
+    "make it clearer",
+    "reply draft"
+  ],
+  "negativeSignals": [
+    "I-9 compliance answer",
+    "E-Verify TNC analysis",
+    "CPT OPT eligibility",
+    "score this GRC role",
+    "write VPN ticket note",
+    "invent an excuse",
+    "promise I will attend",
+    "send this now",
+    "create calendar event"
+  ],
+  "requiredContext": [
+    "The original draft or the facts that must be preserved.",
+    "Audience and relationship: HR, manager, recruiter, landlord, school, friend, or casual/flirty context.",
+    "Desired tone mode: warm, professional, casual, direct, confident, friendly, apologetic, or flirty-light.",
+    "Any facts, commitments, deadlines, or boundaries that must not change."
+  ],
+  "missingContextQuestions": [
+    "Who is the audience and what tone do you want?",
+    "What facts, commitments, deadlines, or boundaries must stay exactly the same?",
+    "Do you want a short reply, a polished email, or a few tone options?",
+    "Is this only a draft, or should it later become an approval-gated outbound message?"
+  ],
+  "outputContract": {
+    "format": "Rewritten draft -> Optional tone note -> Preserved facts -> Caution if approval is needed before sending.",
+    "mustInclude": [
+      "A clean rewritten version in the requested tone.",
+      "Preserved facts and commitments.",
+      "A note when facts are missing or the draft could imply a commitment.",
+      "Approval-gated caution for outbound messages when relevant.",
+      "Tone mode if the user requested one."
+    ],
+    "mustAvoid": [
+      "Do not invent facts, commitments, deadlines, apologies, attachments, or promises.",
+      "Do not over-apologize or use generic AI filler.",
+      "Do not change legal, HR, work authorization, or compliance meaning.",
+      "Do not send or create drafts in external systems.",
+      "Do not make flirty-light messages explicit or inappropriate."
+    ],
+    "tone": "human, direct, flexible by requested mode"
+  },
+  "safetyRules": [
+    "Preserve facts and intent; do not invent commitments or claims.",
+    "Keep outbound messages as drafts and require approval before sending.",
+    "If the text has HR, I-9, work authorization, legal, or compliance risk, support the specific domain skill instead of overriding it.",
+    "Do not expose secrets or private data.",
+    "Keep flirty-light tone respectful, non-explicit, and easy to back out of."
+  ],
+  "approvalRequiredFor": [
+    "Sending emails, texts, or external messages",
+    "Creating email drafts in a provider",
+    "Submitting recruiter or HR replies",
+    "Saving durable memory about tone preferences",
+    "Any external-system modification"
+  ],
+  "positiveExamples": [
+    "Make this email sound less robotic.",
+    "Rewrite this recruiter message in my voice.",
+    "Make this HR reply warm but direct.",
+    "Can you make this text flirty-light but not too much?",
+    "Polish this lease email so it sounds professional.",
+    "Make this better.",
+    "Can you fix the tone of this?"
+  ],
+  "negativeExamples": [
+    "What should HR do with an E-Verify TNC notice?",
+    "Score this GRC internship.",
+    "Write a ticket note for VPN not connecting."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "Make this email sound less robotic.",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Positive rewrite/humanize request."
+    },
+    {
+      "input": "Rewrite this recruiter message in my voice.",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Positive recruiter message and voice request."
+    },
+    {
+      "input": "Make this HR reply warm but direct.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Positive HR wording/tone request."
+    },
+    {
+      "input": "Can you make this text flirty-light but not too much?",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Positive tone mode flirty-light."
+    },
+    {
+      "input": "Polish this lease email so it sounds professional.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Positive lease email professional tone."
+    },
+    {
+      "input": "What should HR do with this I-9 Section 2 receipt?",
+      "shouldMatch": false,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Negative compliance correctness should use I-9 skill."
+    },
+    {
+      "input": "Score this NIST 800-53 controls testing role.",
+      "shouldMatch": false,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Negative GRC role screening."
+    },
+    {
+      "input": "Troubleshoot Active Directory login failure.",
+      "shouldMatch": false,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Negative IT help desk troubleshooting."
+    },
+    {
+      "input": "Make this better.",
+      "shouldMatch": true,
+      "minimumScore": 45,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Ambiguous editing request; should ask for draft and tone."
+    },
+    {
+      "input": "Can you fix the tone of this?",
+      "shouldMatch": true,
+      "minimumScore": 50,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Ambiguous tone request; should ask for audience and desired mode."
+    },
+    {
+      "input": "Make this I-9 email to HR sound less robotic.",
+      "shouldMatch": true,
+      "minimumScore": 75,
+      "expectedSkill": "writing-humanizer",
+      "reason": "Multi-skill: Writing Humanizer should support I-9 HR Compliance Specialist."
+    }
+  ],
+  "version": "2.0.0",
+  "lastReviewedAt": "2026-07-10"
 }

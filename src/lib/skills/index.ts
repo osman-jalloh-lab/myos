@@ -59,7 +59,14 @@ export {
 } from "./routing";
 export type {
   ResolvedSkill,
+  RejectedSkill,
   ResolveRelevantSkillsParams,
   SkillResolution,
   SkillUsageTelemetryInput,
 } from "./routing";
+export type {
+  SkillDefinitionV2,
+  SkillEvaluationPrompt,
+  SkillOutputContract,
+  SkillQualityBand,
+} from "./types";

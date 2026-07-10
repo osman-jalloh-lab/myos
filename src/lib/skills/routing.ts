@@ -1,6 +1,24 @@
 import crypto from "node:crypto";
 import { prisma } from "@/lib/db";
-import { getRegisteredSkills, type SkillRegistryEntry } from "@/lib/skills/registry";
+import {
+  getRegisteredSkills,
+  type SkillRegistryEntry,
+} from "@/lib/skills/registry";
+import {
+  inferAgent,
+  MIN_CONFIDENCE,
+  normalize,
+  scoreRegisteredSkill,
+  taskTypeFor,
+  type SkillScoreResult,
+} from "@/lib/skills/scoring";
+import type { SkillOutputContract, SkillQualityBand } from "@/lib/skills/types";
+
+const FALLBACK_OUTPUT_CONTRACT: SkillOutputContract = {
+  format: "Concise guidance with safe next steps.",
+  mustInclude: [],
+  mustAvoid: [],
+};
 
 export type ResolvedSkill = {
   id: string;
@@ -12,6 +30,23 @@ export type ResolvedSkill = {
   tags: string[];
   estimatedCostSaving: SkillRegistryEntry["estimatedCostSaving"];
   instruction: string;
+  role: "primary" | "supporting";
+  skillQualityScore: number;
+  skillQualityBand: SkillQualityBand;
+  qualityWarnings: string[];
+  purpose: string;
+  matchedSignals: string[];
+  negativeMatches: string[];
+  missingContextQuestions: string[];
+  outputContract: SkillOutputContract;
+  safetyRules: string[];
+  approvalRequiredFor: string[];
+};
+
+export type RejectedSkill = {
+  id: string;
+  score: number;
+  reason: string;
 };
 
 export type SkillResolution = {
@@ -23,6 +58,12 @@ export type SkillResolution = {
   reason: string;
   skills: ResolvedSkill[];
   consideredSkillCount: number;
+  primarySkill: ResolvedSkill | null;
+  supportingSkills: ResolvedSkill[];
+  rejectedSkills: RejectedSkill[];
+  qualityWarnings: string[];
+  missingContextQuestions: string[];
+  explanation: string;
 };
 
 export type ResolveRelevantSkillsParams = {
@@ -39,164 +80,224 @@ export type SkillUsageTelemetryInput = {
   modelCallAvoided?: boolean;
 };
 
-const MIN_CONFIDENCE = 35;
-
-const STOP_WORDS = new Set([
-  "the", "and", "for", "with", "that", "this", "you", "your", "are", "from", "into",
-  "about", "what", "when", "where", "should", "could", "would", "need", "help", "please",
-  "make", "does", "have", "has", "will", "just", "give", "tell", "show", "using",
-]);
-
-const DOMAIN_ALIASES: Record<string, string[]> = {
-  "i9-hr-compliance-specialist": [
-    "i-9", "i9", "e-verify", "everify", "work authorization", "employment eligibility",
-    "m-274", "section 2", "section 3", "reverification", "hr compliance", "onboarding",
-  ],
-  "student-work-authorization-guard": [
-    "student worker", "work authorization", "visa", "f-1", "cpt", "opt", "student employment",
-  ],
-  "job-application-ops": [
-    "job application", "resume", "cover letter", "ats", "interview", "recruiter", "application tracker",
-  ],
-  "grc-risk-role-screener": [
-    "grc", "risk management", "security+", "cysa+", "soc", "security operations", "compliance analyst",
-  ],
-  "it-help-desk-trainer": [
-    "help desk", "service desk", "ticket", "troubleshoot", "technical support", "active directory",
-  ],
-  "writing-humanizer": [
-    "rewrite", "humanize", "tone", "sound natural", "draft", "polish", "writing",
-  ],
-  "personal-context-anchor": [
-    "personal context", "my background", "my preferences", "remembered context", "osman",
-  ],
+type ScoredSkill = SkillScoreResult & {
+  skill: SkillRegistryEntry;
 };
 
-function normalize(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9+.#-]+/g, " ").replace(/\s+/g, " ").trim();
+const SPECIFIC_PRIMARY_SKILLS = new Set([
+  "i9-hr-compliance-specialist",
+  "student-work-authorization-guard",
+  "grc-risk-role-screener",
+  "it-help-desk-trainer",
+]);
+
+const BROAD_PRIMARY_SKILLS = new Set([
+  "personal-context-anchor",
+  "writing-humanizer",
+  "job-application-ops",
+]);
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
 }
 
-function tokens(value: string): string[] {
-  return normalize(value)
-    .split(" ")
-    .filter((word) => word.length > 2 && !STOP_WORDS.has(word))
-    .slice(0, 80);
-}
-
-function includesPhrase(haystack: string, phrase: string): boolean {
-  const needle = normalize(phrase);
-  return needle.length > 2 && haystack.includes(needle);
-}
-
-function taskTypeFor(message: string): string {
-  const text = normalize(message);
-  if (/\bi-?9\b|e-verify|employment eligibility|work authorization|hr compliance/.test(text)) return "hr_compliance";
-  if (/resume|cover letter|interview|job application|ats|recruiter|grc|soc|risk management/.test(text)) return "career";
-  if (/email|inbox|reply|draft/.test(text)) return "communications";
-  if (/calendar|meeting|schedule|deadline|appointment/.test(text)) return "scheduling";
-  if (/build|app|site|frontend|component|feature/.test(text)) return "build";
-  return "general";
-}
-
-function inferAgent(message: string, explicitAgent?: string | null): string | null {
-  if (explicitAgent) return explicitAgent;
-  const type = taskTypeFor(message);
-  if (type === "hr_compliance") return "themis";
-  if (type === "career") return "athena";
-  if (type === "communications") return "iris";
-  if (type === "scheduling") return "kairos";
-  if (type === "build") return "prometheus";
-  return "hermes";
-}
-
-function agentMatches(skill: SkillRegistryEntry, agentName: string | null): boolean {
-  if (!agentName) return false;
-  const agent = agentName.toLowerCase();
-  return skill.ownerAgents.some((owner) => owner.toLowerCase() === agent || owner.toLowerCase() === "hermes");
-}
-
-function scoreSkill(skill: SkillRegistryEntry, message: string, agentName: string | null): { score: number; reason: string } {
-  const text = normalize(message);
-  const words = tokens(message);
-  const reasons: string[] = [];
-  let score = 0;
-
-  if (agentMatches(skill, agentName)) {
-    const exact = skill.ownerAgents.some((owner) => owner.toLowerCase() === agentName?.toLowerCase());
-    score += exact ? 18 : 8;
-    reasons.push(exact ? `owned by ${agentName}` : "available to Hermes");
-  }
-
-  const aliases = DOMAIN_ALIASES[skill.id] ?? [];
-  const aliasHits = aliases.filter((alias) => includesPhrase(text, alias)).slice(0, 4);
-  if (aliasHits.length) {
-    score += aliasHits.length * 18;
-    reasons.push(`matched domain terms: ${aliasHits.join(", ")}`);
-  }
-
-  const tagHits = skill.tags.filter((tag) => includesPhrase(text, tag)).slice(0, 4);
-  if (tagHits.length) {
-    score += tagHits.length * 12;
-    reasons.push(`matched tags: ${tagHits.join(", ")}`);
-  }
-
-  const triggerHits = skill.triggerExamples.filter((example) => {
-    const exampleWords = tokens(example);
-    if (exampleWords.length === 0) return false;
-    const overlap = exampleWords.filter((word) => words.includes(word)).length;
-    return overlap >= Math.min(2, exampleWords.length);
-  }).slice(0, 3);
-  if (triggerHits.length) {
-    score += triggerHits.length * 16;
-    reasons.push(`matched trigger examples`);
-  }
-
-  const metadata = normalize([
-    skill.name,
-    skill.description,
-    skill.problemSolved,
-    ...skill.requiredCapabilities,
-  ].join(" "));
-  const metadataHits = words.filter((word) => metadata.includes(word)).slice(0, 8);
-  if (metadataHits.length) {
-    score += Math.min(24, metadataHits.length * 4);
-    reasons.push(`matched metadata words: ${metadataHits.slice(0, 5).join(", ")}`);
-  }
-
-  if (skill.validationStatus === "missing_metadata") score -= 8;
-  if (skill.validationStatus === "invalid") score -= 30;
-
-  return {
-    score: Math.max(0, Math.min(100, Math.round(score))),
-    reason: reasons.length ? reasons.join("; ") : "No deterministic metadata match above the routing threshold.",
-  };
+function oneLineList(items: string[], max = 3): string {
+  return items.slice(0, max).join("; ");
 }
 
 function conciseInstruction(skill: SkillRegistryEntry, reason: string): string {
   const approval = skill.safetyClass === "read_only"
     ? "read-only guidance only"
     : "existing approval gates still apply before any durable action";
-  return `Use ${skill.name} only as concise local guidance: ${skill.problemSolved} Safety: ${approval}. Match reason: ${reason}`;
+  const outputContract = skill.outputContract ?? FALLBACK_OUTPUT_CONTRACT;
+  const output = outputContract.format ? ` Output: ${outputContract.format}` : "";
+  return `Use ${skill.name} as local routing guidance: ${skill.purpose || skill.problemSolved} Safety: ${approval}.${output} Match reason: ${reason}`;
+}
+
+function toResolvedSkill(entry: ScoredSkill, role: ResolvedSkill["role"]): ResolvedSkill {
+  const { skill, score, reason } = entry;
+  const outputContract = skill.outputContract ?? FALLBACK_OUTPUT_CONTRACT;
+  return {
+    id: skill.id,
+    name: skill.name,
+    confidence: score,
+    reason,
+    safetyClass: skill.safetyClass,
+    ownerAgents: skill.ownerAgents,
+    tags: skill.tags,
+    estimatedCostSaving: skill.estimatedCostSaving,
+    instruction: conciseInstruction(skill, reason),
+    role,
+    skillQualityScore: skill.skillQualityScore ?? 0,
+    skillQualityBand: skill.skillQualityBand ?? "Needs upgrade",
+    qualityWarnings: skill.qualityWarnings ?? [],
+    purpose: skill.purpose ?? skill.description,
+    matchedSignals: entry.matchedSignals,
+    negativeMatches: entry.negativeMatches,
+    missingContextQuestions: entry.missingContextQuestions,
+    outputContract,
+    safetyRules: skill.safetyRules ?? [],
+    approvalRequiredFor: skill.approvalRequiredFor ?? [],
+  };
+}
+
+function wantsWritingSupport(message: string): boolean {
+  return /draft|rewrite|humanize|less robotic|email|reply|message|tone|polish|text/i.test(message);
+}
+
+function isStudentAuthorizationText(text: string): boolean {
+  return /\bf-?1\b|cpt|opt|stem opt|sponsorship|student work authorization|international office|on-campus|off-campus|work authorization/i.test(text);
+}
+
+function supportingPriority(primary: SkillRegistryEntry, candidate: SkillRegistryEntry, message: string): number {
+  const text = normalize(message);
+  if (candidate.id === primary.id) return 0;
+
+  if (primary.id === "grc-risk-role-screener") {
+    if (candidate.id === "job-application-ops") return 25;
+    if (candidate.id === "personal-context-anchor") return 18;
+    if (candidate.id === "writing-humanizer" && wantsWritingSupport(message)) return 10;
+  }
+
+  if (primary.id === "job-application-ops") {
+    if (candidate.id === "personal-context-anchor") return 22;
+    if (candidate.id === "student-work-authorization-guard" && isStudentAuthorizationText(text)) return 24;
+    if (candidate.id === "writing-humanizer" && wantsWritingSupport(message)) return 12;
+    if (candidate.id === "grc-risk-role-screener" && /\bgrc\b|soc 2|nist|risk management|compliance analyst/.test(text)) return 20;
+  }
+
+  if (primary.id === "student-work-authorization-guard") {
+    if (candidate.id === "job-application-ops") return 22;
+    if (candidate.id === "personal-context-anchor") return 18;
+    if (candidate.id === "writing-humanizer" && wantsWritingSupport(message)) return 12;
+  }
+
+  if (primary.id === "i9-hr-compliance-specialist") {
+    if (candidate.id === "writing-humanizer" && wantsWritingSupport(message)) return 16;
+    if (candidate.id === "student-work-authorization-guard" && /\bf-?1\b|cpt|opt|student/.test(text)) return 14;
+  }
+
+  if (primary.id === "it-help-desk-trainer") {
+    if (candidate.id === "writing-humanizer" && /customer|email|response|reply/.test(text)) return 16;
+    if (candidate.id === "personal-context-anchor" && /interview|career|resume|my background/.test(text)) return 14;
+  }
+
+  if (primary.id === "writing-humanizer") {
+    if (candidate.id === "i9-hr-compliance-specialist" && /\bi-?9\b|e-verify|employment eligibility/.test(text)) return 20;
+    if (candidate.id === "student-work-authorization-guard" && isStudentAuthorizationText(text)) return 18;
+    if (candidate.id === "job-application-ops" && /recruiter|resume|cover letter|application|job/.test(text)) return 16;
+    if (candidate.id === "personal-context-anchor" && /my voice|my background|osman/.test(text)) return 14;
+  }
+
+  if (primary.id === "personal-context-anchor") {
+    if (candidate.id === "job-application-ops" && /job|resume|role|recruiter|application/.test(text)) return 16;
+    if (candidate.id === "writing-humanizer" && wantsWritingSupport(message)) return 12;
+  }
+
+  return 0;
+}
+
+function selectSupportingSkills(scored: ScoredSkill[], primary: ScoredSkill, message: string, slots: number): ScoredSkill[] {
+  if (slots <= 0) return [];
+  return scored
+    .filter((entry) => entry.skill.id !== primary.skill.id)
+    .map((entry) => ({
+      ...entry,
+      supportPriority: supportingPriority(primary.skill, entry.skill, message),
+    }))
+    .filter((entry) => entry.score >= 45 || (entry.supportPriority > 0 && entry.score >= 25))
+    .sort((a, b) =>
+      (b.supportPriority + b.score) - (a.supportPriority + a.score)
+      || b.specificity - a.specificity
+      || a.skill.name.localeCompare(b.skill.name)
+    )
+    .slice(0, slots);
+}
+
+function selectPrimarySkill(scored: ScoredSkill[]): ScoredSkill | null {
+  const best = scored.find((entry) => entry.score >= MIN_CONFIDENCE) ?? null;
+  if (!best) return null;
+  if (!BROAD_PRIMARY_SKILLS.has(best.skill.id)) return best;
+  const specific = scored.find((entry) =>
+    SPECIFIC_PRIMARY_SKILLS.has(entry.skill.id)
+    && entry.score >= 75
+    && entry.score >= best.score - 15
+  );
+  return specific ?? best;
+}
+
+function qualityWarningsFor(skills: ResolvedSkill[]): string[] {
+  return skills.flatMap((skill) => {
+    if (skill.skillQualityScore >= 75) return [];
+    return [`${skill.name} quality is ${skill.skillQualityScore}/100 (${skill.skillQualityBand}). ${skill.qualityWarnings.slice(0, 2).join(" ")}`];
+  });
+}
+
+function buildExplanation(primary: ResolvedSkill | null, supporting: ResolvedSkill[], rejected: RejectedSkill[], consideredCount: number): string {
+  if (!primary) {
+    const best = rejected[0];
+    return best
+      ? `No skill crossed the confidence threshold. Best candidate was ${best.id} at ${best.score}/100 because ${best.reason}`
+      : `No enabled skill was available to score. Considered ${consideredCount} skills.`;
+  }
+  const supportText = supporting.length
+    ? ` Supporting skills: ${supporting.map((skill) => `${skill.id} (${skill.confidence}%)`).join(", ")}.`
+    : "";
+  return `Primary skill ${primary.id} matched at ${primary.confidence}/100 because ${primary.reason}.${supportText}`;
 }
 
 export function formatSkillsUsed(resolution: SkillResolution): string {
-  if (!resolution.matched) {
+  if (!resolution.matched || !resolution.primarySkill) {
     return `Skills used: none matched (${resolution.confidence}% confidence). Normal agent/model path used.`;
   }
-  const skills = resolution.skills
-    .map((skill) => `${skill.id} (${skill.confidence}%)`)
-    .join(", ");
-  return `Skills used: ${skills}.`;
+  const supporting = resolution.supportingSkills.length
+    ? ` Supporting: ${resolution.supportingSkills.map((skill) => `${skill.id} (${skill.confidence}%)`).join(", ")}.`
+    : "";
+  return `Skills used: primary ${resolution.primarySkill.id} (${resolution.primarySkill.confidence}%).${supporting}`;
 }
 
 export function skillInstructionBlock(resolution: SkillResolution): string | null {
-  if (!resolution.matched) return null;
-  const lines = resolution.skills.map((skill) => `- ${skill.instruction}`);
-  return [
+  if (!resolution.matched || !resolution.primarySkill) return null;
+  const primary = resolution.primarySkill;
+  const supporting = resolution.supportingSkills.slice(0, 3);
+  const lines = [
     "SKILL-FIRST ROUTING",
-    "Use these matched skills as concise guidance only. Do not bypass ApprovalAction requirements, durable-memory approval, or system safety rules.",
-    ...lines,
-  ].join("\n");
+    "Use matched skills as concise guidance only. Do not bypass ApprovalAction requirements, durable-memory approval, auth checks, or external-system safety gates.",
+    "",
+    `Primary skill: ${primary.name} (${primary.confidence}% confidence, ${primary.skillQualityScore}/100 quality)`,
+    `Why it matched: ${primary.reason}`,
+    `Use for: ${oneLineList(primary.matchedSignals.length ? primary.matchedSignals : primary.tags, 4) || primary.purpose}`,
+  ];
+
+  if (supporting.length) {
+    lines.push("", "Supporting skills:");
+    for (const skill of supporting) {
+      lines.push(`- ${skill.name} (${skill.confidence}%): ${skill.reason.slice(0, 180)}`);
+    }
+  }
+
+  const safety = unique([...primary.safetyRules, ...supporting.flatMap((skill) => skill.safetyRules)]).slice(0, 6);
+  if (safety.length) {
+    lines.push("", "Required behavior:");
+    lines.push(...safety.map((rule) => `- ${rule}`));
+  }
+
+  const approvals = unique([...primary.approvalRequiredFor, ...supporting.flatMap((skill) => skill.approvalRequiredFor)]).slice(0, 5);
+  if (approvals.length) {
+    lines.push("", `Approval required for: ${approvals.join("; ")}.`);
+  }
+
+  const questions = resolution.missingContextQuestions.slice(0, 4);
+  if (questions.length) {
+    lines.push("", "Missing context to ask or flag:");
+    lines.push(...questions.map((question) => `- ${question}`));
+  }
+
+  lines.push("", `Output format: ${primary.outputContract.format}`);
+  if (primary.outputContract.mustInclude.length) lines.push(`Must include: ${primary.outputContract.mustInclude.slice(0, 5).join("; ")}.`);
+  if (primary.outputContract.mustAvoid.length) lines.push(`Must avoid: ${primary.outputContract.mustAvoid.slice(0, 5).join("; ")}.`);
+
+  return lines.join("\n");
 }
 
 export async function resolveRelevantSkills({
@@ -204,37 +305,55 @@ export async function resolveRelevantSkills({
   message,
   agentName,
   projectId = null,
-  maxSkills = 3,
+  maxSkills = 4,
 }: ResolveRelevantSkillsParams): Promise<SkillResolution> {
   const inferredAgent = inferAgent(message, agentName);
-  const limit = Math.max(1, Math.min(3, maxSkills || 3));
+  const limit = Math.max(1, Math.min(5, maxSkills || 4));
   const skills = await getRegisteredSkills(userId);
   const candidates = skills.filter((skill) => skill.enabled && skill.validationStatus !== "invalid");
   const scored = candidates
-    .map((skill) => ({ skill, ...scoreSkill(skill, message, inferredAgent) }))
-    .sort((a, b) => b.score - a.score || a.skill.name.localeCompare(b.skill.name));
-  const selected = scored.filter((entry) => entry.score >= MIN_CONFIDENCE).slice(0, limit);
+    .map((skill) => ({ skill, ...scoreRegisteredSkill(skill, message, inferredAgent) }))
+    .sort((a, b) =>
+      b.score - a.score
+      || b.specificity - a.specificity
+      || (b.skill.skillQualityScore ?? 0) - (a.skill.skillQualityScore ?? 0)
+      || a.skill.name.localeCompare(b.skill.name)
+    );
+
+  const primaryScored = selectPrimarySkill(scored);
+  const supportingScored = primaryScored ? selectSupportingSkills(scored, primaryScored, message, limit - 1) : [];
+  const primarySkill = primaryScored ? toResolvedSkill(primaryScored, "primary") : null;
+  const supportingSkills = supportingScored.map((entry) => toResolvedSkill(entry, "supporting"));
+  const selectedIds = new Set([primarySkill?.id, ...supportingSkills.map((skill) => skill.id)].filter(Boolean));
+  const rejectedSkills = scored
+    .filter((entry) => !selectedIds.has(entry.skill.id))
+    .slice(0, 8)
+    .map((entry) => ({
+      id: entry.skill.id,
+      score: entry.score,
+      reason: entry.reason,
+    }));
+  const resolvedSkills = primarySkill ? [primarySkill, ...supportingSkills] : [];
+  const missingContextQuestions = unique(resolvedSkills.flatMap((skill) => skill.missingContextQuestions)).slice(0, 6);
+  const qualityWarnings = qualityWarningsFor(resolvedSkills);
   const topScore = scored[0]?.score ?? 0;
+  const explanation = buildExplanation(primarySkill, supportingSkills, rejectedSkills, candidates.length);
 
   return {
-    matched: selected.length > 0,
+    matched: Boolean(primarySkill),
     agentName: inferredAgent,
     projectId,
     taskType: taskTypeFor(message),
-    confidence: selected[0]?.score ?? topScore,
-    reason: selected[0]?.reason ?? "No enabled skill matched this message strongly enough.",
+    confidence: primarySkill?.confidence ?? topScore,
+    reason: primarySkill?.reason ?? "No enabled skill matched this message strongly enough.",
     consideredSkillCount: candidates.length,
-    skills: selected.map(({ skill, score, reason }) => ({
-      id: skill.id,
-      name: skill.name,
-      confidence: score,
-      reason,
-      safetyClass: skill.safetyClass,
-      ownerAgents: skill.ownerAgents,
-      tags: skill.tags,
-      estimatedCostSaving: skill.estimatedCostSaving,
-      instruction: conciseInstruction(skill, reason),
-    })),
+    skills: resolvedSkills,
+    primarySkill,
+    supportingSkills,
+    rejectedSkills,
+    qualityWarnings,
+    missingContextQuestions,
+    explanation,
   };
 }
 

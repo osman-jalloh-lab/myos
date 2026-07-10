@@ -3,6 +3,9 @@ import os from "node:os";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 import { resolveLocalProjectsRoot } from "@/lib/local-projects-root";
+import { calculateSkillQualityScore, DEFAULT_OUTPUT_CONTRACT } from "@/lib/skills/quality";
+import { inferAgent, MIN_CONFIDENCE, scoreRegisteredSkill } from "@/lib/skills/scoring";
+import type { SkillEvaluationPrompt, SkillOutputContract, SkillQualityBand } from "@/lib/skills/types";
 
 export type RegisteredSkill = {
   id: string;
@@ -29,6 +32,25 @@ export type SkillRegistryEntry = RegisteredSkill & {
   problemSolved: string;
   instructionFile: string | null;
   instructionPreview: string | null;
+  purpose: string;
+  whenToUse: string[];
+  whenNotToUse: string[];
+  strongSignals: string[];
+  weakSignals: string[];
+  negativeSignals: string[];
+  requiredContext: string[];
+  missingContextQuestions: string[];
+  outputContract: SkillOutputContract;
+  safetyRules: string[];
+  approvalRequiredFor: string[];
+  positiveExamples: string[];
+  negativeExamples: string[];
+  evaluationPrompts: SkillEvaluationPrompt[];
+  version: string;
+  lastReviewedAt: string | null;
+  skillQualityScore: number;
+  skillQualityBand: SkillQualityBand;
+  qualityWarnings: string[];
 };
 
 export type SkillMatchResult = {
@@ -36,6 +58,11 @@ export type SkillMatchResult = {
   matched: boolean;
   score: number;
   reason: string;
+  matchedSignals: string[];
+  negativeMatches: string[];
+  missingContextQuestions: string[];
+  skillQualityScore: number;
+  skillQualityBand: SkillQualityBand;
 };
 
 type SkillStateRow = {
@@ -48,7 +75,7 @@ type SkillStateRow = {
 let cache: { createdAt: number; entries: SkillRegistryEntry[] } | null = null;
 const CACHE_MS = 60_000;
 
-const PERSONAL_SKILL_IDS = new Set([
+export const PERSONAL_SKILL_IDS = [
   "personal-context-anchor",
   "i9-hr-compliance-specialist",
   "job-application-ops",
@@ -56,7 +83,9 @@ const PERSONAL_SKILL_IDS = new Set([
   "grc-risk-role-screener",
   "student-work-authorization-guard",
   "writing-humanizer",
-]);
+] as const;
+
+const PERSONAL_SKILL_ID_SET = new Set<string>(PERSONAL_SKILL_IDS);
 
 function slugify(value: string): string {
   return value
@@ -66,37 +95,162 @@ function slugify(value: string): string {
     .slice(0, 100) || "skill";
 }
 
+function splitYamlPair(line: string): { key: string; raw: string } | null {
+  const pair = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+  return pair ? { key: pair[1], raw: pair[2] } : null;
+}
+
+function parseYamlScalar(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  const unquoted = trimmed.replace(/^["']|["']$/g, "");
+  if (unquoted === "true") return true;
+  if (unquoted === "false") return false;
+  if (/^-?\d+(\.\d+)?$/.test(unquoted)) return Number(unquoted);
+  if ((unquoted.startsWith("[") && unquoted.endsWith("]")) || (unquoted.startsWith("{") && unquoted.endsWith("}"))) {
+    try {
+      return JSON.parse(unquoted);
+    } catch {
+      return unquoted;
+    }
+  }
+  return unquoted;
+}
+
 function parseFrontMatter(content: string): Record<string, unknown> {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return {};
-  const out: Record<string, unknown> = {};
-  let activeKey: string | null = null;
-  for (const line of match[1].split(/\r?\n/)) {
-    const pair = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-    if (pair) {
-      activeKey = pair[1];
-      const raw = pair[2].trim();
-      out[activeKey] = raw ? raw.replace(/^["']|["']$/g, "") : [];
-      continue;
+  const lines = match[1]
+    .split(/\r?\n/)
+    .map((raw) => ({
+      indent: raw.match(/^\s*/)?.[0].length ?? 0,
+      text: raw.trim(),
+    }))
+    .filter((line) => line.text && !line.text.startsWith("#"));
+
+  function parseObject(start: number, indent: number): { value: Record<string, unknown>; index: number } {
+    const value: Record<string, unknown> = {};
+    let index = start;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (line.indent < indent) break;
+      if (line.indent > indent) {
+        index++;
+        continue;
+      }
+      if (line.text.startsWith("- ")) break;
+      const pair = splitYamlPair(line.text);
+      if (!pair) {
+        index++;
+        continue;
+      }
+      if (pair.raw.trim()) {
+        value[pair.key] = parseYamlScalar(pair.raw);
+        index++;
+        continue;
+      }
+      const next = lines[index + 1];
+      if (!next || next.indent <= line.indent) {
+        value[pair.key] = [];
+        index++;
+        continue;
+      }
+      const parsed = next.text.startsWith("- ")
+        ? parseArray(index + 1, next.indent)
+        : parseObject(index + 1, next.indent);
+      value[pair.key] = parsed.value;
+      index = parsed.index;
     }
-    const item = line.match(/^\s*-\s*(.+)$/);
-    if (item && activeKey) {
-      const current = Array.isArray(out[activeKey]) ? out[activeKey] as unknown[] : [];
-      current.push(item[1].trim().replace(/^["']|["']$/g, ""));
-      out[activeKey] = current;
-    }
+    return { value, index };
   }
-  return out;
+
+  function parseArray(start: number, indent: number): { value: unknown[]; index: number } {
+    const value: unknown[] = [];
+    let index = start;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (line.indent < indent || !line.text.startsWith("- ")) break;
+      if (line.indent > indent) {
+        index++;
+        continue;
+      }
+      const rest = line.text.slice(2).trim();
+      const inlinePair = splitYamlPair(rest);
+      if (inlinePair) {
+        const item: Record<string, unknown> = {};
+        item[inlinePair.key] = inlinePair.raw.trim() ? parseYamlScalar(inlinePair.raw) : "";
+        index++;
+        if (index < lines.length && lines[index].indent > indent) {
+          const parsed = parseObject(index, lines[index].indent);
+          Object.assign(item, parsed.value);
+          index = parsed.index;
+        }
+        value.push(item);
+        continue;
+      }
+      if (rest) {
+        value.push(parseYamlScalar(rest));
+        index++;
+        continue;
+      }
+      const next = lines[index + 1];
+      if (!next || next.indent <= indent) {
+        value.push("");
+        index++;
+        continue;
+      }
+      const parsed = next.text.startsWith("- ")
+        ? parseArray(index + 1, next.indent)
+        : parseObject(index + 1, next.indent);
+      value.push(parsed.value);
+      index = parsed.index;
+    }
+    return { value, index };
+  }
+
+  return parseObject(0, 0).value;
 }
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function asStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return value.map((item) => asString(item)).filter(Boolean).slice(0, 12);
+function asStringArray(value: unknown, max = 60): string[] {
+  if (Array.isArray(value)) return value.map((item) => asString(item)).filter(Boolean).slice(0, max);
   const text = asString(value);
   return text ? [text] : [];
+}
+
+function asOutputContract(value: unknown): SkillOutputContract {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return DEFAULT_OUTPUT_CONTRACT;
+  const raw = value as Record<string, unknown>;
+  return {
+    format: asString(raw.format) || DEFAULT_OUTPUT_CONTRACT.format,
+    mustInclude: asStringArray(raw.mustInclude),
+    mustAvoid: asStringArray(raw.mustAvoid),
+    tone: asString(raw.tone) || undefined,
+  };
+}
+
+function asEvaluationPrompts(value: unknown): SkillEvaluationPrompt[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const raw = item as Record<string, unknown>;
+    const input = asString(raw.input);
+    const reason = asString(raw.reason);
+    if (!input || !reason || typeof raw.shouldMatch !== "boolean") return [];
+    const prompt: SkillEvaluationPrompt = {
+      input,
+      shouldMatch: raw.shouldMatch,
+      reason,
+    };
+    const minimumScore = typeof raw.minimumScore === "number" ? raw.minimumScore : undefined;
+    const expectedSkill = asString(raw.expectedSkill) || undefined;
+    if (minimumScore !== undefined) prompt.minimumScore = minimumScore;
+    if (expectedSkill) prompt.expectedSkill = expectedSkill;
+    return [prompt];
+  });
 }
 
 function safetyClassFrom(value: unknown, requiresApproval?: boolean): RegisteredSkill["safetyClass"] {
@@ -108,7 +262,7 @@ function safetyClassFrom(value: unknown, requiresApproval?: boolean): Registered
 
 function costSavingFor(tags: string[], description: string, source: RegisteredSkill["source"]): RegisteredSkill["estimatedCostSaving"] {
   const text = `${tags.join(" ")} ${description}`.toLowerCase();
-  if (/routing|triage|draft|brief|context|screen|guard|compliance|trainer/.test(text)) return "medium";
+  if (/routing|triage|draft|brief|context|screen|guard|compliance|trainer|humanizer/.test(text)) return "medium";
   if (source === "scouted") return "low";
   return "none";
 }
@@ -118,7 +272,7 @@ function problemSolved(skill: Pick<RegisteredSkill, "name" | "description" | "ow
   const plain = skill.description.replace(/\.$/, "");
   if (/brief|context|ground/i.test(`${skill.name} ${plain}`)) return `This skill can help ${agent} turn rough context into a grounded response before an expensive model call.`;
   if (/job|resume|application|role|risk|grc|soc/i.test(`${skill.name} ${plain}`)) return `This skill can help ${agent} screen career opportunities against Osman's real goals before drafting or outreach.`;
-  if (/write|human/i.test(`${skill.name} ${plain}`)) return `This skill can help ${agent} make drafts sound more direct and human before they leave the system.`;
+  if (/write|human|tone/i.test(`${skill.name} ${plain}`)) return `This skill can help ${agent} make drafts sound more direct and human before they leave the system.`;
   return plain || `This skill gives ${agent} reusable instructions for a recurring workflow.`;
 }
 
@@ -127,7 +281,8 @@ function validationStatus(meta: Record<string, unknown>, hasJson: boolean, hasSk
   if (!hasJson && !hasSkillMd) warnings.push("No safe metadata file found.");
   if (!asString(meta.name)) warnings.push("Missing name.");
   if (!asString(meta.description)) warnings.push("Missing description.");
-  if (!asString(meta.safetyClass) && !asString((meta.execution as { risk?: unknown } | undefined)?.risk)) warnings.push("Missing safety class; defaulted to read-only.");
+  const execution = meta.execution as { risk?: unknown } | undefined;
+  if (!asString(meta.safetyClass) && !asString(execution?.risk)) warnings.push("Missing safety class; defaulted to read-only.");
   if (!hasSkillMd) warnings.push("Missing SKILL.md instructions.");
   if (warnings.some((warning) => warning.startsWith("Missing name") || warning.startsWith("No safe"))) return { validationStatus: "invalid", validationWarnings: warnings };
   if (warnings.length) return { validationStatus: "missing_metadata", validationWarnings: warnings };
@@ -150,7 +305,94 @@ async function readSkillMd(filePath: string): Promise<{ meta: Record<string, unk
   const body = content.replace(/^---\r?\n[\s\S]*?\r?\n---/, "").trim();
   return {
     meta: parseFrontMatter(content),
-    preview: body.slice(0, 2400),
+    preview: body.slice(0, 3600),
+  };
+}
+
+function buildRegistryEntry({
+  id,
+  meta,
+  source,
+  pathValue,
+  instructionFile,
+  instructionPreview,
+  dateAdded,
+  hasJson,
+  hasSkillMd,
+}: {
+  id: string;
+  meta: Record<string, unknown>;
+  source: RegisteredSkill["source"];
+  pathValue: string;
+  instructionFile: string | null;
+  instructionPreview: string | null;
+  dateAdded: string | null;
+  hasJson: boolean;
+  hasSkillMd: boolean;
+}): SkillRegistryEntry {
+  const execution = meta.execution as { risk?: unknown; requiresApproval?: unknown; pipeline?: unknown } | undefined;
+  const name = asString(meta.name) || id;
+  const description = asString(meta.description) || "Local skill instructions.";
+  const ownerAgents = asStringArray(meta.ownerAgents).length ? asStringArray(meta.ownerAgents) : [asString(meta.agent) || "hermes"];
+  const tags = asStringArray(meta.tags).length ? asStringArray(meta.tags) : [asString(meta.category)].filter(Boolean);
+  const positiveExamples = asStringArray(meta.positiveExamples);
+  const triggerExamplesBase = asStringArray(meta.triggerExamples).length ? asStringArray(meta.triggerExamples) : asStringArray(meta.examples);
+  const triggerExamples = [...new Set([...triggerExamplesBase, ...positiveExamples.slice(0, 8), ...asStringArray(meta.whenToUse).slice(0, 6)])];
+  const requiredCapabilities = asStringArray(meta.requiredCapabilities).length
+    ? asStringArray(meta.requiredCapabilities)
+    : asStringArray(execution?.pipeline);
+  const safetyClass = safetyClassFrom(meta.safetyClass ?? execution?.risk, Boolean(execution?.requiresApproval));
+  const validation = validationStatus(meta, hasJson, hasSkillMd);
+  const category = asString(meta.category) || tags[0] || "workflow";
+  const outputContract = asOutputContract(meta.outputContract);
+  const entryBase = {
+    id,
+    name,
+    description,
+    path: pathValue,
+    enabled: true,
+    ownerAgents,
+    tags,
+    triggerExamples,
+    requiredCapabilities,
+    safetyClass,
+    estimatedCostSaving: costSavingFor(tags, description, source),
+    lastUsedAt: null,
+    usageCount: 0,
+    source,
+    validationStatus: validation.validationStatus,
+    category,
+    dateAdded,
+    validationWarnings: validation.validationWarnings,
+    problemSolved: problemSolved({ name, description, ownerAgents, tags }),
+    instructionFile,
+    instructionPreview,
+    purpose: asString(meta.purpose) || description,
+    whenToUse: asStringArray(meta.whenToUse),
+    whenNotToUse: asStringArray(meta.whenNotToUse),
+    strongSignals: asStringArray(meta.strongSignals),
+    weakSignals: asStringArray(meta.weakSignals),
+    negativeSignals: asStringArray(meta.negativeSignals),
+    requiredContext: asStringArray(meta.requiredContext),
+    missingContextQuestions: asStringArray(meta.missingContextQuestions),
+    outputContract,
+    safetyRules: asStringArray(meta.safetyRules),
+    approvalRequiredFor: asStringArray(meta.approvalRequiredFor),
+    positiveExamples,
+    negativeExamples: asStringArray(meta.negativeExamples),
+    evaluationPrompts: asEvaluationPrompts(meta.evaluationPrompts),
+    version: asString(meta.version) || "1.0.0",
+    lastReviewedAt: asString(meta.lastReviewedAt) || null,
+  };
+  const quality = calculateSkillQualityScore({
+    ...entryBase,
+    lastReviewedAt: entryBase.lastReviewedAt ?? undefined,
+  });
+  return {
+    ...entryBase,
+    skillQualityScore: quality.score,
+    skillQualityBand: quality.band,
+    qualityWarnings: quality.warnings,
   };
 }
 
@@ -166,46 +408,23 @@ async function scanRepoSkills(): Promise<SkillRegistryEntry[]> {
   const skills: SkillRegistryEntry[] = [];
   for (const id of names) {
     const dir = path.join(root, id);
-    const json = await readJson(path.join(root, `${id}.json`));
+    const jsonPath = path.join(root, `${id}.json`);
+    const json = await readJson(jsonPath);
     const skillMd = await readSkillMd(path.join(dir, "SKILL.md"));
     const meta = { ...(json ?? {}), ...(skillMd?.meta ?? {}) };
-    const execution = meta.execution as { risk?: unknown; requiresApproval?: unknown } | undefined;
-    const name = asString(meta.name) || id;
-    const description = asString(meta.description) || "Local skill instructions.";
-    const ownerAgents = asStringArray(meta.ownerAgents).length ? asStringArray(meta.ownerAgents) : [asString(meta.agent) || "hermes"];
-    const tags = asStringArray(meta.tags).length ? asStringArray(meta.tags) : [asString(meta.category)].filter(Boolean);
-    const triggerExamples = asStringArray(meta.triggerExamples).length ? asStringArray(meta.triggerExamples) : asStringArray(meta.examples);
-    const requiredCapabilities = asStringArray(meta.requiredCapabilities).length
-      ? asStringArray(meta.requiredCapabilities)
-      : asStringArray((execution as { pipeline?: unknown } | undefined)?.pipeline);
-    const safetyClass = safetyClassFrom(meta.safetyClass ?? execution?.risk, Boolean(execution?.requiresApproval));
-    const validation = validationStatus(meta, Boolean(json), Boolean(skillMd));
-    const info = await stat(json ? path.join(root, `${id}.json`) : dir).catch(() => null);
-    const source: RegisteredSkill["source"] = id.startsWith("skill-scout-") ? "scouted" : PERSONAL_SKILL_IDS.has(id) ? "installed" : "built_in";
-
-    skills.push({
+    const info = await stat(json ? jsonPath : dir).catch(() => null);
+    const source: RegisteredSkill["source"] = id.startsWith("skill-scout-") ? "scouted" : PERSONAL_SKILL_ID_SET.has(id) ? "installed" : "built_in";
+    skills.push(buildRegistryEntry({
       id,
-      name,
-      description,
-      path: json ? path.join(root, `${id}.json`) : dir,
-      enabled: true,
-      ownerAgents,
-      tags,
-      triggerExamples,
-      requiredCapabilities,
-      safetyClass,
-      estimatedCostSaving: costSavingFor(tags, description, source),
-      lastUsedAt: null,
-      usageCount: 0,
+      meta,
       source,
-      validationStatus: validation.validationStatus,
-      category: asString(meta.category) || tags[0] || "workflow",
-      dateAdded: info?.birthtime?.toISOString() ?? null,
-      validationWarnings: validation.validationWarnings,
-      problemSolved: problemSolved({ name, description, ownerAgents, tags }),
+      pathValue: json ? jsonPath : dir,
       instructionFile: skillMd ? path.join(dir, "SKILL.md") : null,
       instructionPreview: skillMd?.preview ?? null,
-    });
+      dateAdded: info?.birthtime?.toISOString() ?? null,
+      hasJson: Boolean(json),
+      hasSkillMd: Boolean(skillMd),
+    }));
   }
   return skills;
 }
@@ -216,34 +435,18 @@ async function scanFolderSkills(root: string, sourceLabel: string): Promise<Skil
     const dir = path.join(root, entry.name);
     const skillMd = await readSkillMd(path.join(dir, "SKILL.md"));
     const meta = skillMd?.meta ?? {};
-    const description = asString(meta.description) || "Local skill instructions.";
-    const ownerAgents = asStringArray(meta.ownerAgents).length ? asStringArray(meta.ownerAgents) : ["hermes"];
-    const tags = asStringArray(meta.tags).length ? asStringArray(meta.tags) : [sourceLabel];
-    const validation = validationStatus(meta, false, Boolean(skillMd));
     const info = await stat(dir).catch(() => null);
-    return {
+    return buildRegistryEntry({
       id: `${sourceLabel}:${entry.name}`,
-      name: asString(meta.name) || entry.name,
-      description,
-      path: dir,
-      enabled: true,
-      ownerAgents,
-      tags,
-      triggerExamples: asStringArray(meta.triggerExamples),
-      requiredCapabilities: asStringArray(meta.requiredCapabilities),
-      safetyClass: safetyClassFrom(meta.safetyClass),
-      estimatedCostSaving: costSavingFor(tags, description, "installed"),
-      lastUsedAt: null,
-      usageCount: 0,
-      source: "installed" as const,
-      validationStatus: validation.validationStatus,
-      category: tags[0] || "workflow",
-      dateAdded: info?.birthtime?.toISOString() ?? null,
-      validationWarnings: validation.validationWarnings,
-      problemSolved: problemSolved({ name: entry.name, description, ownerAgents, tags }),
+      meta,
+      source: "installed",
+      pathValue: dir,
       instructionFile: skillMd ? path.join(dir, "SKILL.md") : null,
       instructionPreview: skillMd?.preview ?? null,
-    };
+      dateAdded: info?.birthtime?.toISOString() ?? null,
+      hasJson: false,
+      hasSkillMd: Boolean(skillMd),
+    });
   }));
 }
 
@@ -315,10 +518,7 @@ export async function testSkillMatch(userId: string, skillId: string, message: s
   const skills = await getRegisteredSkills(userId);
   const skill = skills.find((item) => item.id === skillId);
   if (!skill) return null;
-  const words = message.toLowerCase().split(/[^a-z0-9+]+/).filter((word) => word.length > 2);
-  const haystacks = [skill.name, skill.description, ...skill.tags, ...skill.triggerExamples, ...skill.requiredCapabilities].map((item) => item.toLowerCase());
-  const hits = words.filter((word) => haystacks.some((item) => item.includes(word))).slice(0, 12);
-  const score = Math.min(100, hits.length * 18 + (skill.triggerExamples.some((example) => message.toLowerCase().includes(example.toLowerCase().slice(0, 16))) ? 20 : 0));
+  const result = scoreRegisteredSkill(skill, message, inferAgent(message, null));
   await ensureSkillStateTable();
   await prisma.$executeRawUnsafe(
     `INSERT INTO SkillRegistryState (userId, skillId, enabled, lastUsedAt, usageCount, updatedAt)
@@ -329,11 +529,14 @@ export async function testSkillMatch(userId: string, skillId: string, message: s
   );
   return {
     skillId,
-    matched: score >= 35,
-    score,
-    reason: hits.length
-      ? `Matched ${hits.join(", ")} against this skill's safe metadata.`
-      : "No strong match from safe metadata.",
+    matched: result.score >= MIN_CONFIDENCE,
+    score: result.score,
+    reason: result.reason,
+    matchedSignals: result.matchedSignals,
+    negativeMatches: result.negativeMatches,
+    missingContextQuestions: result.missingContextQuestions,
+    skillQualityScore: skill.skillQualityScore,
+    skillQualityBand: skill.skillQualityBand,
   };
 }
 
