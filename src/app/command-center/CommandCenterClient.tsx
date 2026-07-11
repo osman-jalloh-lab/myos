@@ -380,6 +380,27 @@ interface HealthCenterData {
   actionResult?: { ok: boolean; message: string };
 }
 
+interface AccountsHealthData {
+  currentSession: { userId: string; email: string | null; name: string | null };
+  accounts: Array<{
+    id: string;
+    email: string;
+    label: string;
+    isDefault: boolean;
+    scopes: string;
+    gmailScope: boolean;
+    calendarScope: boolean;
+    createdAt: string;
+    tokenExpiresAt: string;
+    lastSyncedAt: string | null;
+    lastSyncStatus: string | null;
+    lastError: string | null;
+    health: "connected" | "expiring_soon" | "disconnected" | "unknown";
+    reconnectRequired: boolean;
+  }>;
+  results?: Array<{ accountId: string; status: string; email?: string; error?: string | null }>;
+}
+
 type Tab = "overview" | "health" | "agents" | "memory" | "skills" | "projects" | "builds" | "runs" | "logs" | "chat";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -2283,11 +2304,17 @@ function HermesNousRuntimeSection({ runtime }: { runtime: NonNullable<HealthCent
 function HealthCenterPanel({
   data,
   busyAction,
+  accountsHealth,
+  accountHealthBusy,
   onAction,
+  onAccountHealthCheck,
 }: {
   data: HealthCenterData | null;
   busyAction: string | null;
+  accountsHealth: AccountsHealthData | null;
+  accountHealthBusy: boolean;
   onAction: (action: "refreshHealth" | "checkAllConnections" | "runJobScout" | "runEmailScout" | "runSkillScout" | "testApiKeys" | "testModelProviders") => Promise<void>;
+  onAccountHealthCheck: () => Promise<void>;
 }) {
   if (!data) return <div style={{ ...cardStyle, textAlign: "center", color: "#4B5563", padding: 48 }}>Health Center is loading.</div>;
 
@@ -2373,29 +2400,60 @@ function HealthCenterPanel({
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 20 }}>
         <div style={cardStyle}>
-          <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 14 }}>Connected Accounts</div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 14 }}>
+            <div>
+              <div style={{ color: "#94A3B8", fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>Connected Accounts</div>
+              <div style={{ color: "#647089", fontSize: 11, marginTop: 4 }}>
+                Session: <strong style={{ color: "#D8DEEB" }}>{accountsHealth?.currentSession.email ?? accountsHealth?.currentSession.name ?? "unknown"}</strong>
+              </div>
+            </div>
+            <button
+              onClick={() => void onAccountHealthCheck()}
+              disabled={accountHealthBusy}
+              style={{ ...miniButtonStyle("#60A5FA"), opacity: accountHealthBusy ? 0.6 : 1 }}
+            >
+              {accountHealthBusy ? "Testing..." : "Test connection"}
+            </button>
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {data.accounts.map((account) => {
-              const color = account.connected && !account.lastError ? "#34D399" : account.reconnectRequired ? "#F87171" : "#FBBF24";
+            {(accountsHealth?.accounts.length ? accountsHealth.accounts : data.accounts.map((account, index): AccountsHealthData["accounts"][number] => ({
+              id: account.email ?? account.name ?? `account-${index}`,
+              email: account.email ?? account.name,
+              label: account.label ?? account.name,
+              isDefault: index === 0,
+              scopes: "",
+              gmailScope: Boolean(account.gmailScope),
+              calendarScope: Boolean(account.calendarScope),
+              createdAt: "",
+              tokenExpiresAt: account.tokenExpiresAt ?? "",
+              lastSyncedAt: account.lastSuccessfulSync,
+              lastSyncStatus: account.connected ? "ok" : null,
+              lastError: account.lastError,
+              health: account.connected && !account.lastError ? "connected" : account.reconnectRequired ? "disconnected" : "unknown",
+              reconnectRequired: account.reconnectRequired,
+            }))).map((account) => {
+              const color = account.health === "connected" ? "#34D399" : account.health === "expiring_soon" || account.health === "unknown" ? "#FBBF24" : "#F87171";
+              const healthLabel = account.health === "expiring_soon" ? "Needs test" : account.health.replace("_", " ");
               return (
-                <div key={account.name} style={{ padding: "11px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid #28324A", borderRadius: 8 }}>
+                <div key={account.id} style={{ padding: "11px 12px", background: "rgba(40,50,74,0.35)", border: "1px solid #28324A", borderRadius: 8 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                    <div>
-                      <strong style={{ color: "#F1F4FB", fontSize: 13 }}>{account.email ?? account.name}</strong>
-                      <div style={{ color: "#647089", fontSize: 10, marginTop: 2 }}>{account.email ? `${account.name}${account.label ? ` / ${account.label}` : ""}` : "No account linked"}</div>
+                    <div style={{ minWidth: 0 }}>
+                      <strong style={{ color: "#F1F4FB", fontSize: 13, overflowWrap: "anywhere" }}>{account.email}</strong>
+                      <div style={{ color: "#647089", fontSize: 10, marginTop: 2 }}>
+                        {account.label}{account.isDefault ? " / default" : ""}
+                      </div>
                     </div>
-                    <span style={badgeStyle(color)}>{account.connected ? "Connected" : "Disconnected"}</span>
+                    <span style={badgeStyle(color)}>{healthLabel}</span>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 8, marginTop: 8, color: "#94A3B8", fontSize: 11 }}>
                     <span>Gmail Scope: <strong style={{ color: account.gmailScope ? "#34D399" : "#FBBF24" }}>{account.gmailScope ? "yes" : "no"}</strong></span>
                     <span>Calendar Scope: <strong style={{ color: account.calendarScope ? "#34D399" : "#FBBF24" }}>{account.calendarScope ? "yes" : "no"}</strong></span>
                     <span>Token Expires: {account.tokenExpiresAt ? relativeTime(account.tokenExpiresAt) : "unknown"}</span>
-                    <span>Last Sync: {account.lastSuccessfulSync ? timeAgo(account.lastSuccessfulSync) : "Never"}</span>
+                    <span>Last Sync: {account.lastSyncedAt ? timeAgo(account.lastSyncedAt) : "Never"}</span>
                     <span>Reconnect Required: {account.reconnectRequired ? "yes" : "no"}</span>
-                    <span>Score: {account.score}/100</span>
+                    <span>Status: {account.lastSyncStatus ?? "untested"}</span>
                     <span style={{ color: account.lastError ? "#F87171" : "#94A3B8", gridColumn: "1 / -1" }}>Last Error: {account.lastError ?? "none"}</span>
                   </div>
-                  {account.warnings.length > 0 && <div style={{ color: "#FBBF24", fontSize: 11, marginTop: 7 }}>{account.warnings.join(", ")}</div>}
                   {account.reconnectRequired && (
                     <a href={`/api/accounts/link?label=${encodeURIComponent(account.label ?? "Other")}`} style={{ display: "inline-block", marginTop: 9, color: "#60A5FA", fontSize: 11, fontWeight: 800, textDecoration: "none" }}>
                       Reconnect Google account
@@ -2699,7 +2757,9 @@ export default function CommandCenterClient() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [executionEvents, setExecutionEvents] = useState<ExecutionTraceEvent[]>([]);
   const [healthCenter, setHealthCenter] = useState<HealthCenterData | null>(null);
+  const [accountsHealth, setAccountsHealth] = useState<AccountsHealthData | null>(null);
   const [healthAction, setHealthAction] = useState<string | null>(null);
+  const [accountHealthAction, setAccountHealthAction] = useState(false);
   const [skills, setSkills] = useState<SkillView[]>([]);
   const [skillRegistry, setSkillRegistry] = useState<SkillRegistryData | null>(null);
   const [skillScoutResult, setSkillScoutResult] = useState<SkillScoutResult | null>(null);
@@ -2707,7 +2767,7 @@ export default function CommandCenterClient() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, memoryRes, memoryDebugRes, skillsRes, queueRes, runRes, healthRes] = await Promise.allSettled([
+      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, memoryRes, memoryDebugRes, skillsRes, queueRes, runRes, healthRes, accountsRes] = await Promise.allSettled([
         fetch("/api/command-center/projects").then((r) => r.json() as Promise<{ projects: Project[] }>),
         fetch("/api/command-center/builds").then((r) => r.json() as Promise<{ builds: Build[] }>),
         fetch("/api/approvals").then((r) => r.json() as Promise<{ actions: ApprovalAction[] }>),
@@ -2719,6 +2779,7 @@ export default function CommandCenterClient() {
         fetch("/api/command-center/execution-queue").then((r) => r.json() as Promise<ExecutionQueueData>),
         fetch("/api/command-center/runs").then((r) => r.json() as Promise<ExecutionRunsData>),
         fetch("/api/command-center/health-center").then((r) => r.json() as Promise<HealthCenterData>),
+        fetch("/api/accounts").then((r) => r.json() as Promise<AccountsHealthData>),
       ]);
 
       if (projRes.status === "fulfilled") setProjects(projRes.value.projects ?? []);
@@ -2741,6 +2802,7 @@ export default function CommandCenterClient() {
         setSelectedRunId((current) => current && nextRuns.some((run) => run.id === current) ? current : nextRuns[0]?.id ?? null);
       }
       if (healthRes.status === "fulfilled" && !("error" in healthRes.value)) setHealthCenter(healthRes.value);
+      if (accountsRes.status === "fulfilled" && !("error" in accountsRes.value)) setAccountsHealth(accountsRes.value);
 
       const webMsgs = chatRes.status === "fulfilled" ? (chatRes.value.messages ?? []).map((m) => ({ ...m, channel: "dashboard" })) : [];
       setChatMessages(webMsgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()));
@@ -2901,6 +2963,18 @@ export default function CommandCenterClient() {
     }
   };
 
+  const runAccountHealthCheck = async () => {
+    setAccountHealthAction(true);
+    try {
+      const res = await fetch("/api/accounts/health-check", { method: "POST" });
+      const data = await res.json().catch(() => null) as AccountsHealthData | null;
+      if (res.ok && data && !("error" in data)) setAccountsHealth(data);
+    } finally {
+      setAccountHealthAction(false);
+      void fetchAll();
+    }
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "var(--cc-bg-page, #0E1424)", color: "var(--cc-fg-primary, #F1F4FB)", fontFamily: "Hanken Grotesk, sans-serif" }}>
       {/* Header */}
@@ -2963,7 +3037,16 @@ export default function CommandCenterClient() {
                 onOfficeSelect={(office) => { setSelectedOffice(office); setAgentsView("offices"); }}
               />
             )}
-            {tab === "health" && <HealthCenterPanel data={healthCenter} busyAction={healthAction} onAction={runHealthAction} />}
+            {tab === "health" && (
+              <HealthCenterPanel
+                data={healthCenter}
+                busyAction={healthAction}
+                accountsHealth={accountsHealth}
+                accountHealthBusy={accountHealthAction}
+                onAction={runHealthAction}
+                onAccountHealthCheck={runAccountHealthCheck}
+              />
+            )}
             {tab === "agents" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 <div style={{ display: "flex", gap: 6 }}>
