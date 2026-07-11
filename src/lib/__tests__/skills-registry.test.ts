@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  executeRaw: vi.fn(async () => undefined),
+  queryRaw: vi.fn(async () => []),
+}));
+
 vi.mock("@/lib/db", () => ({
   prisma: {
-    $executeRawUnsafe: vi.fn(async () => undefined),
-    $queryRawUnsafe: vi.fn(async () => []),
+    $executeRawUnsafe: mocks.executeRaw,
+    $queryRawUnsafe: mocks.queryRaw,
   },
 }));
 
@@ -24,6 +29,24 @@ const PERSONAL_SKILLS = [
 ];
 
 describe("skills registry", () => {
+  it("guards state-table DDL while still reading state for each registry call", async () => {
+    clearSkillRegistryCache();
+    mocks.executeRaw.mockClear();
+    mocks.queryRaw.mockClear();
+
+    await getRegisteredSkills("user_1", true);
+    await getRegisteredSkills("user_1");
+
+    const ddlCalls = mocks.executeRaw.mock.calls.filter((call: unknown[]) =>
+      String(call[0]).includes("CREATE TABLE IF NOT EXISTS SkillRegistryState")
+    );
+    const stateReads = mocks.queryRaw.mock.calls.filter((call: unknown[]) =>
+      String(call[0]).includes("FROM SkillRegistryState")
+    );
+    expect(ddlCalls).toHaveLength(1);
+    expect(stateReads).toHaveLength(2);
+  });
+
   it("surfaces the seven real imported personal skills with metadata", async () => {
     clearSkillRegistryCache();
     const skills = await getRegisteredSkills("user_1", true);

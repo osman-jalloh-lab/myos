@@ -73,6 +73,8 @@ type SkillStateRow = {
 };
 
 let cache: { createdAt: number; entries: SkillRegistryEntry[] } | null = null;
+let skillStateTableEnsured = false;
+let skillStateTableEnsurePromise: Promise<void> | null = null;
 const CACHE_MS = 60_000;
 
 export const PERSONAL_SKILL_IDS = [
@@ -451,17 +453,26 @@ async function scanFolderSkills(root: string, sourceLabel: string): Promise<Skil
 }
 
 async function ensureSkillStateTable(): Promise<void> {
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS SkillRegistryState (
-      userId TEXT NOT NULL,
-      skillId TEXT NOT NULL,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      lastUsedAt TEXT,
-      usageCount INTEGER NOT NULL DEFAULT 0,
-      updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (userId, skillId)
-    )
-  `);
+  if (skillStateTableEnsured) return;
+  if (!skillStateTableEnsurePromise) {
+    skillStateTableEnsurePromise = prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS SkillRegistryState (
+        userId TEXT NOT NULL,
+        skillId TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        lastUsedAt TEXT,
+        usageCount INTEGER NOT NULL DEFAULT 0,
+        updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (userId, skillId)
+      )
+    `).then(() => {
+      skillStateTableEnsured = true;
+    }).catch((error) => {
+      skillStateTableEnsurePromise = null;
+      throw error;
+    });
+  }
+  await skillStateTableEnsurePromise;
 }
 
 async function stateBySkill(userId: string): Promise<Map<string, SkillStateRow>> {
