@@ -47,6 +47,9 @@ model GoogleAccount {
   scopes       String   @default("") // space-separated
   isDefault    Boolean  @default(false)
   createdAt    DateTime @default(now())
+  lastSyncedAt DateTime?
+  lastSyncStatus String?
+  lastError    String?
 
   @@unique([userId, googleSub])
 }

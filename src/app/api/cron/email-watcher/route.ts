@@ -14,6 +14,7 @@ import { classify, fetchInboxMessages, fetchEmailBody, getCorrespondentGraph } f
 import { sendTelegramMessage } from "@/lib/telegram";
 import { classifyEmailRoute, routeActionEmailFollowUp, routeToThemis, routeToAthena } from "@/lib/agentHandoff";
 import type { InlineButton } from "@/lib/telegram";
+import { recordGoogleAccountSkip } from "@/lib/google-health";
 
 const OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
 const DEDUP_WINDOW_MS = 4 * 60 * 60 * 1000; // don't re-notify same email for 4 hours
@@ -65,20 +66,30 @@ export async function GET(req: Request) {
   for (const user of users) {
     // Usable = refresh token present OR access token still live — the access
     // token rotating hourly is normal OAuth, not a disconnected account.
-    const gmailAccountCount = await prisma.googleAccount.count({
+    const gmailAccounts = await prisma.googleAccount.findMany({
       where: {
         userId: user.id,
         scopes: { contains: "gmail" },
-        OR: [{ refreshToken: { not: null } }, { expiresAt: { gt: now } }],
       },
+      select: { id: true, refreshToken: true, expiresAt: true },
     });
-    if (gmailAccountCount === 0) {
+    const usableAccounts = gmailAccounts.filter((account) => account.refreshToken || account.expiresAt > now);
+    const expiredAccounts = gmailAccounts.filter((account) => !account.refreshToken && account.expiresAt <= now);
+    await Promise.all(
+      expiredAccounts.map((account) =>
+        recordGoogleAccountSkip(account.id, "expired", "Email watcher skipped account: token expired and no refresh token is available").catch(() => undefined)
+      )
+    );
+    if (usableAccounts.length === 0) {
       disconnectedUsers += 1;
+      const outputSummary = gmailAccounts.length === 0
+        ? "Email Scout did not run: no connected Google account with Gmail scope. Reconnect Google from Health Center."
+        : "Email Scout did not run: connected Gmail accounts are expired. Reconnect Google from Health Center.";
       await prisma.agentRun.create({
         data: {
           agentName: "email-watcher",
-          inputSummary: "gmail_disconnected",
-          outputSummary: "Email Scout did not run: no connected Google account with Gmail scope. Reconnect Google from Health Center.",
+          inputSummary: gmailAccounts.length === 0 ? "gmail_disconnected" : "gmail_expired",
+          outputSummary,
           status: "failed",
         },
       });

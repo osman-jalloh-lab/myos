@@ -35,6 +35,9 @@ const BASE_ACCOUNT = {
   scopes: "email profile",
   isDefault: true,
   createdAt: new Date(),
+  lastSyncedAt: null,
+  lastSyncStatus: null,
+  lastError: null,
 };
 
 beforeEach(() => {

@@ -1,5 +1,11 @@
 import { prisma } from "./db";
 import { getValidToken } from "./tokens";
+import {
+  googleStatusFromError,
+  recordGoogleAccountHealth,
+  recordGoogleAccountSkip,
+  shortGoogleHealthError,
+} from "./google-health";
 
 const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
@@ -113,16 +119,8 @@ function maskEmail(email: string): string {
   return `${visible}${"*".repeat(Math.max(2, local.length - visible.length))}@${domain}`;
 }
 
-function classifyTokenError(message: string): "failed" | "reauth_required" {
-  const lower = message.toLowerCase();
-  if (
-    lower.includes("no refresh token") ||
-    lower.includes("invalid_grant") ||
-    lower.includes("401")
-  ) {
-    return "reauth_required";
-  }
-  return "failed";
+function accountResultStatus(status: ReturnType<typeof googleStatusFromError>): "failed" | "reauth_required" {
+  return status === "expired" ? "reauth_required" : "failed";
 }
 
 /** Fetches metadata-only messages (no bodies) across all linked accounts. */
@@ -144,7 +142,7 @@ export async function syncGmailInbox(
 ): Promise<InboxSyncSummary> {
   const accounts = await prisma.googleAccount.findMany({
     where: { userId },
-    select: { id: true, email: true, label: true },
+    select: { id: true, email: true, label: true, scopes: true, refreshToken: true, expiresAt: true },
   });
 
   console.log(
@@ -176,6 +174,37 @@ export async function syncGmailInbox(
         );
 
         try {
+          if (!/gmail/i.test(account.scopes)) {
+            await recordGoogleAccountSkip(account.id, "scope_missing", "Gmail scope missing");
+            const result: AccountSyncResult = {
+              accountId: account.id,
+              maskedEmail: masked,
+              label: account.label,
+              status: "reauth_required",
+              messagesScanned: 0,
+              messagesImported: 0,
+              lastSyncTime: syncTime,
+              errorRef: "Gmail scope missing",
+            };
+            console.error(JSON.stringify({ event: "gmail_account_sync_skipped", ...result }));
+            return { messages: [], result };
+          }
+          if (!account.refreshToken && account.expiresAt <= new Date()) {
+            await recordGoogleAccountSkip(account.id, "expired", "Access token expired and no refresh token is available");
+            const result: AccountSyncResult = {
+              accountId: account.id,
+              maskedEmail: masked,
+              label: account.label,
+              status: "reauth_required",
+              messagesScanned: 0,
+              messagesImported: 0,
+              lastSyncTime: syncTime,
+              errorRef: "Access token expired and no refresh token is available",
+            };
+            console.error(JSON.stringify({ event: "gmail_account_sync_skipped", ...result }));
+            return { messages: [], result };
+          }
+
           const token = await getValidToken(account.id);
           const headers = { Authorization: `Bearer ${token}` };
 
@@ -237,11 +266,14 @@ export async function syncGmailInbox(
             lastSyncTime: syncTime,
           };
 
+          await recordGoogleAccountHealth(account.id, "ok", null, new Date(syncTime)).catch(() => undefined);
           console.log(JSON.stringify({ event: "gmail_account_sync_completed", ...result }));
           return { messages, result };
         } catch (err) {
           const errorRef = (err instanceof Error ? err.message : String(err)).slice(0, 200);
-          const status = classifyTokenError(errorRef);
+          const healthStatus = googleStatusFromError(err);
+          const status = accountResultStatus(healthStatus);
+          await recordGoogleAccountHealth(account.id, healthStatus, shortGoogleHealthError(err)).catch(() => undefined);
           const result: AccountSyncResult = {
             accountId: account.id,
             maskedEmail: masked,

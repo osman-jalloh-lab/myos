@@ -1,5 +1,10 @@
 import { prisma } from "./db";
 import { encrypt, decrypt } from "./encrypt";
+import {
+  googleStatusFromError,
+  recordGoogleAccountHealth,
+  shortGoogleHealthError,
+} from "./google-health";
 
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 
@@ -10,7 +15,11 @@ const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const inflightRefreshes = new Map<string, Promise<string>>();
 
 /** Returns a valid (refreshed if needed) access token for the given GoogleAccount id. */
-export async function getValidToken(googleAccountId: string): Promise<string> {
+export async function getValidToken(
+  googleAccountId: string,
+  options: { recordHealth?: boolean } = {}
+): Promise<string> {
+  const shouldRecordHealth = options.recordHealth !== false;
   const account = await prisma.googleAccount.findUniqueOrThrow({
     where: { id: googleAccountId },
   });
@@ -71,8 +80,20 @@ export async function getValidToken(googleAccountId: string): Promise<string> {
           expiresAt: new Date(Date.now() + data.expires_in * 1000),
         },
       });
+      if (shouldRecordHealth) {
+        await recordGoogleAccountHealth(googleAccountId, "ok");
+      }
 
       return data.access_token;
+    } catch (err) {
+      if (shouldRecordHealth) {
+        await recordGoogleAccountHealth(
+          googleAccountId,
+          googleStatusFromError(err),
+          shortGoogleHealthError(err)
+        ).catch(() => undefined);
+      }
+      throw err;
     } finally {
       inflightRefreshes.delete(googleAccountId);
     }
