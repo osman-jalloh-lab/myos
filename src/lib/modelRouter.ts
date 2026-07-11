@@ -36,6 +36,10 @@ const ANTHROPIC_SYNTHESIS_MODEL = "claude-sonnet-4-6";
 // OpenAI model for job matching — GPT-4o-mini is strong at structured reasoning.
 const OPENAI_CHAT_MODEL = "gpt-4o-mini";
 
+const HOSTED_PROVIDER_TIMEOUT_MS = 30_000;
+const OLLAMA_TIMEOUT_MS = 60_000;
+const MEMORY_EXTRACTION_TIMEOUT_MS = 5_000;
+
 // Rough list pricing per 1M tokens (not billing-accurate; update if pricing changes).
 const GROQ_COST_PER_MILLION = { input: 0.05, output: 0.08 };
 const ANTHROPIC_COST_PER_MILLION = {
@@ -50,7 +54,12 @@ interface ProviderResponse {
   outputTokens?: number;
 }
 
-async function callGroq(system: string, user: string): Promise<ProviderResponse> {
+function providerTimeoutSignal(provider: Provider, taskType?: string): AbortSignal {
+  if (taskType === "memory-extraction") return AbortSignal.timeout(MEMORY_EXTRACTION_TIMEOUT_MS);
+  return AbortSignal.timeout(provider === "ollama" ? OLLAMA_TIMEOUT_MS : HOSTED_PROVIDER_TIMEOUT_MS);
+}
+
+async function callGroq(system: string, user: string, taskType?: string): Promise<ProviderResponse> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY is not set");
 
@@ -69,6 +78,7 @@ async function callGroq(system: string, user: string): Promise<ProviderResponse>
       temperature: 0.4,
       max_tokens: 400,
     }),
+    signal: providerTimeoutSignal("groq", taskType),
   });
 
   if (!res.ok) {
@@ -93,7 +103,7 @@ async function callGroq(system: string, user: string): Promise<ProviderResponse>
 // undefined for non-Groq providers, which is correct here too).
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3.1";
 
-async function callOllama(system: string, user: string): Promise<ProviderResponse> {
+async function callOllama(system: string, user: string, taskType?: string): Promise<ProviderResponse> {
   const baseUrl = process.env.OLLAMA_BASE_URL;
   if (!baseUrl) throw new Error("OLLAMA_BASE_URL is not set");
 
@@ -108,6 +118,7 @@ async function callOllama(system: string, user: string): Promise<ProviderRespons
       ],
       stream: false,
     }),
+    signal: providerTimeoutSignal("ollama", taskType),
   });
 
   if (!res.ok) {
@@ -118,7 +129,7 @@ async function callOllama(system: string, user: string): Promise<ProviderRespons
   return { text: data.message?.content?.trim() ?? "" };
 }
 
-async function callOpenAI(system: string, user: string): Promise<ProviderResponse> {
+async function callOpenAI(system: string, user: string, taskType?: string): Promise<ProviderResponse> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
 
@@ -137,6 +148,7 @@ async function callOpenAI(system: string, user: string): Promise<ProviderRespons
       temperature: 0.4,
       max_tokens: 500,
     }),
+    signal: providerTimeoutSignal("openai", taskType),
   });
 
   if (!res.ok) {
@@ -176,6 +188,7 @@ async function callAnthropic(system: string, user: string, taskType?: string): P
       system,
       messages: [{ role: "user", content: user }],
     }),
+    signal: providerTimeoutSignal("anthropic", taskType),
   });
 
   if (!res.ok) {
@@ -231,9 +244,9 @@ export interface ModelCallResult {
 }
 
 async function runProvider(provider: Provider, system: string, user: string, taskType?: string): Promise<ProviderResponse> {
-  if (provider === "groq") return callGroq(system, user);
-  if (provider === "ollama") return callOllama(system, user);
-  if (provider === "openai") return callOpenAI(system, user);
+  if (provider === "groq") return callGroq(system, user, taskType);
+  if (provider === "ollama") return callOllama(system, user, taskType);
+  if (provider === "openai") return callOpenAI(system, user, taskType);
   if (provider === "anthropic") return callAnthropic(system, user, taskType);
   throw new Error(`Unknown provider: ${provider}`);
 }
@@ -281,6 +294,7 @@ export async function* callModelStream(params: ModelCallParams): AsyncGenerator<
         max_tokens: 400,
         stream: true,
       }),
+      signal: providerTimeoutSignal("groq", params.taskType),
     });
 
     if (!res.ok || !res.body) throw new Error(`Groq streaming API ${res.status}`);
@@ -343,7 +357,7 @@ export async function callModel(params: ModelCallParams): Promise<ModelCallResul
     const ollamaConfigured = Boolean(process.env.OLLAMA_BASE_URL);
     if (provider === "ollama" || !ollamaConfigured) throw err;
 
-    const response = await callOllama(params.systemPrompt, params.userPrompt);
+    const response = await callOllama(params.systemPrompt, params.userPrompt, params.taskType);
     await logUsage(params, "ollama", response);
     return { text: response.text, provider: "ollama" };
   }
