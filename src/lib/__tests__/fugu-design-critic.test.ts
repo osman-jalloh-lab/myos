@@ -10,11 +10,13 @@ import { canStartBuildWithFuguGate } from "../local-builder";
 const originalKey = process.env.SAKANA_API_KEY;
 const originalPassScore = process.env.FUGU_DESIGN_PASS_SCORE;
 const originalGateMode = process.env.FUGU_DESIGN_GATE_MODE;
+const originalRetryBase = process.env.FUGU_RETRY_BASE_MS;
 
 afterEach(() => {
   process.env.SAKANA_API_KEY = originalKey;
   process.env.FUGU_DESIGN_PASS_SCORE = originalPassScore;
   process.env.FUGU_DESIGN_GATE_MODE = originalGateMode;
+  process.env.FUGU_RETRY_BASE_MS = originalRetryBase;
   vi.restoreAllMocks();
 });
 
@@ -79,6 +81,42 @@ describe("Fugu design gate", () => {
 
     expect(gate.verdict).toBe("error");
     expect(gate.mustFixBeforeBuild.join(" ")).toMatch(/Retry Fugu|override/i);
+  });
+
+  it("retries transient Fugu throttles and degrades to unavailable", async () => {
+    process.env.SAKANA_API_KEY = "test-key";
+    process.env.FUGU_RETRY_BASE_MS = "0";
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const gate = await runFuguDesignGate(gateInput);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(gate.verdict).toBe("unavailable");
+    expect(gate.summary).toContain("429");
+    expect(gate.mustFixBeforeBuild.join(" ")).toMatch(/temporarily unavailable|override/i);
+  });
+
+  it("uses a successful Fugu retry instead of failing the gate", async () => {
+    process.env.SAKANA_API_KEY = "test-key";
+    process.env.FUGU_RETRY_BASE_MS = "0";
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 429, json: async () => ({}) })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ choices: [{ message: { content: JSON.stringify({ score: 9, summary: "Ready", strengths: ["Clear plan"] }) } }] }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const gate = await runFuguDesignGate(gateInput);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(gate.verdict).toBe("pass");
+    expect(gate.summary).toBe("Ready");
   });
 
   it("blocks required-mode builds until Fugu passes or an override is recorded", () => {

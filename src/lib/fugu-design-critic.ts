@@ -47,6 +47,9 @@ export type FuguDesignGateInput = {
   designReferenceNotes?: string;
 };
 
+const FUGU_TRANSIENT_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+const FUGU_GATE_MAX_ATTEMPTS = 3;
+
 function extractJson(text: string): unknown {
   const trimmed = text.trim();
   if (!trimmed) return null;
@@ -153,6 +156,32 @@ export function errorFuguDesignGate(summary: string, threshold = getFuguDesignPa
     mustFixBeforeBuild: ["Retry Fugu or record an explicit override reason before building in required mode."],
     recommendedChanges: ["Check Fugu connectivity and response format, then run the design gate again."],
   };
+}
+
+export function transientUnavailableFuguDesignGate(summary: string, threshold = getFuguDesignPassScore()): FuguDesignGate {
+  return {
+    ...unavailableFuguDesignGate(threshold),
+    summary,
+    mustFixBeforeBuild: ["Fugu is temporarily unavailable; retry later or record an explicit override reason before building in required mode."],
+    recommendedChanges: ["Retry the Fugu design gate after the provider recovers or rate limits reset."],
+  };
+}
+
+function fuguRetryDelayMs(attempt: number): number {
+  const configured = Number(process.env.FUGU_RETRY_BASE_MS ?? 750);
+  const base = Number.isFinite(configured) ? Math.max(0, configured) : 750;
+  return base * (2 ** attempt);
+}
+
+async function waitForFuguRetry(attempt: number): Promise<void> {
+  const delay = fuguRetryDelayMs(attempt);
+  if (delay <= 0) return;
+  await new Promise((resolve) => setTimeout(resolve, delay));
+}
+
+function transientFetchError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === "AbortError" || error instanceof TypeError;
 }
 
 export function formatFuguDesignGate(gate: FuguDesignGate): string {
@@ -317,34 +346,65 @@ export async function runFuguDesignGate(input: FuguDesignGateInput): Promise<Fug
     input.designReferenceNotes || "No design reference notes supplied.",
   ].join("\n");
 
-  try {
+  let transientSummary: string | null = null;
+  for (let attempt = 0; attempt < FUGU_GATE_MAX_ATTEMPTS; attempt++) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
-    const response = await fetch("https://api.sakana.ai/v1/chat/completions", {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "fugu",
-        messages: [
-          { role: "system", content: instructions },
-          { role: "user", content: userContent },
-        ],
-        temperature: 0.1,
-      }),
-    }).finally(() => clearTimeout(timeout));
+    let response: Response;
+    try {
+      response = await fetch("https://api.sakana.ai/v1/chat/completions", {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: "fugu",
+          messages: [
+            { role: "system", content: instructions },
+            { role: "user", content: userContent },
+          ],
+          temperature: 0.1,
+        }),
+      });
+    } catch (error) {
+      if (!transientFetchError(error)) {
+        return errorFuguDesignGate("Fugu design gate returned an unsafe or unavailable response.", threshold);
+      }
+      transientSummary = error instanceof Error && error.name === "AbortError"
+        ? "Fugu design gate timed out after retries."
+        : "Fugu design gate provider connection failed after retries.";
+      if (attempt < FUGU_GATE_MAX_ATTEMPTS - 1) {
+        await waitForFuguRetry(attempt);
+        continue;
+      }
+      return transientUnavailableFuguDesignGate(transientSummary, threshold);
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
+      if (FUGU_TRANSIENT_STATUSES.has(response.status)) {
+        transientSummary = `Fugu design gate temporarily unavailable (${response.status}) after retries.`;
+        if (attempt < FUGU_GATE_MAX_ATTEMPTS - 1) {
+          await waitForFuguRetry(attempt);
+          continue;
+        }
+        return transientUnavailableFuguDesignGate(transientSummary, threshold);
+      }
       return errorFuguDesignGate(`Fugu design gate failed safely (${response.status}).`, threshold);
     }
-    const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const content = data.choices?.[0]?.message?.content?.trim() ?? "";
-    const payload = extractJson(content);
-    return validateFuguDesignGatePayload(payload, threshold);
-  } catch {
-    return errorFuguDesignGate("Fugu design gate returned an unsafe or unavailable response.", threshold);
+
+    try {
+      const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+      const content = data.choices?.[0]?.message?.content?.trim() ?? "";
+      const payload = extractJson(content);
+      return validateFuguDesignGatePayload(payload, threshold);
+    } catch {
+      return errorFuguDesignGate("Fugu design gate returned an unsafe or unavailable response.", threshold);
+    }
   }
+
+  return transientUnavailableFuguDesignGate(transientSummary ?? "Fugu design gate temporarily unavailable after retries.", threshold);
 }
