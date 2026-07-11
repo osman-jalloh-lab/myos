@@ -37,6 +37,7 @@ describe("provider health safety", () => {
         hermesAgentModelConfigured: 1,
         lastHermesAgentRun: "2026-07-09T10:00:00.000Z",
         lastHermesAgentError: "TOKEN=super-secret-value should be redacted",
+        autoStartInstalled: 1,
       },
       codexAvailable: true,
       hermesAgentAvailable: true,

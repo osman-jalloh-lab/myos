@@ -45,6 +45,7 @@ type WorkerCapabilities = {
   hermesAgentVersion: string | null;
   hermesAgentAuthConfigured: boolean;
   hermesAgentModelConfigured: boolean;
+  autoStartInstalled: boolean;
 };
 
 const execFileAsync = promisify(execFile);
@@ -133,6 +134,13 @@ function loadLocalEnv(): void {
   loadEnvFile(path.join(cwd, ".env.local"));
   loadEnvFile(path.join(cwd, ".env"));
   process.env.HERMES_LOCAL_PROJECTS_ROOT = process.env.HERMES_LOCAL_PROJECTS_ROOT?.trim() || DEFAULT_LOCAL_PROJECTS_ROOT;
+}
+
+function localWorkerAutoStartInstalled(): boolean {
+  if (process.platform !== "win32") return false;
+  const appData = process.env.APPDATA;
+  if (!appData) return false;
+  return existsSync(path.join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "Startup", "Hermes Local Worker.lnk"));
 }
 
 function normalizeBaseUrl(value: string): string | null {
@@ -426,6 +434,7 @@ async function ensureWorkerTables(db: Client): Promise<void> {
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN hermesAgentModelConfigured INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN lastHermesAgentRun TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN lastHermesAgentError TEXT`).catch(() => undefined);
+  await db.execute(`ALTER TABLE LocalWorkerHeartbeat ADD COLUMN autoStartInstalled INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
   await db.execute(`ALTER TABLE AgentTask ADD COLUMN claimed_by_worker_id TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE AgentTask ADD COLUMN lease_expires_at TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE AgentTask ADD COLUMN claimed_at TEXT`).catch(() => undefined);
@@ -531,6 +540,7 @@ async function getCapabilities(): Promise<WorkerCapabilities> {
     hermesAgentVersion: hermesVersion.version,
     hermesAgentAuthConfigured,
     hermesAgentModelConfigured,
+    autoStartInstalled: localWorkerAutoStartInstalled(),
   };
 }
 
@@ -546,8 +556,8 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
           workerId, machineName, status, lastHeartbeat, rootPath, nodeVersion, npmVersion,
           gitAvailable, codexAvailable, currentTask, lastError, workerApiTarget, lastFetchError,
           hermesAgentAvailable, hermesAgentPath, hermesAgentVersion, hermesAgentAuthConfigured,
-          hermesAgentModelConfigured, lastHermesAgentRun, lastHermesAgentError, updatedAt
-        ) VALUES (?, ?, 'offline', datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          hermesAgentModelConfigured, lastHermesAgentRun, lastHermesAgentError, autoStartInstalled, updatedAt
+        ) VALUES (?, ?, 'offline', datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(workerId) DO UPDATE SET
           machineName = excluded.machineName,
           status = 'offline',
@@ -562,6 +572,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
           hermesAgentModelConfigured = excluded.hermesAgentModelConfigured,
           lastHermesAgentRun = excluded.lastHermesAgentRun,
           lastHermesAgentError = excluded.lastHermesAgentError,
+          autoStartInstalled = excluded.autoStartInstalled,
           updatedAt = datetime('now')
       `,
       args: [
@@ -570,7 +581,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
         capabilities.codexAvailable ? 1 : 0, currentTask, lastError, apiBaseUrl, lastFetchError,
         capabilities.hermesAgentAvailable ? 1 : 0, capabilities.hermesAgentPath, capabilities.hermesAgentVersion,
         capabilities.hermesAgentAuthConfigured ? 1 : 0, capabilities.hermesAgentModelConfigured ? 1 : 0,
-        lastHermesAgentRun, lastHermesAgentError,
+        lastHermesAgentRun, lastHermesAgentError, capabilities.autoStartInstalled ? 1 : 0,
       ],
     }).catch(() => undefined);
     throw error;
@@ -581,8 +592,8 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
         workerId, machineName, status, lastHeartbeat, rootPath, nodeVersion, npmVersion,
         gitAvailable, codexAvailable, currentTask, lastError, workerApiTarget, lastFetchError,
         hermesAgentAvailable, hermesAgentPath, hermesAgentVersion, hermesAgentAuthConfigured,
-        hermesAgentModelConfigured, lastHermesAgentRun, lastHermesAgentError, updatedAt
-      ) VALUES (?, ?, 'online', datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+        hermesAgentModelConfigured, lastHermesAgentRun, lastHermesAgentError, autoStartInstalled, updatedAt
+      ) VALUES (?, ?, 'online', datetime('now'), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
       ON CONFLICT(workerId) DO UPDATE SET
         machineName = excluded.machineName,
         status = 'online',
@@ -603,6 +614,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
         hermesAgentModelConfigured = excluded.hermesAgentModelConfigured,
         lastHermesAgentRun = excluded.lastHermesAgentRun,
         lastHermesAgentError = excluded.lastHermesAgentError,
+        autoStartInstalled = excluded.autoStartInstalled,
         updatedAt = datetime('now')
     `,
     args: [
@@ -624,6 +636,7 @@ async function heartbeat(db: Client, capabilities: WorkerCapabilities, apiBaseUr
       capabilities.hermesAgentModelConfigured ? 1 : 0,
       lastHermesAgentRun,
       lastHermesAgentError,
+      capabilities.autoStartInstalled ? 1 : 0,
     ],
   });
 }

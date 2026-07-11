@@ -143,6 +143,7 @@ export type LocalWorkerHeartbeatRow = {
   hermesAgentModelConfigured: number | boolean | null;
   lastHermesAgentRun: string | null;
   lastHermesAgentError: string | null;
+  autoStartInstalled: number | boolean | null;
 };
 
 type AgentRunRow = {
@@ -751,6 +752,7 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
         `Git ${gitAvailable ? "available" : "missing"}`,
         `Codex ${codexAvailable ? "available" : "missing"}`,
         `Hermes Agent ${hermesAgentAvailable ? latestLocalWorker.hermesAgentVersion ?? "available" : "missing"}`,
+        `Auto-start ${boolish(latestLocalWorker.autoStartInstalled) ? "installed" : "missing"}`,
       ] : [],
     },
     {
