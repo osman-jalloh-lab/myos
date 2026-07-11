@@ -86,6 +86,9 @@ type ScoredSkill = SkillScoreResult & {
   skill: SkillRegistryEntry;
 };
 
+let skillTelemetryTablesEnsured = false;
+let skillTelemetryTablesEnsurePromise: Promise<void> | null = null;
+
 const SPECIFIC_PRIMARY_SKILLS = new Set([
   "i9-hr-compliance-specialist",
   "student-work-authorization-guard",
@@ -424,44 +427,86 @@ export async function resolveRelevantSkills({
   };
 }
 
-async function ensureSkillRoutingTelemetryTable(): Promise<void> {
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS SkillUsageTelemetry (
-      id TEXT PRIMARY KEY,
-      userId TEXT NOT NULL,
-      skillId TEXT NOT NULL,
-      skillName TEXT NOT NULL,
-      agentName TEXT,
-      projectId TEXT,
-      taskType TEXT NOT NULL,
-      confidence INTEGER NOT NULL DEFAULT 0,
-      reason TEXT NOT NULL,
-      modelCallAvoided INTEGER NOT NULL DEFAULT 0,
-      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-  await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS SkillUsageTelemetry_userId_createdAt_idx ON SkillUsageTelemetry(userId, createdAt)`);
-  await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS SkillUsageTelemetry_skillId_createdAt_idx ON SkillUsageTelemetry(skillId, createdAt)`);
+async function ensureSkillRoutingTelemetryTables(): Promise<void> {
+  if (skillTelemetryTablesEnsured) return;
+  if (!skillTelemetryTablesEnsurePromise) {
+    skillTelemetryTablesEnsurePromise = (async () => {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS SkillUsageTelemetry (
+          id TEXT PRIMARY KEY,
+          userId TEXT NOT NULL,
+          skillId TEXT NOT NULL,
+          skillName TEXT NOT NULL,
+          agentName TEXT,
+          projectId TEXT,
+          taskType TEXT NOT NULL,
+          confidence INTEGER NOT NULL DEFAULT 0,
+          reason TEXT NOT NULL,
+          modelCallAvoided INTEGER NOT NULL DEFAULT 0,
+          createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS SkillUsageTelemetry_userId_createdAt_idx ON SkillUsageTelemetry(userId, createdAt)`);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS SkillUsageTelemetry_skillId_createdAt_idx ON SkillUsageTelemetry(skillId, createdAt)`);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS SkillRegistryState (
+          userId TEXT NOT NULL,
+          skillId TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          lastUsedAt TEXT,
+          usageCount INTEGER NOT NULL DEFAULT 0,
+          updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (userId, skillId)
+        )
+      `);
+      skillTelemetryTablesEnsured = true;
+    })().catch((error) => {
+      skillTelemetryTablesEnsurePromise = null;
+      throw error;
+    });
+  }
+  await skillTelemetryTablesEnsurePromise;
 }
 
-async function markSkillUsed(userId: string, skillId: string): Promise<void> {
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS SkillRegistryState (
-      userId TEXT NOT NULL,
-      skillId TEXT NOT NULL,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      lastUsedAt TEXT,
-      usageCount INTEGER NOT NULL DEFAULT 0,
-      updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (userId, skillId)
-    )
-  `);
+type TelemetryRow = {
+  skillId: string;
+  skillName: string;
+  confidence: number;
+  reason: string;
+};
+
+async function insertTelemetryRows(userId: string, resolution: SkillResolution, rows: TelemetryRow[], modelCallAvoided: boolean): Promise<void> {
+  const values = rows.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))").join(", ");
+  const params = rows.flatMap((row) => [
+    crypto.randomUUID(),
+    userId,
+    row.skillId,
+    row.skillName,
+    resolution.agentName,
+    resolution.projectId,
+    resolution.taskType,
+    row.confidence,
+    row.reason.slice(0, 1000),
+    modelCallAvoided ? 1 : 0,
+  ]);
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO SkillUsageTelemetry
+     (id, userId, skillId, skillName, agentName, projectId, taskType, confidence, reason, modelCallAvoided, createdAt)
+     VALUES ${values}`,
+    ...params,
+  );
+}
+
+async function markSkillsUsed(userId: string, skillIds: string[]): Promise<void> {
+  const uniqueSkillIds = unique(skillIds);
+  if (!uniqueSkillIds.length) return;
+  const values = uniqueSkillIds.map(() => "(?, ?, 1, datetime('now'), 1, datetime('now'))").join(", ");
+  const params = uniqueSkillIds.flatMap((skillId) => [userId, skillId]);
   await prisma.$executeRawUnsafe(
     `INSERT INTO SkillRegistryState (userId, skillId, enabled, lastUsedAt, usageCount, updatedAt)
-     VALUES (?, ?, 1, datetime('now'), 1, datetime('now'))
+     VALUES ${values}
      ON CONFLICT(userId, skillId) DO UPDATE SET lastUsedAt = datetime('now'), usageCount = usageCount + 1, updatedAt = datetime('now')`,
-    userId,
-    skillId,
+    ...params,
   );
 }
 
@@ -470,7 +515,7 @@ export async function recordSkillUsageTelemetry({
   resolution,
   modelCallAvoided = false,
 }: SkillUsageTelemetryInput): Promise<void> {
-  await ensureSkillRoutingTelemetryTable();
+  await ensureSkillRoutingTelemetryTables();
   const rows = resolution.matched
     ? resolution.skills.map((skill) => ({
         skillId: skill.id,
@@ -485,22 +530,6 @@ export async function recordSkillUsageTelemetry({
         reason: resolution.reason,
       }];
 
-  for (const row of rows) {
-    await prisma.$executeRawUnsafe(
-      `INSERT INTO SkillUsageTelemetry
-       (id, userId, skillId, skillName, agentName, projectId, taskType, confidence, reason, modelCallAvoided, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-      crypto.randomUUID(),
-      userId,
-      row.skillId,
-      row.skillName,
-      resolution.agentName,
-      resolution.projectId,
-      resolution.taskType,
-      row.confidence,
-      row.reason.slice(0, 1000),
-      modelCallAvoided ? 1 : 0,
-    );
-    if (row.skillId !== "none") await markSkillUsed(userId, row.skillId);
-  }
+  await insertTelemetryRows(userId, resolution, rows, modelCallAvoided);
+  await markSkillsUsed(userId, rows.map((row) => row.skillId).filter((skillId) => skillId !== "none"));
 }

@@ -155,10 +155,12 @@ describe("chat auto-memory scheduling", () => {
 
     const result = await pending;
     expect(result.reply.content).not.toContain("Remembered:");
-    expect(mocks.after).toHaveBeenCalledTimes(1);
+    expect(mocks.after).toHaveBeenCalledTimes(2);
+    expect(mocks.recordSkillUsageTelemetry).not.toHaveBeenCalled();
 
     resolveMemory(["Suggested memory: User prefers morning focus blocks"]);
-    await mocks.after.mock.calls[0][0]();
+    await Promise.all(mocks.after.mock.calls.map(([callback]) => callback()));
+    expect(mocks.recordSkillUsageTelemetry).toHaveBeenCalled();
   });
 
   it("keeps the remembered tag when auto-memory finishes within the grace window", async () => {
@@ -168,7 +170,11 @@ describe("chat auto-memory scheduling", () => {
     const result = await sendMessage("user_1", "remember that my preferred meeting window is after 2pm");
 
     expect(result.reply.content).toContain("Remembered: my preferred meeting window is after 2pm");
-    expect(mocks.after).not.toHaveBeenCalled();
+    expect(mocks.after).toHaveBeenCalledTimes(1);
+    expect(mocks.recordSkillUsageTelemetry).not.toHaveBeenCalled();
+
+    await mocks.after.mock.calls[0][0]();
+    expect(mocks.recordSkillUsageTelemetry).toHaveBeenCalled();
   });
 
   it("moves executed-message auto-memory entirely into after()", async () => {

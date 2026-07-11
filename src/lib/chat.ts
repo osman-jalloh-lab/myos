@@ -237,7 +237,9 @@ export async function sendMessage(
 
   const skillsUsedLine = formatSkillsUsed(skillResolution);
   route.reply = `${route.reply}\n\n${skillsUsedLine}`;
-  await recordSkillUsageTelemetry({ userId, resolution: skillResolution, modelCallAvoided: false }).catch(() => {});
+  runAfterResponse(async () => {
+    await recordSkillUsageTelemetry({ userId, resolution: skillResolution, modelCallAvoided: false }).catch(() => {});
+  });
   if (run) {
     await appendExecutionEvent(run.id, {
       phase: "completed",

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   queryRaw: vi.fn(async () => []),
@@ -71,6 +71,11 @@ import {
 } from "@/lib/skills/routing";
 
 describe("skill-first routing", () => {
+  beforeEach(() => {
+    mocks.executeRaw.mockClear();
+    mocks.queryRaw.mockClear();
+  });
+
   it("selects the I-9 HR skill with a confidence score and concise instruction", async () => {
     const resolution = await resolveRelevantSkills({
       userId: "user_1",
@@ -104,19 +109,47 @@ describe("skill-first routing", () => {
     expect(formatSkillsUsed(resolution)).toMatch(/none matched/i);
   });
 
-  it("persists usage telemetry and updates registry usage for selected skills", async () => {
-    mocks.executeRaw.mockClear();
+  it("persists usage telemetry with guarded DDL and batched usage updates", async () => {
     const resolution = await resolveRelevantSkills({
       userId: "user_1",
       message: "I need I-9 employment eligibility guidance.",
       agentName: "themis",
     });
+    const primary = resolution.skills[0];
+    expect(primary).toBeTruthy();
+    const multiSkillResolution = {
+      ...resolution,
+      matched: true,
+      skills: [
+        primary!,
+        {
+          ...primary!,
+          id: "writing-humanizer",
+          name: "Writing Humanizer",
+          confidence: 45,
+          reason: "supporting writing skill",
+          role: "supporting" as const,
+        },
+      ],
+    };
 
-    await recordSkillUsageTelemetry({ userId: "user_1", resolution, modelCallAvoided: false });
+    await recordSkillUsageTelemetry({ userId: "user_1", resolution: multiSkillResolution, modelCallAvoided: false });
 
     const calls = mocks.executeRaw.mock.calls.map((call: unknown[]) => String(call[0]));
+    const countSql = (pattern: RegExp) => calls.filter((sql) => pattern.test(sql)).length;
     expect(calls.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS SkillUsageTelemetry"))).toBe(true);
-    expect(calls.some((sql) => sql.includes("INSERT INTO SkillUsageTelemetry"))).toBe(true);
-    expect(calls.some((sql) => sql.includes("SkillRegistryState"))).toBe(true);
+    expect(calls.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS SkillRegistryState"))).toBe(true);
+    expect(countSql(/INSERT INTO SkillUsageTelemetry/)).toBe(1);
+    expect(countSql(/INSERT INTO SkillRegistryState/)).toBe(1);
+    expect(mocks.executeRaw.mock.calls.find((call: unknown[]) => String(call[0]).includes("INSERT INTO SkillUsageTelemetry"))).toHaveLength(21);
+    expect(mocks.executeRaw.mock.calls.find((call: unknown[]) => String(call[0]).includes("INSERT INTO SkillRegistryState"))).toHaveLength(5);
+
+    mocks.executeRaw.mockClear();
+    await recordSkillUsageTelemetry({ userId: "user_1", resolution: multiSkillResolution, modelCallAvoided: true });
+
+    const warmCalls = mocks.executeRaw.mock.calls.map((call: unknown[]) => String(call[0]));
+    expect(warmCalls.some((sql) => /CREATE TABLE|CREATE INDEX/.test(sql))).toBe(false);
+    expect(warmCalls.filter((sql) => sql.includes("INSERT INTO SkillUsageTelemetry"))).toHaveLength(1);
+    expect(warmCalls.filter((sql) => sql.includes("INSERT INTO SkillRegistryState"))).toHaveLength(1);
   });
 });
