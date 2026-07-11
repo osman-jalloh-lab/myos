@@ -20,6 +20,7 @@ export type ApprovalActionType =
   | "engineering_plan"
   | "skill_scout_import"
   | "skill_scout_arm"
+  | "task_handoff"
   | "self_improvement_proposal";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "executed";
@@ -90,6 +91,7 @@ const SCOPE_BLOCKED: Record<ApprovalActionType, string | null> = {
   engineering_plan: null,
   skill_scout_import: null,
   skill_scout_arm: null,
+  task_handoff: null,
   self_improvement_proposal: "Safe self-improvement proposals are advisory only. Branch implementation requires a separate explicit Osman-approved work request; this approval does not edit code, prompts, env, schema, branches, deployments, or integrations.",
 };
 
@@ -309,6 +311,13 @@ async function executeIfPossible(row: {
     const { armPromotedSkill } = await import("@/lib/skill-scout/importer");
     const armed = await armPromotedSkill(payload, row.userId);
     executionNote = armed.summary;
+  }
+
+  if (actionType === "task_handoff") {
+    const payload = JSON.parse(row.payload);
+    const { executeApprovedAgentHandoff } = await import("@/lib/agent-bus");
+    const envelope = await executeApprovedAgentHandoff(payload, row.userId);
+    executionNote = `Published task handoff envelope ${envelope.id}.`;
   }
 
   const executed = await prisma.approvalAction.update({

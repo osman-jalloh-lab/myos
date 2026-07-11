@@ -22,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   skillInstructionBlock: vi.fn(),
   formatSkillsUsed: vi.fn(),
   retrieveMemoryForPrompt: vi.fn(),
+  consumeAgentEnvelopes: vi.fn(),
+  formatAgentEnvelopeContext: vi.fn(),
 }));
 
 vi.mock("next/server", () => ({
@@ -93,6 +95,11 @@ vi.mock("@/lib/memory-center", () => ({
   retrieveMemoryForPrompt: mocks.retrieveMemoryForPrompt,
 }));
 
+vi.mock("@/lib/agent-bus", () => ({
+  consumeAgentEnvelopes: mocks.consumeAgentEnvelopes,
+  formatAgentEnvelopeContext: mocks.formatAgentEnvelopeContext,
+}));
+
 const baseSkillResolution = {
   matched: false,
   agentName: "hermes",
@@ -143,6 +150,8 @@ describe("chat auto-memory scheduling", () => {
     mocks.taskTypeFor.mockReturnValue("general");
     mocks.createExecutionRun.mockResolvedValue(null);
     mocks.retrieveMemoryForPrompt.mockResolvedValue(null);
+    mocks.consumeAgentEnvelopes.mockResolvedValue([]);
+    mocks.formatAgentEnvelopeContext.mockReturnValue(null);
     mocks.skillInstructionBlock.mockReturnValue(null);
     mocks.formatSkillsUsed.mockReturnValue("Skills used: none matched.");
     mocks.recordSkillUsageTelemetry.mockResolvedValue(undefined);
@@ -187,6 +196,24 @@ describe("chat auto-memory scheduling", () => {
     await Promise.all(mocks.after.mock.calls.map(([callback]) => callback()));
     expect(mocks.recordSkillUsageTelemetry).toHaveBeenCalled();
     expect(mocks.updateSessionAfterResponse).toHaveBeenCalled();
+  });
+
+  it("consumes agent bus envelopes into chat context", async () => {
+    const { sendMessage } = await import("../chat");
+    mocks.autoCaptureUserMemory.mockResolvedValue([]);
+    mocks.buildContextBlock.mockResolvedValue("BASE CONTEXT");
+    mocks.consumeAgentEnvelopes.mockResolvedValue([{ id: "env_1" }]);
+    mocks.formatAgentEnvelopeContext.mockReturnValue("AGENT BUS ENVELOPES\n- athena -> hermes [context_note]: shortlist ready");
+
+    await sendMessage("user_1", "What should I do next?");
+
+    expect(mocks.consumeAgentEnvelopes).toHaveBeenCalledWith({ userId: "user_1", toAgent: "hermes" });
+    expect(mocks.routeMessage).toHaveBeenCalledWith(
+      "user_1",
+      "What should I do next?",
+      "dashboard",
+      "BASE CONTEXT\n\nAGENT BUS ENVELOPES\n- athena -> hermes [context_note]: shortlist ready"
+    );
   });
 
   it("pre-generates a run id for parallel memory retrieval without changing the routed prompt", async () => {

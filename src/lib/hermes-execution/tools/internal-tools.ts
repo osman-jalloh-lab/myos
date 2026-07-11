@@ -948,6 +948,51 @@ export function registerInternalTools(): void {
   });
 
   registerTool({
+    name: "internal.agent.handoff",
+    description: "Publish an agent-bus envelope or queue a task handoff for approval.",
+    risk: "internal_write",
+    requiresApproval: false,
+    execute: async (input, ctx: ToolContext) => {
+      const { requestAgentHandoff } = await import("@/lib/agent-bus");
+      const envelopeType = String(input.envelopeType ?? input.type ?? "context_note");
+      const result = await requestAgentHandoff({
+        userId: ctx.userId,
+        fromAgent: String(input.fromAgent ?? "hermes"),
+        toAgent: input.toAgent === undefined || input.toAgent === null ? null : String(input.toAgent),
+        envelopeType,
+        payload: input.payload ?? { message: input.message ?? "" },
+        ttlMs: typeof input.ttlMs === "number" ? input.ttlMs : undefined,
+        correlationId: typeof input.correlationId === "string" ? input.correlationId : undefined,
+      });
+      if (result.status === "approval_required") {
+        return {
+          answer: `Task handoff queued for approval (id: ${result.approval.id.slice(0, 8)}). No agent envelope was published yet.`,
+          artifacts: [
+            {
+              type: "task" as const,
+              title: "Task handoff pending approval",
+              id: result.approval.id,
+              metadata: { approvalId: result.approval.id, actionType: "task_handoff" },
+            },
+          ],
+        };
+      }
+      return {
+        answer: `Agent envelope published for ${result.envelope.toAgent ?? "any agent"} (${result.envelope.id.slice(0, 8)}).`,
+        artifacts: [
+          {
+            type: "text" as const,
+            title: "Agent bus envelope",
+            id: result.envelope.id,
+            content: JSON.stringify(result.envelope.payload),
+            metadata: { envelopeType: result.envelope.envelopeType, toAgent: result.envelope.toAgent },
+          },
+        ],
+      };
+    },
+  });
+
+  registerTool({
     name: "internal.approval.create",
     description: "Queue any action into the existing Hermes OS approval system.",
     risk: "internal_write",

@@ -18,6 +18,7 @@ import {
 } from "@/lib/skills/routing";
 import { inferAgent, taskTypeFor } from "@/lib/skills/scoring";
 import { retrieveMemoryForPrompt, type MemoryRetrievalResult } from "@/lib/memory-center";
+import { consumeAgentEnvelopes, formatAgentEnvelopeContext } from "@/lib/agent-bus";
 
 export type ChatChannel = "dashboard" | "telegram";
 
@@ -159,7 +160,13 @@ export async function sendMessage(
     data: { userId, role: "user", content: text, channel, targetAgent: normalizedTargetAgent },
   });
   const autoMemoryCapture = startAutoMemoryCapture(userId, text);
-  const resolvedContext = chatContext ?? await buildContextBlock(contextChatId, userId, text).catch(() => "");
+  const baseContext = chatContext ?? await buildContextBlock(contextChatId, userId, text).catch(() => "");
+  const agentEnvelopes = await consumeAgentEnvelopes({
+    userId,
+    toAgent: normalizedTargetAgent ?? "hermes",
+  }).catch(() => []);
+  const envelopeContext = formatAgentEnvelopeContext(agentEnvelopes);
+  const resolvedContext = [baseContext, envelopeContext].filter(Boolean).join("\n\n");
   const contextResolution = resolveMessageWithContext(text, contextStateFromContextBlock(resolvedContext || undefined));
   const routingText = contextResolution.resolvedText;
   const contextProject = contextResolution as unknown as { projectId?: unknown };

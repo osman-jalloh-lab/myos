@@ -146,3 +146,14 @@ describe("internal.capabilities.answer", () => {
     });
   });
 });
+
+describe("internal.agent.handoff", () => {
+  it("registers the agent handoff tool as an internal write", () => {
+    const tool = getTool("internal.agent.handoff");
+    expect(tool).toMatchObject({
+      name: "internal.agent.handoff",
+      risk: "internal_write",
+      requiresApproval: false,
+    });
+  });
+});
