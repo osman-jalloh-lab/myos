@@ -33,6 +33,7 @@ model User {
   engineeringTasks    EngineeringTask[]
   emailCorrespondents EmailCorrespondent[]
   userSkills          UserSkill[]
+  agentEnvelopes      AgentEnvelope[]
 }
 
 model GoogleAccount {
@@ -454,6 +455,26 @@ model ExecutionTraceEvent {
 
   @@index([runId, createdAt])
   @@index([phase, createdAt])
+}
+
+model AgentEnvelope {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fromAgent     String
+  toAgent       String?
+  envelopeType  String
+  payload       String
+  status        String    @default("pending")
+  correlationId String?
+  expiresAt     DateTime
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([userId, status, expiresAt])
+  @@index([toAgent, status, createdAt])
+  @@index([correlationId])
 }
 
 model EngineeringTask {
