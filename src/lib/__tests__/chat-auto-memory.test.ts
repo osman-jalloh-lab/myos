@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   appendExecutionEvent: vi.fn(),
   resolveRelevantSkills: vi.fn(),
   recordSkillUsageTelemetry: vi.fn(),
+  inferAgent: vi.fn(),
+  taskTypeFor: vi.fn(),
   skillInstructionBlock: vi.fn(),
   formatSkillsUsed: vi.fn(),
   retrieveMemoryForPrompt: vi.fn(),
@@ -82,6 +84,11 @@ vi.mock("@/lib/skills/routing", () => ({
   formatSkillsUsed: mocks.formatSkillsUsed,
 }));
 
+vi.mock("@/lib/skills/scoring", () => ({
+  inferAgent: mocks.inferAgent,
+  taskTypeFor: mocks.taskTypeFor,
+}));
+
 vi.mock("@/lib/memory-center", () => ({
   retrieveMemoryForPrompt: mocks.retrieveMemoryForPrompt,
 }));
@@ -132,6 +139,8 @@ describe("chat auto-memory scheduling", () => {
     mocks.contextStateFromContextBlock.mockReturnValue({});
     mocks.resolveMessageWithContext.mockImplementation((message: string) => ({ resolvedText: message }));
     mocks.resolveRelevantSkills.mockResolvedValue(baseSkillResolution);
+    mocks.inferAgent.mockReturnValue("hermes");
+    mocks.taskTypeFor.mockReturnValue("general");
     mocks.createExecutionRun.mockResolvedValue(null);
     mocks.retrieveMemoryForPrompt.mockResolvedValue(null);
     mocks.skillInstructionBlock.mockReturnValue(null);
@@ -155,12 +164,14 @@ describe("chat auto-memory scheduling", () => {
 
     const result = await pending;
     expect(result.reply.content).not.toContain("Remembered:");
-    expect(mocks.after).toHaveBeenCalledTimes(2);
+    expect(mocks.after).toHaveBeenCalledTimes(3);
     expect(mocks.recordSkillUsageTelemetry).not.toHaveBeenCalled();
+    expect(mocks.updateSessionAfterResponse).not.toHaveBeenCalled();
 
     resolveMemory(["Suggested memory: User prefers morning focus blocks"]);
     await Promise.all(mocks.after.mock.calls.map(([callback]) => callback()));
     expect(mocks.recordSkillUsageTelemetry).toHaveBeenCalled();
+    expect(mocks.updateSessionAfterResponse).toHaveBeenCalled();
   });
 
   it("keeps the remembered tag when auto-memory finishes within the grace window", async () => {
@@ -170,11 +181,72 @@ describe("chat auto-memory scheduling", () => {
     const result = await sendMessage("user_1", "remember that my preferred meeting window is after 2pm");
 
     expect(result.reply.content).toContain("Remembered: my preferred meeting window is after 2pm");
-    expect(mocks.after).toHaveBeenCalledTimes(1);
+    expect(mocks.after).toHaveBeenCalledTimes(2);
     expect(mocks.recordSkillUsageTelemetry).not.toHaveBeenCalled();
 
-    await mocks.after.mock.calls[0][0]();
+    await Promise.all(mocks.after.mock.calls.map(([callback]) => callback()));
     expect(mocks.recordSkillUsageTelemetry).toHaveBeenCalled();
+    expect(mocks.updateSessionAfterResponse).toHaveBeenCalled();
+  });
+
+  it("pre-generates a run id for parallel memory retrieval without changing the routed prompt", async () => {
+    const { sendMessage } = await import("../chat");
+    const skillResolution = {
+      ...baseSkillResolution,
+      matched: true,
+      agentName: "athena",
+      projectId: "project_1",
+      taskType: "grc-risk-role-screener",
+      confidence: 87,
+      reason: "GRC role scoring matched.",
+    };
+    const memoryRetrieval = {
+      confirmedFacts: [{ id: "mem_1", fact: "Use the GRC scorecard.", source: "memory", confidence: 93 }],
+      projectDecisions: [],
+      redactedCount: 0,
+    };
+
+    mocks.autoCaptureUserMemory.mockResolvedValue([]);
+    mocks.resolveMessageWithContext.mockReturnValue({ resolvedText: "Score this GRC internship for me.", projectId: "project_1" });
+    mocks.inferAgent.mockReturnValue("athena");
+    mocks.taskTypeFor.mockReturnValue("grc-risk-role-screener");
+    mocks.resolveRelevantSkills.mockResolvedValue(skillResolution);
+    mocks.createExecutionRun.mockImplementation(async ({ id }: { id: string }) => ({ id }));
+    mocks.retrieveMemoryForPrompt.mockResolvedValue(memoryRetrieval);
+    mocks.skillInstructionBlock.mockReturnValue("SKILL BLOCK");
+
+    await sendMessage("user_1", "Score this GRC internship for me.");
+
+    const createdRunId = mocks.createExecutionRun.mock.calls[0][0].id;
+    expect(createdRunId).toEqual(expect.any(String));
+    expect(mocks.retrieveMemoryForPrompt).toHaveBeenCalledWith(expect.objectContaining({
+      agentName: "athena",
+      taskType: "grc-risk-role-screener",
+      projectId: "project_1",
+      runId: createdRunId,
+    }));
+    expect(mocks.resolveRelevantSkills).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Score this GRC internship for me.",
+      projectId: "project_1",
+      maxSkills: 3,
+    }));
+    expect(mocks.appendExecutionEvent).toHaveBeenCalledWith(createdRunId, expect.objectContaining({
+      phase: "planning",
+      message: "Memory retrieved: 1 confirmed facts, 0 project decisions.",
+    }));
+    expect(mocks.appendExecutionEvent.mock.invocationCallOrder[0]).toBeLessThan(mocks.routeMessage.mock.invocationCallOrder[0]);
+    expect(mocks.routeMessage).toHaveBeenCalledWith(
+      "user_1",
+      expect.stringContaining("RETRIEVED CONFIRMED MEMORY\n- Use the GRC scorecard. (source: memory, confidence: 93%)\n\nSKILL BLOCK\n\nUSER MESSAGE\nScore this GRC internship for me."),
+      "dashboard",
+      undefined,
+    );
+
+    await Promise.all(mocks.after.mock.calls.map(([callback]) => callback()));
+    expect(mocks.appendExecutionEvent).toHaveBeenCalledWith(createdRunId, expect.objectContaining({
+      phase: "completed",
+      status: "completed",
+    }));
   });
 
   it("moves executed-message auto-memory entirely into after()", async () => {

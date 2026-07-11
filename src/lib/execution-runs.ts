@@ -227,6 +227,7 @@ function runView(row: RunRow, latestEvent: EventRow | null = null): ExecutionRun
 }
 
 export async function createExecutionRun(params: {
+  id?: string | null;
   userId: string;
   projectId?: string | null;
   taskId?: string | null;
@@ -238,7 +239,7 @@ export async function createExecutionRun(params: {
   fallbackReason?: string | null;
 }): Promise<ExecutionRunView> {
   await ensureExecutionRunTables();
-  const id = crypto.randomUUID();
+  const id = params.id ?? crypto.randomUUID();
   const now = new Date();
   await prisma.executionRun.create({
     data: {

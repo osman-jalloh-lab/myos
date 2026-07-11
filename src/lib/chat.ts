@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { after } from "next/server";
 import { prisma } from "@/lib/db";
 import { routeMessage, routeToAgent, type RouteResult } from "@/agents/hermes";
@@ -15,6 +16,7 @@ import {
   skillInstructionBlock,
   type SkillResolution,
 } from "@/lib/skills/routing";
+import { inferAgent, taskTypeFor } from "@/lib/skills/scoring";
 import { retrieveMemoryForPrompt, type MemoryRetrievalResult } from "@/lib/memory-center";
 
 export type ChatChannel = "dashboard" | "telegram";
@@ -164,7 +166,11 @@ export async function sendMessage(
   const projectId = typeof contextProject.projectId === "string"
     ? contextProject.projectId
     : null;
-  const skillResolution = await resolveRelevantSkills({
+  const inferredAgentName = normalizedTargetAgent ?? inferAgent(routingText);
+  const inferredTaskType = taskTypeFor(routingText);
+  const runId = crypto.randomUUID();
+
+  const skillResolutionPromise = resolveRelevantSkills({
     userId,
     message: routingText,
     agentName: normalizedTargetAgent,
@@ -186,24 +192,26 @@ export async function sendMessage(
     missingContextQuestions: [],
     explanation: "Skill routing failed before a v2 explanation could be generated.",
   }));
-  const run = await createExecutionRun({
+  const runPromise = createExecutionRun({
+    id: runId,
     userId,
     projectId,
     executor: "internal",
     currentPhase: "planning",
     currentActivity: "Retrieving relevant memory and project decisions.",
   }).catch(() => null);
-  const memoryRetrieval = await retrieveMemoryForPrompt({
+  const memoryRetrievalPromise = retrieveMemoryForPrompt({
     userId,
     message: routingText,
-    agentName: skillResolution.agentName,
-    taskType: skillResolution.taskType,
+    agentName: inferredAgentName,
+    taskType: inferredTaskType,
     projectId,
-    runId: run?.id ?? null,
+    runId,
     maxFacts: 6,
   }).catch((): MemoryRetrievalResult | null => null);
-  if (run) {
-    await appendExecutionEvent(run.id, {
+  const planningEventPromise = Promise.all([runPromise, memoryRetrievalPromise]).then(([run, memoryRetrieval]) => {
+    if (!run) return null;
+    return appendExecutionEvent(run.id, {
       phase: "planning",
       source: "web",
       severity: "info",
@@ -217,7 +225,13 @@ export async function sendMessage(
       },
       meaningful: true,
     });
-  }
+  }).catch(() => null);
+  const [skillResolution, run, memoryRetrieval] = await Promise.all([
+    skillResolutionPromise,
+    runPromise,
+    memoryRetrievalPromise,
+    planningEventPromise,
+  ]).then(([skillResolution, run, memoryRetrieval]) => [skillResolution, run, memoryRetrieval] as const);
   const memoryBlock = memoryRetrievalBlock(memoryRetrieval);
   const skillBlock = skillInstructionBlock(skillResolution);
   const preface = [memoryBlock, skillBlock].filter(Boolean).join("\n\n");
@@ -239,9 +253,8 @@ export async function sendMessage(
   route.reply = `${route.reply}\n\n${skillsUsedLine}`;
   runAfterResponse(async () => {
     await recordSkillUsageTelemetry({ userId, resolution: skillResolution, modelCallAvoided: false }).catch(() => {});
-  });
-  if (run) {
-    await appendExecutionEvent(run.id, {
+    if (!run) return;
+    await Promise.resolve(appendExecutionEvent(run.id, {
       phase: "completed",
       source: "web",
       severity: skillResolution.matched ? "info" : "warning",
@@ -273,8 +286,8 @@ export async function sendMessage(
       },
       meaningful: true,
       status: "completed",
-    });
-  }
+    })).catch(() => null);
+  });
 
   // Instant feedback when a fact auto-saved, so Osman never wonders whether it landed.
   const memoryCaptureResult = await resolveAutoMemoryForTag(autoMemoryCapture);
@@ -288,7 +301,9 @@ export async function sendMessage(
   const replyRow = await prisma.chatMessage.create({
     data: { userId, role: "assistant", content: route.reply, channel, targetAgent: normalizedTargetAgent },
   });
-  await updateSessionAfterResponse(contextChatId, userId, text).catch(() => {});
+  runAfterResponse(async () => {
+    await updateSessionAfterResponse(contextChatId, userId, text).catch(() => {});
+  });
 
   return { userMessage: toView(userRow), reply: toView(replyRow), route };
 }
