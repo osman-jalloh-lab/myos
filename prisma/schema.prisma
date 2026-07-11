@@ -10,63 +10,63 @@ datasource db {
 }
 
 model User {
-  id               String               @id @default(cuid())
-  primaryEmail     String               @unique
-  name             String?
-  picture          String?
-  createdAt        DateTime             @default(now())
-  accounts         GoogleAccount[]
-  briefs           DailyBrief[]
-  tasks            Task[]
-  approvals        ApprovalAction[]
-  usage            ModelUsage[]
-  memories         Memory[]
-  financeEntries   FinanceEntry[]
-  jobListings      JobListing[]
-  jobLeads         JobLead[]
-  masterResume     MasterResume?
-  chatMessages     ChatMessage[]
-  trackedApps      TrackedApplication[]
-  auditLogs        AuditLog[]
-  agentTasks       AgentTask[]
-  executionRuns    ExecutionRun[]
-  engineeringTasks EngineeringTask[]
+  id                  String               @id @default(cuid())
+  primaryEmail        String               @unique
+  name                String?
+  picture             String?
+  createdAt           DateTime             @default(now())
+  accounts            GoogleAccount[]
+  briefs              DailyBrief[]
+  tasks               Task[]
+  approvals           ApprovalAction[]
+  usage               ModelUsage[]
+  memories            Memory[]
+  financeEntries      FinanceEntry[]
+  jobListings         JobListing[]
+  jobLeads            JobLead[]
+  masterResume        MasterResume?
+  chatMessages        ChatMessage[]
+  trackedApps         TrackedApplication[]
+  auditLogs           AuditLog[]
+  agentTasks          AgentTask[]
+  executionRuns       ExecutionRun[]
+  engineeringTasks    EngineeringTask[]
   emailCorrespondents EmailCorrespondent[]
 }
 
 model GoogleAccount {
-  id           String   @id @default(cuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  googleSub    String
-  email        String
-  label        String   @default("Other") // Work | UT | Personal | Other
-  accessToken  String
-  refreshToken String?
-  expiresAt    DateTime
-  scopes       String   @default("") // space-separated
-  isDefault    Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  lastSyncedAt DateTime?
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  googleSub      String
+  email          String
+  label          String    @default("Other") // Work | UT | Personal | Other
+  accessToken    String
+  refreshToken   String?
+  expiresAt      DateTime
+  scopes         String    @default("") // space-separated
+  isDefault      Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  lastSyncedAt   DateTime?
   lastSyncStatus String?
-  lastError    String?
+  lastError      String?
 
   @@unique([userId, googleSub])
 }
 
 model EmailCorrespondent {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   accountEmail  String
   email         String
   displayName   String?
-  sentCount     Int      @default(0)
+  sentCount     Int       @default(0)
   firstSentAt   DateTime?
   lastSentAt    DateTime?
-  lastScannedAt DateTime @default(now())
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  lastScannedAt DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@unique([userId, accountEmail, email])
   @@index([userId, email])
@@ -321,6 +321,7 @@ model AgentTask {
   id          String   @id @default(cuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId   String?
   title       String
   description String
   status      String   @default("queued") // queued | running | blocked | completed | failed
@@ -332,31 +333,88 @@ model AgentTask {
 
   @@index([userId, status])
   @@index([userId, createdAt])
+  @@index([projectId])
+}
+
+// Project tracker rows are also used by legacy libSQL helpers in memory-context
+// and local-builder. Keep this model column-complete and relation-light so
+// db push can align Prisma without rebuilding live runtime tables.
+model Project {
+  id                     String    @id @default(cuid())
+  userId                 String
+  projectName            String
+  description            String?
+  route                  String?
+  status                 String    @default("planning")
+  latestInstruction      String?
+  assignedAgent          String?
+  localFolderPath        String?
+  localBuildLog          String?
+  localBuildError        String?
+  localDevUrl            String?
+  localDevPid            Int?
+  localPreviewStatus     String?
+  localPreviewCheckedAt  String?
+  localResearchBrief     String?
+  localDesignReview      String?
+  localPolishReview      String?
+  designScore            Int?
+  fuguGateStatus         String?
+  fuguGateScore          Int?
+  fuguGateReview         String?
+  fuguGateReviewedAt     String?
+  fuguGateOverrideReason String?
+  fuguPolishStatus       String?
+  localQaStatus          String?
+  localQaChecklist       String?
+  createdAt              DateTime?
+  updatedAt              DateTime?
+
+  @@index([userId, status])
+  @@index([userId, updatedAt])
+  @@index([route])
+}
+
+model ProjectTask {
+  id            String    @id @default(cuid())
+  projectId     String
+  userId        String
+  title         String
+  description   String?
+  status        String    @default("pending")
+  assignedAgent String?
+  nextStep      String?
+  createdAt     DateTime?
+  updatedAt     DateTime?
+
+  @@index([projectId, updatedAt])
+  @@index([userId, updatedAt])
+  @@index([status])
 }
 
 model ExecutionRun {
-  id                     String                @id @default(cuid())
-  userId                 String
-  user                   User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  projectId              String?
-  taskId                 String?
-  parentRunId            String?
-  executor               String
-  currentPhase           String                @default("queued")
-  currentActivity        String?
-  startedAt              DateTime              @default(now())
-  lastHeartbeatAt        DateTime              @default(now())
-  lastMeaningfulEventAt  DateTime              @default(now())
-  completedAt            DateTime?
-  status                 String                @default("queued")
-  lastSafeError          String?
-  workerId               String?
-  localFolderPath        String?
-  fallbackReason         String?
+  id                      String                @id @default(cuid())
+  userId                  String
+  user                    User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId               String?
+  taskId                  String?
+  parentRunId             String?
+  executor                String
+  currentPhase            String                @default("queued")
+  currentActivity         String?
+  startedAt               DateTime              @default(now())
+  lastHeartbeatAt         DateTime              @default(now())
+  lastMeaningfulEventAt   DateTime              @default(now())
+  completedAt             DateTime?
+  status                  String                @default("queued")
+  lastSafeError           String?
+  workerId                String?
+  localFolderPath         String?
+  fallbackReason          String?
   cancellationRequestedAt DateTime?
-  createdAt              DateTime              @default(now())
-  updatedAt              DateTime              @updatedAt
-  events                 ExecutionTraceEvent[]
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  events                  ExecutionTraceEvent[]
 
   @@index([userId, status])
   @@index([userId, startedAt])
@@ -369,11 +427,11 @@ model ExecutionTraceEvent {
   runId       String
   run         ExecutionRun @relation(fields: [runId], references: [id], onDelete: Cascade)
   phase       String
-  severity    String      @default("info")
+  severity    String       @default("info")
   message     String
   source      String
   safeDetails String?
-  createdAt   DateTime    @default(now())
+  createdAt   DateTime     @default(now())
 
   @@index([runId, createdAt])
   @@index([phase, createdAt])

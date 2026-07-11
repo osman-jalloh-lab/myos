@@ -60,6 +60,70 @@ function getGitHubRepoPath(input: string): { repoPath?: string; error?: string }
   return { repoPath: `${owner}/${repo}` };
 }
 
+function projectNameFrom(input: Record<string, unknown>): string {
+  const explicit = String(input.projectName ?? "").trim();
+  if (explicit) return explicit.slice(0, 80);
+
+  const message = String(input.message ?? "").trim();
+  const match = message.match(/\b(?:build|create|make|start|plan|design)\s+(?:a\s+|an\s+|the\s+)?(.{3,70}?)(?:\s+(?:for|with|that|using|in)\b|[.!?\n]|$)/i);
+  return (match?.[1]?.trim() || "Hermes Project").slice(0, 80);
+}
+
+function routeForProject(projectName: string): string {
+  const slug = projectName
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 60);
+  return `/${slug || "hermes-project"}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function findProjectId(value: unknown): string | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  if (typeof record.projectId === "string") return record.projectId;
+  const project = asRecord(record.project);
+  if (typeof project?.id === "string") return project.id;
+  const result = asRecord(record.result);
+  if (typeof result?.projectId === "string") return result.projectId;
+  const resultProject = asRecord(result?.project);
+  if (typeof resultProject?.id === "string") return resultProject.id;
+  for (const nested of Object.values(record)) {
+    const found = findProjectId(nested);
+    if (found) return found;
+  }
+  return null;
+}
+
+function defaultProjectPlan(message: string): Array<{ title: string; assignedAgent: string; description: string }> {
+  const prompt = message.trim() || "Start the project and prepare the first build handoff.";
+  return [
+    {
+      title: "Clarify project scope",
+      assignedAgent: "project-starter",
+      description: `Confirm goal, target users, core features, and constraints. Source: ${prompt.slice(0, 240)}`,
+    },
+    {
+      title: "Draft architecture and data model",
+      assignedAgent: "project-starter",
+      description: "Turn the idea into routes, data model, integrations, and acceptance criteria.",
+    },
+    {
+      title: "Prepare approved build handoff",
+      assignedAgent: "build-orchestrator",
+      description: "Queue implementation only after the owner approves the project plan.",
+    },
+  ];
+}
+
 // ── internal.chat.respond ─────────────────────────────────────────────────────
 
 export function registerInternalTools(): void {
@@ -271,6 +335,122 @@ export function registerInternalTools(): void {
   });
 
   // ── internal.resume.generate ─────────────────────────────────────────────────
+
+  registerTool({
+    name: "internal.projects.create",
+    description: "Create or reopen a Project row and mark it as the active execution project.",
+    risk: "internal_write",
+    requiresApproval: false,
+    execute: async (input, ctx: ToolContext) => {
+      const { ensureBuildProject, updateProjectStatus, createProjectTask } = await import("@/lib/memory-context");
+      const message = String(input.message ?? "");
+      const projectName = projectNameFrom(input);
+      const route = String(input.route ?? routeForProject(projectName));
+      const project = await ensureBuildProject(ctx.sessionId ?? `execution:${ctx.userId}`, ctx.userId, route, message || projectName);
+      await updateProjectStatus(project.id, "planning");
+      const task = await createProjectTask(project.id, ctx.userId, "Clarify project scope", {
+        assignedAgent: "project-starter",
+        description: message || `Start ${projectName}.`,
+        nextStep: "Confirm goal, users, features, routes, data model, risks, and first build step.",
+      });
+
+      return {
+        answer: `Project created: ${project.projectName} (${project.id.slice(0, 8)}). I added the intake task and kept the project in planning.`,
+        project: { ...project, status: "planning" },
+        projectId: project.id,
+        artifacts: [
+          {
+            type: "task" as const,
+            title: task.title,
+            id: task.id,
+            content: task.description ?? undefined,
+            metadata: { projectId: project.id, status: task.status, assignedAgent: task.assignedAgent },
+          },
+        ],
+      };
+    },
+  });
+
+  registerTool({
+    name: "internal.projects.plan",
+    description: "Create ProjectTask rows for a project starter plan.",
+    risk: "internal_write",
+    requiresApproval: false,
+    execute: async (input, ctx: ToolContext) => {
+      const { createProjectTasksFromPlan, updateProjectStatus } = await import("@/lib/memory-context");
+      const projectId = findProjectId(input) ?? findProjectId(ctx.previousResults);
+      if (!projectId) {
+        return {
+          answer: "No project id was available to plan against. Create the project first, then run the project planner.",
+          artifacts: [],
+        };
+      }
+
+      const message = String(input.message ?? "");
+      const rawSteps = Array.isArray(input.steps) ? input.steps : [];
+      const steps = rawSteps.length
+        ? rawSteps.map((step) => {
+            const record = asRecord(step);
+            return {
+              title: String(record?.title ?? step).slice(0, 120),
+              assignedAgent: String(record?.assignedAgent ?? "project-starter"),
+              description: String(record?.description ?? message ?? "").slice(0, 500),
+            };
+          })
+        : defaultProjectPlan(message);
+
+      const tasks = await createProjectTasksFromPlan(projectId, ctx.userId, steps);
+      await updateProjectStatus(projectId, "planned");
+
+      return {
+        answer: `Project plan saved with ${tasks.length} new task${tasks.length === 1 ? "" : "s"}. Status is planned; implementation still needs approval.`,
+        projectId,
+        planSteps: steps,
+        artifacts: tasks.map((task) => ({
+          type: "task" as const,
+          title: task.title,
+          id: task.id,
+          content: task.description ?? undefined,
+          metadata: { projectId, status: task.status, assignedAgent: task.assignedAgent },
+        })),
+      };
+    },
+  });
+
+  registerTool({
+    name: "internal.projects.requestHandoff",
+    description: "Queue an approved project build handoff without executing it automatically.",
+    risk: "external_write",
+    requiresApproval: true,
+    execute: async (input, ctx: ToolContext) => {
+      const { createApproval } = await import("@/lib/approvals");
+      const projectId = findProjectId(input) ?? findProjectId(ctx.previousResults);
+      const message = String(input.message ?? "");
+      const planSteps = asRecord(input)?.planSteps ?? asRecord(ctx.previousResults)?.planSteps;
+      const approval = await createApproval(ctx.userId, "engineering_plan", {
+        projectId,
+        projectName: String(input.projectName ?? "Hermes Project"),
+        message,
+        planSteps: Array.isArray(planSteps) ? planSteps : defaultProjectPlan(message),
+        source: "project-starter",
+        handoffTarget: "build-orchestrator",
+      });
+
+      return {
+        answer: `Project handoff is queued for approval (id: ${approval.id.slice(0, 8)}). No implementation handoff has run yet.`,
+        projectId,
+        artifacts: [
+          {
+            type: "task" as const,
+            title: "Project handoff pending approval",
+            id: approval.id,
+            content: message,
+            metadata: { approvalId: approval.id, projectId, actionType: "engineering_plan", status: "pending" },
+          },
+        ],
+      };
+    },
+  });
 
   registerTool({
     name: "internal.resume.generate",

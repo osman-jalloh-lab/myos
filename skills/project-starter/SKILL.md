@@ -3,6 +3,15 @@ id: project-starter
 name: Project Starter
 description: Guided skill for starting a new project from idea through architecture into first build plan.
 category: build
+safetyClass: internal_write
+execution:
+  tool: internal.projects.create
+  risk: internal_write
+  requiresApproval: false
+  pipeline:
+    - internal.projects.create
+    - internal.projects.plan
+    - internal.projects.requestHandoff
 ---
 # Project Starter
 
