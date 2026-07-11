@@ -5,22 +5,10 @@
 
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { plan } from "@/lib/hermes-execution/planner";
-import { execute } from "@/lib/hermes-execution/executor";
-import { ensureRegistryInitialized } from "@/lib/hermes-execution/tool-registry";
-import { loadMcpToolsIntoRegistry } from "@/lib/hermes-execution/mcp-adapter";
-import { formatExecutionResponseForUser, userSafeFailureMessage } from "@/lib/hermes-execution/response-formatter";
+import { userSafeFailureMessage } from "@/lib/hermes-execution/response-formatter";
+import { runHermesExecution } from "@/lib/hermes-execution/run";
 import type { ExecutionRequest } from "@/lib/hermes-execution/types";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
-
-// Initialize tool registry on first request (lazy, not at module load)
-let registryReady = false;
-async function initRegistry() {
-  if (registryReady) return;
-  await ensureRegistryInitialized();
-  await loadMcpToolsIntoRegistry();
-  registryReady = true;
-}
 
 export async function POST(req: Request) {
   // ── auth: session (browser) OR API key (MCP gateway) ─────────────────────
@@ -65,10 +53,11 @@ export async function POST(req: Request) {
 
   // ── run ────────────────────────────────────────────────────────────────────
   try {
-    await initRegistry();
-    const execPlan = await plan(execReq);
-    const result = await execute(execPlan, execReq);
-    return NextResponse.json(formatExecutionResponseForUser(result));
+    const result = await runHermesExecution(execReq.userId, execReq.message, execReq.source, {
+      sessionId: execReq.sessionId,
+      context: execReq.context,
+    });
+    return NextResponse.json(result);
   } catch (err) {
     console.error("[/api/hermes/execute] unhandled error", err);
     return NextResponse.json(

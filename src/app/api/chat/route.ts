@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { chatHistory, channelHistory, persistExecutedMessage, sendMessage } from "@/lib/chat";
 import { handleBuildIntake } from "@/lib/build-intake";
 import { shouldUseExecutionLayer } from "@/lib/hermes-execution/detect-execution-request";
+import { runHermesExecution } from "@/lib/hermes-execution/run";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { normalizeAgentKey } from "@/lib/agent-roster";
 
@@ -81,37 +82,23 @@ export async function POST(req: Request) {
 
   // ── execution layer (feature-flagged, additive) ─────────────────────────────
   // When HERMES_EXECUTION_ENABLED=true and the message matches an action intent,
-  // proxy through /api/hermes/execute and merge the execution result into the
+  // call the shared execution runner and merge the execution result into the
   // standard chat reply shape so the existing UI receives the same structure.
   if (!targetAgent && shouldUseExecutionLayer(executionMessage)) {
     try {
-      const execRes = await fetch(
-        new URL("/api/hermes/execute", process.env.NEXTAUTH_URL ?? "http://localhost:3000").toString(),
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            // Forward the session cookie so the execute route can auth
-            Cookie: (req as Request & { headers: { get: (k: string) => string | null } }).headers.get("cookie") ?? "",
-          },
-          body: JSON.stringify({ message: executionMessage, source: "chat" }),
-        }
-      );
-      if (execRes.ok) {
-        const execData = (await execRes.json()) as { answer?: string; status?: string; artifacts?: unknown[]; toolCalls?: unknown[] };
-        const answer = execData.answer ?? "Execution completed without a result summary.";
-        const result = await persistExecutedMessage(session.user.id, trimmed, answer, "dashboard");
-        return NextResponse.json({
-          userMessage: result.userMessage,
-          reply: {
-            ...result.reply,
-            content: answer,
-            executionStatus: execData.status,
-            artifacts: execData.artifacts ?? [],
-            toolCalls: [],
-          },
-        });
-      }
+      const execData = await runHermesExecution(session.user.id, executionMessage, "chat");
+      const answer = execData.answer ?? "Execution completed without a result summary.";
+      const result = await persistExecutedMessage(session.user.id, trimmed, answer, "dashboard");
+      return NextResponse.json({
+        userMessage: result.userMessage,
+        reply: {
+          ...result.reply,
+          content: answer,
+          executionStatus: execData.status,
+          artifacts: execData.artifacts ?? [],
+          toolCalls: [],
+        },
+      });
     } catch {
       // Execution layer failure is non-fatal — fall through to normal chat path
       console.error("[/api/chat] execution layer proxy failed, falling back to normal chat");
