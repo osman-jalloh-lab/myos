@@ -7,8 +7,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@/lib/db", () => ({
   prisma: {
     googleAccount: {
+      findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
+    },
+    agentRun: {
+      create: vi.fn(),
     },
   },
 }));
@@ -42,6 +46,10 @@ const BASE_ACCOUNT = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(prisma.googleAccount.findUnique).mockResolvedValue({
+    ...BASE_ACCOUNT,
+    lastSyncStatus: null,
+  });
   // Reset the inflight cache between tests by reimporting — vitest caches modules
   // so we clear mocks and rely on the fact that inflightRefreshes is cleared in finally
 });

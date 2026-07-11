@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   userFindMany: vi.fn(),
   googleAccountFindMany: vi.fn(),
+  googleAccountFindUnique: vi.fn(),
   googleAccountFindUniqueOrThrow: vi.fn(),
   googleAccountUpdate: vi.fn(),
   agentRunCreate: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("@/lib/db", () => ({
     user: { findMany: mocks.userFindMany },
     googleAccount: {
       findMany: mocks.googleAccountFindMany,
+      findUnique: mocks.googleAccountFindUnique,
       findUniqueOrThrow: mocks.googleAccountFindUniqueOrThrow,
       update: mocks.googleAccountUpdate,
     },
@@ -52,7 +54,9 @@ describe("Google account health", () => {
     vi.clearAllMocks();
     process.env.CRON_SECRET = "cron_secret";
     process.env.TELEGRAM_OWNER_CHAT_ID = "owner_chat";
+    mocks.googleAccountFindUnique.mockResolvedValue({ id: "acct_1", email: "work@example.com", label: "Work", lastSyncStatus: null });
     mocks.googleAccountUpdate.mockResolvedValue({});
+    mocks.sendTelegramMessage.mockResolvedValue({});
   });
 
   it("classifies static account health before probing Google", async () => {
@@ -112,6 +116,7 @@ describe("Google account health", () => {
         expiresAt: new Date(Date.now() - 60_000),
       },
     ]);
+    mocks.googleAccountFindUnique.mockResolvedValue({ id: "acct_expired", email: "work@example.com", label: "Work", lastSyncStatus: null });
     mocks.agentRunCreate.mockResolvedValue({});
 
     const { GET } = await import("@/app/api/cron/email-watcher/route");
@@ -137,5 +142,33 @@ describe("Google account health", () => {
       }),
     });
     expect(mocks.fetchInboxMessages).not.toHaveBeenCalled();
+  });
+
+  it("alerts only when account health transitions into an alerting failure", async () => {
+    const { recordGoogleAccountHealth } = await import("../google-health");
+
+    mocks.googleAccountFindUnique.mockResolvedValueOnce({
+      id: "acct_1",
+      email: "work@example.com",
+      label: "Work",
+      lastSyncStatus: "ok",
+    });
+    await recordGoogleAccountHealth("acct_1", "refresh_failed", "invalid_grant");
+
+    mocks.googleAccountFindUnique.mockResolvedValueOnce({
+      id: "acct_1",
+      email: "work@example.com",
+      label: "Work",
+      lastSyncStatus: "refresh_failed",
+    });
+    await recordGoogleAccountHealth("acct_1", "refresh_failed", "invalid_grant");
+
+    expect(mocks.sendTelegramMessage).toHaveBeenCalledTimes(1);
+    expect(mocks.agentRunCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        agentName: "account-health-watch",
+        inputSummary: "account=acct_1 state=refresh_failed",
+      }),
+    });
   });
 });

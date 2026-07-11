@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   auth: vi.fn(),
   googleAccountFindMany: vi.fn(),
+  googleAccountFindUnique: vi.fn(),
   googleAccountUpdate: vi.fn(),
+  agentRunCreate: vi.fn(),
   probeAccount: vi.fn(),
 }));
 
@@ -12,8 +14,10 @@ vi.mock("@/lib/db", () => ({
   prisma: {
     googleAccount: {
       findMany: mocks.googleAccountFindMany,
+      findUnique: mocks.googleAccountFindUnique,
       update: mocks.googleAccountUpdate,
     },
+    agentRun: { create: mocks.agentRunCreate },
   },
 }));
 vi.mock("@/lib/google-health", async () => {
@@ -43,7 +47,9 @@ describe("accounts API health", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.auth.mockResolvedValue({ user: { id: "user_1", email: "osman@example.com", name: "Osman" } });
+    mocks.googleAccountFindUnique.mockResolvedValue({ id: "acct_1", email: "work@example.com", label: "Work", lastSyncStatus: null });
     mocks.googleAccountUpdate.mockResolvedValue({});
+    mocks.agentRunCreate.mockResolvedValue({});
   });
 
   it("computes expiring_soon for expired access token with refresh token and no recent probe", async () => {

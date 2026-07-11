@@ -1,4 +1,5 @@
 import { prisma } from "./db";
+import { sendTelegramMessage } from "./telegram";
 
 const GMAIL_PROFILE_URL = "https://gmail.googleapis.com/gmail/v1/users/me/profile";
 
@@ -46,12 +47,51 @@ export function shortGoogleHealthError(err: unknown): string {
   return message.slice(0, 500);
 }
 
+async function alertGoogleAccountHealthTransition(
+  account: { id: string; email: string; label: string | null; lastSyncStatus: string | null } | null,
+  status: GoogleSyncStatus,
+  error?: string | null
+): Promise<void> {
+  if (!account || (status !== "expired" && status !== "refresh_failed")) return;
+  if (account.lastSyncStatus === status) return;
+
+  const chatId = process.env.TELEGRAM_OWNER_CHAT_ID;
+  let alerted = false;
+  if (chatId) {
+    await sendTelegramMessage(
+      chatId,
+      [
+        "Google account needs attention.",
+        `${account.label ?? "Google"} (${account.email}) changed to ${status}.`,
+        error ? `Reason: ${error.slice(0, 300)}` : "Reconnect or test the connection from Command Center.",
+      ].join("\n")
+    ).then(() => { alerted = true; }).catch(() => undefined);
+  }
+
+  await prisma.agentRun.create({
+    data: {
+      agentName: "account-health-watch",
+      inputSummary: `account=${account.id} state=${status}`,
+      outputSummary: alerted
+        ? `Google account ${account.email} changed to ${status}; Telegram alert sent.`
+        : `Google account ${account.email} changed to ${status}; Telegram alert failed or not configured.`,
+      modelProvider: "internal",
+      status: alerted ? "completed" : "failed",
+    },
+  }).catch(() => undefined);
+}
+
 export async function recordGoogleAccountHealth(
   accountId: string,
   status: GoogleSyncStatus,
   error?: string | null,
   syncedAt = new Date()
 ): Promise<void> {
+  const previous = await prisma.googleAccount.findUnique({
+    where: { id: accountId },
+    select: { id: true, email: true, label: true, lastSyncStatus: true },
+  }).catch(() => null);
+
   await prisma.googleAccount.update({
     where: { id: accountId },
     data: {
@@ -60,6 +100,7 @@ export async function recordGoogleAccountHealth(
       ...(status === "ok" ? { lastSyncedAt: syncedAt } : {}),
     },
   });
+  await alertGoogleAccountHealthTransition(previous, status, error);
 }
 
 export async function recordGoogleAccountSkip(
