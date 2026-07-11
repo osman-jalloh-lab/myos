@@ -135,3 +135,14 @@ describe("sanitizeGitHubHeaderValue", () => {
     expect(sanitizeGitHubHeaderValue(" \uFEFFghp_test\u200B\u200C\u200D ")).toBe("ghp_test");
   });
 });
+
+describe("internal.capabilities.answer", () => {
+  it("registers the capability answer tool as read-only", () => {
+    const tool = getTool("internal.capabilities.answer");
+    expect(tool).toMatchObject({
+      name: "internal.capabilities.answer",
+      risk: "read",
+      requiresApproval: false,
+    });
+  });
+});

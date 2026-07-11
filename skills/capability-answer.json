@@ -1,0 +1,48 @@
+{
+  "id": "capability-answer",
+  "name": "Capability Answer",
+  "description": "Answers whether Hermes can perform a requested action from the live tool registry and worker status.",
+  "category": "capability",
+  "ownerAgents": ["hermes", "argus"],
+  "tags": ["capabilities", "health", "tools", "worker"],
+  "safetyClass": "read_only",
+  "triggerExamples": [
+    "Can you build a page and deploy it?",
+    "Can Hermes send this email?",
+    "Can you open a PR for this?",
+    "What can you actually do right now?"
+  ],
+  "strongSignals": [
+    "can you build",
+    "can you deploy",
+    "can Hermes",
+    "what can you do",
+    "is the worker available"
+  ],
+  "whenToUse": [
+    "Use when the user asks whether Hermes can perform a task or whether a capability is connected."
+  ],
+  "whenNotToUse": [
+    "Do not use to execute the requested task; answer capability status only."
+  ],
+  "outputContract": {
+    "format": "One honest capability status with the reason and any approval or worker limitation.",
+    "mustInclude": ["capability status", "worker or approval limitation when relevant"],
+    "mustAvoid": ["claiming a task is executing when only queuing is available"]
+  },
+  "execution": {
+    "tool": "internal.capabilities.answer",
+    "risk": "read",
+    "requiresApproval": false
+  },
+  "evaluationPrompts": [
+    {
+      "input": "Can you build a page and deploy it?",
+      "shouldMatch": true,
+      "reason": "Direct capability-status question about build/deploy.",
+      "minimumScore": 75
+    }
+  ],
+  "version": "1.0.0",
+  "lastReviewedAt": "2026-07-11"
+}

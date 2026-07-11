@@ -918,6 +918,36 @@ export function registerInternalTools(): void {
   // ── internal.approval.create ─────────────────────────────────────────────────
 
   registerTool({
+    name: "internal.capabilities.answer",
+    description: "Answer whether Hermes can do a requested action using the live tool registry and worker status.",
+    risk: "read",
+    requiresApproval: false,
+    execute: async (input) => {
+      const { answerCapabilityQuestion, getCapabilitySnapshot } = await import("@/lib/hermes-execution/capabilities");
+      const message = String(input.message ?? "");
+      const snapshot = await getCapabilitySnapshot();
+      const result = answerCapabilityQuestion(message, snapshot);
+      return {
+        answer: result.answer,
+        result,
+        artifacts: [
+          {
+            type: "text" as const,
+            title: `Capability answer - ${result.shape}`,
+            content: result.answer,
+            metadata: {
+              shape: result.shape,
+              matchedTools: result.matchedTools,
+              workerStatus: result.workerStatus,
+              buildExecutor: snapshot.buildExecution.executor,
+            },
+          },
+        ],
+      };
+    },
+  });
+
+  registerTool({
     name: "internal.approval.create",
     description: "Queue any action into the existing Hermes OS approval system.",
     risk: "internal_write",

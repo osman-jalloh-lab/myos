@@ -17,7 +17,42 @@ vi.mock("@/lib/worker-watch", () => ({
   getHermesAgentReadiness: mocks.getHermesAgentReadiness,
 }));
 
-import { getCapabilitySnapshot } from "@/lib/hermes-execution/capabilities";
+import { answerCapabilityQuestion, getCapabilitySnapshot, type CapabilitySnapshot } from "@/lib/hermes-execution/capabilities";
+
+function snapshot(overrides: Partial<CapabilitySnapshot> = {}): CapabilitySnapshot {
+  return {
+    generatedAt: "2026-07-11T18:00:00.000Z",
+    tools: [
+      {
+        name: "internal.code.buildFeature",
+        description: "Build feature code.",
+        risk: "internal_write",
+        requiresApproval: false,
+      },
+      {
+        name: "internal.email.createDraft",
+        description: "Queue an email draft.",
+        risk: "external_write",
+        requiresApproval: true,
+      },
+    ],
+    toolCounts: { total: 2, read: 0, internalWrite: 1, externalWrite: 1, approvalRequired: 1 },
+    worker: {
+      status: "online",
+      lastHeartbeat: "2026-07-11T18:00:00.000Z",
+      machineName: "HP",
+      ageMs: 1000,
+      currentTask: null,
+    },
+    hermesAgent: { ready: true, reason: null },
+    buildExecution: {
+      available: true,
+      executor: "hermes_agent",
+      reason: "Local worker is online and Hermes Nous is ready.",
+    },
+    ...overrides,
+  };
+}
 
 describe("capability snapshot", () => {
   it("reflects the real tool registry and worker health sources", async () => {
@@ -83,5 +118,39 @@ describe("capability snapshot", () => {
     expect(snapshot.buildExecution.available).toBe(false);
     expect(snapshot.buildExecution.executor).toBeNull();
     expect(snapshot.buildExecution.reason).toContain("offline");
+  });
+
+  it("answers build capability as ready when worker execution is available", () => {
+    const result = answerCapabilityQuestion("Can you build a page and deploy it?", snapshot());
+
+    expect(result.shape).toBe("ready_now");
+    expect(result.answer).toContain("approval gates");
+    expect(result.matchedTools).toContain("internal.code.buildFeature");
+  });
+
+  it("answers build capability as queue-only when the worker is unavailable", () => {
+    const result = answerCapabilityQuestion("Can you build a page?", snapshot({
+      worker: { status: "offline", lastHeartbeat: null, machineName: null, ageMs: null, currentTask: null },
+      hermesAgent: { ready: false, reason: "no local worker" },
+      buildExecution: { available: false, executor: null, reason: "Local worker is offline." },
+    }));
+
+    expect(result.shape).toBe("queue_only");
+    expect(result.answer).toContain("cannot honestly say it is building");
+  });
+
+  it("answers write capability as approval/setup-needed when the matching tool is gated", () => {
+    const result = answerCapabilityQuestion("Can you send this email?", snapshot());
+
+    expect(result.shape).toBe("needs_setup");
+    expect(result.answer).toContain("requires approval");
+    expect(result.matchedTools).toContain("internal.email.createDraft");
+  });
+
+  it("answers unsupported when no registered capability matches", () => {
+    const result = answerCapabilityQuestion("Can you trade stocks for me?", snapshot({ tools: [] }));
+
+    expect(result.shape).toBe("unsupported");
+    expect(result.answer).not.toMatch(/\bcan do that\b/i);
   });
 });
