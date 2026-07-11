@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { prisma } from "@/lib/db";
 import { routeMessage, routeToAgent, type RouteResult } from "@/agents/hermes";
 import { handleMercuryRequest } from "@/agents/mercury";
@@ -25,6 +26,40 @@ export interface ChatMessageView {
   channel: ChatChannel;
   targetAgent: string | null;
   createdAt: string;
+}
+
+const AUTO_MEMORY_TAG_GRACE_MS = 150;
+
+type AutoMemoryCaptureResult =
+  | { status: "completed"; remembered: string[] }
+  | { status: "pending" };
+
+function startAutoMemoryCapture(userId: string, text: string): Promise<string[]> {
+  return autoCaptureUserMemory(userId, text).catch(async (error) => {
+    await logAutoMemoryFailure(userId, text, error).catch(() => undefined);
+    return [] as string[];
+  });
+}
+
+function runAfterResponse(callback: () => Promise<void> | void): void {
+  after(callback);
+}
+
+async function resolveAutoMemoryForTag(capture: Promise<string[]>): Promise<AutoMemoryCaptureResult> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<AutoMemoryCaptureResult>((resolve) => {
+    timeoutId = setTimeout(() => resolve({ status: "pending" }), AUTO_MEMORY_TAG_GRACE_MS);
+  });
+  const completed = capture.then((remembered): AutoMemoryCaptureResult => ({ status: "completed", remembered }));
+  const result = await Promise.race([completed, timeout]);
+  if (timeoutId) clearTimeout(timeoutId);
+  return result;
+}
+
+function finishAutoMemoryAfterResponse(capture: Promise<string[]>): void {
+  runAfterResponse(async () => {
+    await capture.then(() => undefined);
+  });
 }
 
 function toView(row: {
@@ -121,10 +156,7 @@ export async function sendMessage(
   const userRow = await prisma.chatMessage.create({
     data: { userId, role: "user", content: text, channel, targetAgent: normalizedTargetAgent },
   });
-  const remembered = await autoCaptureUserMemory(userId, text).catch(async (error) => {
-    await logAutoMemoryFailure(userId, text, error);
-    return [] as string[];
-  });
+  const autoMemoryCapture = startAutoMemoryCapture(userId, text);
   const resolvedContext = chatContext ?? await buildContextBlock(contextChatId, userId, text).catch(() => "");
   const contextResolution = resolveMessageWithContext(text, contextStateFromContextBlock(resolvedContext || undefined));
   const routingText = contextResolution.resolvedText;
@@ -243,8 +275,13 @@ export async function sendMessage(
   }
 
   // Instant feedback when a fact auto-saved, so Osman never wonders whether it landed.
-  const memoryTag = rememberedTag(remembered);
-  if (memoryTag) route.reply = `${route.reply}\n\n${memoryTag}`;
+  const memoryCaptureResult = await resolveAutoMemoryForTag(autoMemoryCapture);
+  if (memoryCaptureResult.status === "completed") {
+    const memoryTag = rememberedTag(memoryCaptureResult.remembered);
+    if (memoryTag) route.reply = `${route.reply}\n\n${memoryTag}`;
+  } else {
+    finishAutoMemoryAfterResponse(autoMemoryCapture);
+  }
 
   const replyRow = await prisma.chatMessage.create({
     data: { userId, role: "assistant", content: route.reply, channel, targetAgent: normalizedTargetAgent },
@@ -256,12 +293,9 @@ export async function sendMessage(
 
 /** Persist an already-executed reply without routing the prompt through Hermes again. */
 export async function persistExecutedMessage(userId: string, text: string, reply: string, channel: ChatChannel = "dashboard"): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView }> {
-  const remembered = await autoCaptureUserMemory(userId, text).catch(async (error) => {
-    await logAutoMemoryFailure(userId, text, error);
-    return [] as string[];
+  runAfterResponse(async () => {
+    await startAutoMemoryCapture(userId, text).then(() => undefined);
   });
-  const memoryTag = rememberedTag(remembered);
-  if (memoryTag) reply = `${reply}\n\n${memoryTag}`;
   const [userRow, replyRow] = await prisma.$transaction([
     prisma.chatMessage.create({ data: { userId, role: "user", content: text, channel, targetAgent: null } }),
     prisma.chatMessage.create({ data: { userId, role: "assistant", content: reply, channel, targetAgent: null } }),
