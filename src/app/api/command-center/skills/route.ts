@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { runSkillScout } from "@/lib/skill-scout/github";
+import { promoteSkillScoutItem, queueSkillScoutArmApproval } from "@/lib/skill-scout/importer";
 import {
   checkDuplicateSkill,
   getRegisteredSkills,
@@ -46,6 +47,13 @@ export async function POST(req: Request) {
     enabled?: boolean;
     message?: string;
     candidateName?: string;
+    sourceRepo?: string;
+    sourcePath?: string;
+    sourceUrl?: string;
+    recommendedAction?: string;
+    whyItHelps?: string;
+    riskLevel?: string;
+    executionTool?: string;
   } | null;
 
   if (body?.action === "scoutRepo") {
@@ -83,6 +91,42 @@ export async function POST(req: Request) {
       return NextResponse.json({ status: "noop", message: duplicate.message, skill: duplicate.skill });
     }
     return NextResponse.json({ status: "needs_approval", message: `${candidateName} is not installed. Use Skill Scout approval before importing.` });
+  }
+
+  if (body?.action === "promoteSkill") {
+    try {
+      const result = await promoteSkillScoutItem(body, session.user.id);
+      const skills = await getRegisteredSkills(session.user.id, true);
+      return NextResponse.json({
+        status: result.status,
+        result,
+        skill: skills.find((skill) => skill.id === result.skillId) ?? null,
+      });
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Skill promotion failed." },
+        { status: 400 }
+      );
+    }
+  }
+
+  if (body?.action === "armSkill") {
+    try {
+      const approval = await queueSkillScoutArmApproval(session.user.id, {
+        skillId: body.skillId,
+        executionTool: body.executionTool,
+      });
+      return NextResponse.json({
+        status: "needs_approval",
+        approval,
+        message: `Arming ${body.skillId ?? "this skill"} requires approval before it can execute ${body.executionTool ?? "the selected tool"}.`,
+      });
+    } catch (error) {
+      return NextResponse.json(
+        { error: error instanceof Error ? error.message : "Skill arming failed." },
+        { status: 400 }
+      );
+    }
   }
 
   return NextResponse.json({ error: "Unsupported action" }, { status: 400 });

@@ -1,5 +1,8 @@
 import { writeCard } from "@/lib/knowledge-cards";
 import { checkDuplicateSkill } from "@/lib/skills/registry";
+import { createApproval } from "@/lib/approvals";
+import { prisma } from "@/lib/db";
+import { ensureRegistryInitialized, getTool } from "@/lib/hermes-execution/tool-registry";
 
 type SkillScoutImportPayload = {
   candidateName?: unknown;
@@ -17,6 +20,18 @@ type ImportResult = {
   cardPath: string;
   summary: string;
   skipped?: boolean;
+};
+
+type PromotionResult = {
+  skillId: string;
+  summary: string;
+  status: "draft_guidance";
+};
+
+type ArmResult = {
+  skillId: string;
+  executionTool: string;
+  summary: string;
 };
 
 const SAFE_SOURCE_PATH_RE = /^[a-zA-Z0-9_./-]+$/;
@@ -135,5 +150,118 @@ export async function importApprovedSkillScoutItem(payload: unknown, userId = "s
   return {
     cardPath: `catalog/${cardPath}`,
     summary: `Imported ${item.name} as ${cardPath}.`,
+  };
+}
+
+export async function promoteSkillScoutItem(payload: unknown, userId: string): Promise<PromotionResult> {
+  const item = validatePayload(payload as SkillScoutImportPayload);
+  const definition = {
+    ownerAgents: ["hermes"],
+    tags: ["skill-scout", item.recommendedAction],
+    safetyClass: "read_only",
+    triggerExamples: [item.name, item.whyItHelps].filter(Boolean).slice(0, 4),
+    instructions: [
+      `# ${item.name}`,
+      "",
+      "Use this as guidance adapted from a Skill Scout recommendation.",
+      "",
+      `Source: ${item.sourceUrl}`,
+      `Why it helps: ${item.whyItHelps}`,
+      "",
+      "Guardrails:",
+      "- Guidance only. No scripts are imported or executed.",
+      "- Keep the skill non-executable until an explicit arm approval is approved.",
+      "- Preserve existing Hermes approval gates for any write action.",
+    ].join("\n"),
+  };
+
+  await prisma.userSkill.upsert({
+    where: { userId_skillId: { userId, skillId: item.id } },
+    create: {
+      userId,
+      skillId: item.id,
+      name: item.name,
+      description: item.whyItHelps,
+      category: "skill-scout",
+      definition: JSON.stringify(definition),
+      enabled: true,
+    },
+    update: {
+      name: item.name,
+      description: item.whyItHelps,
+      category: "skill-scout",
+      definition: JSON.stringify(definition),
+      enabled: true,
+    },
+  });
+
+  return {
+    skillId: item.id,
+    status: "draft_guidance",
+    summary: `Promoted ${item.name} as a non-executable guidance skill draft.`,
+  };
+}
+
+export async function queueSkillScoutArmApproval(userId: string, params: { skillId?: unknown; executionTool?: unknown }) {
+  const skillId = cleanText(params.skillId, "");
+  const executionTool = cleanText(params.executionTool, "");
+  if (!skillId) throw new Error("skillId is required.");
+  if (!executionTool) throw new Error("executionTool is required.");
+
+  await ensureRegistryInitialized();
+  const tool = getTool(executionTool);
+  if (!tool) throw new Error(`Execution tool "${executionTool}" is not registered.`);
+
+  const skill = await prisma.userSkill.findFirst({ where: { userId, skillId } });
+  if (!skill) throw new Error(`User skill "${skillId}" was not found.`);
+
+  return createApproval(userId, "skill_scout_arm", {
+    skillId,
+    executionTool,
+    risk: tool.risk,
+    requiresApproval: tool.requiresApproval || tool.risk === "external_write",
+    source: "skill-scout",
+  });
+}
+
+export async function armPromotedSkill(payload: unknown, userId: string): Promise<ArmResult> {
+  const raw = payload && typeof payload === "object" && !Array.isArray(payload) ? payload as Record<string, unknown> : {};
+  const skillId = cleanText(raw.skillId, "");
+  const executionTool = cleanText(raw.executionTool, "");
+  if (!skillId || !executionTool) throw new Error("skillId and executionTool are required.");
+
+  await ensureRegistryInitialized();
+  const tool = getTool(executionTool);
+  if (!tool) throw new Error(`Execution tool "${executionTool}" is not registered.`);
+
+  const skill = await prisma.userSkill.findFirst({ where: { userId, skillId } });
+  if (!skill) throw new Error(`User skill "${skillId}" was not found.`);
+
+  let definition: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(skill.definition) as unknown;
+    definition = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    definition = {};
+  }
+
+  const nextDefinition = {
+    ...definition,
+    execution: {
+      tool: executionTool,
+      risk: tool.risk,
+      requiresApproval: tool.requiresApproval || tool.risk === "external_write",
+    },
+  };
+
+  await prisma.userSkill.update({
+    where: { userId_skillId: { userId, skillId } },
+    data: { definition: JSON.stringify(nextDefinition), enabled: true },
+  });
+
+  return {
+    skillId,
+    executionTool,
+    summary: `Armed ${skill.name} with ${executionTool}.`,
   };
 }

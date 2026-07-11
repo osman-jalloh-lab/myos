@@ -513,7 +513,7 @@ async function scanUserSkills(userId: string): Promise<SkillRegistryEntry[]> {
       id: row.skillId,
       name: row.name,
       description: row.description,
-      category: row.category ?? asString(raw.category) ?? "workflow",
+      category: row.category ?? (asString(raw.category) || "workflow"),
     };
     const instructions = asString(raw.instructions) || asString(raw.body) || null;
     const entry = buildRegistryEntry({

@@ -1,5 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const mocks = vi.hoisted(() => ({
+  createApproval: vi.fn(),
+  ensureRegistryInitialized: vi.fn(async () => undefined),
+  getTool: vi.fn(),
+  userSkillFindFirst: vi.fn(),
+  userSkillUpdate: vi.fn(),
+  userSkillUpsert: vi.fn(),
+}));
+
+vi.mock("@/lib/approvals", () => ({
+  createApproval: mocks.createApproval,
+}));
+
+vi.mock("@/lib/db", () => ({
+  prisma: {
+    userSkill: {
+      findFirst: mocks.userSkillFindFirst,
+      update: mocks.userSkillUpdate,
+      upsert: mocks.userSkillUpsert,
+    },
+  },
+}));
+
+vi.mock("@/lib/hermes-execution/tool-registry", () => ({
+  ensureRegistryInitialized: mocks.ensureRegistryInitialized,
+  getTool: mocks.getTool,
+}));
+
 vi.mock("@/lib/knowledge-cards", () => ({
   writeCard: vi.fn(async (cardPath: string, frontmatter: Record<string, unknown>, body: string) => ({
     path: cardPath,
@@ -14,10 +42,42 @@ vi.mock("@/lib/skills/registry", () => ({
 
 import { writeCard } from "@/lib/knowledge-cards";
 import { checkDuplicateSkill } from "@/lib/skills/registry";
-import { importApprovedSkillScoutItem } from "@/lib/skill-scout/importer";
+import {
+  armPromotedSkill,
+  importApprovedSkillScoutItem,
+  promoteSkillScoutItem,
+  queueSkillScoutArmApproval,
+} from "@/lib/skill-scout/importer";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.createApproval.mockResolvedValue({
+    id: "approval_1",
+    actionType: "skill_scout_arm",
+    payload: {},
+    status: "pending",
+    createdAt: "2026-07-11T00:00:00.000Z",
+    resolvedAt: null,
+  });
+  mocks.getTool.mockReturnValue({
+    name: "internal.tasks.create",
+    description: "Create a task.",
+    risk: "internal_write",
+    requiresApproval: false,
+    execute: vi.fn(),
+  });
+  mocks.userSkillFindFirst.mockResolvedValue({
+    id: "user_skill_1",
+    userId: "user_1",
+    skillId: "skill-scout-wcag-audit-patterns",
+    name: "wcag-audit-patterns",
+    description: "Catches accessibility regressions before generated apps ship.",
+    category: "skill-scout",
+    definition: JSON.stringify({ safetyClass: "read_only", instructions: "Guidance only." }),
+    enabled: true,
+  });
+  mocks.userSkillUpdate.mockResolvedValue({});
+  mocks.userSkillUpsert.mockResolvedValue({});
 });
 
 describe("importApprovedSkillScoutItem", () => {
@@ -122,5 +182,76 @@ describe("importApprovedSkillScoutItem", () => {
       summary: "personal-context-anchor is already installed; no action taken.",
     });
     expect(writeCard).not.toHaveBeenCalled();
+  });
+
+  it("promotes a low-risk scout item into a non-executable guidance draft", async () => {
+    const result = await promoteSkillScoutItem({
+      candidateName: "wcag-audit-patterns",
+      sourceRepo: "wshobson/agents",
+      sourcePath: "plugins/accessibility-compliance/skills/wcag-audit-patterns/SKILL.md",
+      sourceUrl: "https://github.com/wshobson/agents/blob/HEAD/plugins/accessibility-compliance/skills/wcag-audit-patterns/SKILL.md",
+      recommendedAction: "add_qa_check",
+      whyItHelps: "Catches accessibility regressions before generated apps ship.",
+      riskLevel: "low",
+    }, "user_1");
+
+    expect(result).toMatchObject({
+      skillId: "skill-scout-wcag-audit-patterns",
+      status: "draft_guidance",
+    });
+    expect(mocks.userSkillUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      create: expect.objectContaining({
+        skillId: "skill-scout-wcag-audit-patterns",
+        enabled: true,
+      }),
+    }));
+    const definition = JSON.parse(String(mocks.userSkillUpsert.mock.calls[0][0].create.definition)) as Record<string, unknown>;
+    expect(definition.execution).toBeUndefined();
+    expect(definition.instructions).toContain("Guidance only");
+  });
+
+  it("requires a registered tool and queues a second approval before arming", async () => {
+    mocks.getTool.mockReturnValueOnce(undefined);
+    await expect(queueSkillScoutArmApproval("user_1", {
+      skillId: "skill-scout-wcag-audit-patterns",
+      executionTool: "internal.missing.tool",
+    })).rejects.toThrow("not registered");
+    expect(mocks.createApproval).not.toHaveBeenCalled();
+
+    const approval = await queueSkillScoutArmApproval("user_1", {
+      skillId: "skill-scout-wcag-audit-patterns",
+      executionTool: "internal.tasks.create",
+    });
+
+    expect(approval.id).toBe("approval_1");
+    expect(mocks.createApproval).toHaveBeenCalledWith(
+      "user_1",
+      "skill_scout_arm",
+      expect.objectContaining({
+        skillId: "skill-scout-wcag-audit-patterns",
+        executionTool: "internal.tasks.create",
+        risk: "internal_write",
+      })
+    );
+  });
+
+  it("arms a promoted skill only after the arm approval executes", async () => {
+    const result = await armPromotedSkill({
+      skillId: "skill-scout-wcag-audit-patterns",
+      executionTool: "internal.tasks.create",
+    }, "user_1");
+
+    expect(result).toMatchObject({
+      skillId: "skill-scout-wcag-audit-patterns",
+      executionTool: "internal.tasks.create",
+    });
+    const definition = JSON.parse(String(mocks.userSkillUpdate.mock.calls[0][0].data.definition)) as {
+      execution?: { tool?: string; risk?: string; requiresApproval?: boolean };
+    };
+    expect(definition.execution).toEqual({
+      tool: "internal.tasks.create",
+      risk: "internal_write",
+      requiresApproval: false,
+    });
   });
 });
