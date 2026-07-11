@@ -214,6 +214,29 @@ function planWithRegex(msg: string): { intent: string; extractedUrl: string | nu
   return { intent: "chat", extractedUrl: null };
 }
 
+function planWithCertainRegex(msg: string): { intent: string; extractedUrl: string | null; confidence: number } | null {
+  const lc = msg.toLowerCase();
+  const regexResult = planWithRegex(msg);
+
+  if (["build_page", "build_app", "continue_build", "modify_feature", "build_feature"].includes(regexResult.intent)) {
+    return { ...regexResult, confidence: 0.99 };
+  }
+  if (extractGitHubUrl(msg)) {
+    return { intent: "github_repo_review", extractedUrl: extractGitHubUrl(msg) ?? null, confidence: 0.99 };
+  }
+  if (/\bnpm\s+run\s+\S+/.test(lc) || /^run\s+(build|test|lint|typecheck|tsc|check)\b/.test(lc)) {
+    return { ...regexResult, confidence: 0.98 };
+  }
+  if (/\bremind\s+me\s+to\b/.test(lc)) {
+    return { ...regexResult, confidence: 0.98 };
+  }
+  if (/\bdeploy\b(?!\s+(to\s+)?github)|\bdeployment\s+status\b|\bpreview\s+url\b|\bis\s+it\s+(live|deployed)\b/.test(lc)) {
+    return { ...regexResult, confidence: 0.98 };
+  }
+
+  return null;
+}
+
 // ── tool priority helper ──────────────────────────────────────────────────────
 
 function bestTool(...candidates: string[]): string {
@@ -444,10 +467,9 @@ function buildPlan(
 export async function plan(req: ExecutionRequest): Promise<ExecutionPlan> {
   const msg = req.message;
 
-  // Explicit build language is deterministic and must never be downgraded to chat.
-  const deterministic = planWithRegex(msg);
-  if (["build_page", "build_app", "continue_build", "modify_feature", "build_feature"].includes(deterministic.intent)) {
-    return buildPlan(deterministic.intent, 0.99, msg, deterministic.extractedUrl, req.source);
+  const deterministic = planWithCertainRegex(msg);
+  if (deterministic) {
+    return buildPlan(deterministic.intent, deterministic.confidence, msg, deterministic.extractedUrl, req.source);
   }
 
   // 1. Try LLM-based planning first (fast Groq call, 4s timeout)
