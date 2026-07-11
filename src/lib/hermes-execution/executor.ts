@@ -76,13 +76,15 @@ export async function execute(
       };
       toolCalls.push(call);
       console.log(`[hermes-execution] BLOCKED tool=${step.tool}`);
-      await logRun(req.userId, plan.intent, step.tool, "blocked", call.error);
-      await updateQueue(req.userId, queueTask, {
-        status: "failed",
-        assignedExecutor: step.tool,
-        error: call.error,
-        log: `Blocked by safety policy: ${step.tool}.`,
-      });
+      await Promise.all([
+        logRun(req.userId, plan.intent, step.tool, "blocked", call.error),
+        updateQueue(req.userId, queueTask, {
+          status: "failed",
+          assignedExecutor: step.tool,
+          error: call.error,
+          log: `Blocked by safety policy: ${step.tool}.`,
+        }),
+      ]);
       return {
         status: "blocked",
         answer: `This action is blocked for safety: "${step.tool}" cannot be executed automatically. Please do it manually.`,
@@ -107,13 +109,15 @@ export async function execute(
       };
       toolCalls.push(call);
       console.error(`[hermes-execution] MISSING tool=${step.tool}`);
-      await logRun(req.userId, plan.intent, step.tool, "failed", call.error);
-      await updateQueue(req.userId, queueTask, {
-        status: "failed",
-        assignedExecutor: step.tool,
-        error: call.error,
-        log: `Tool missing: ${step.tool}.`,
-      });
+      await Promise.all([
+        logRun(req.userId, plan.intent, step.tool, "failed", call.error),
+        updateQueue(req.userId, queueTask, {
+          status: "failed",
+          assignedExecutor: step.tool,
+          error: call.error,
+          log: `Tool missing: ${step.tool}.`,
+        }),
+      ]);
       return {
         status: "failed",
         answer: `Execution stopped: tool "${step.tool}" is not available yet. Check the execution layer setup.`,
@@ -149,13 +153,15 @@ export async function execute(
           call.result = result;
           call.completedAt = new Date().toISOString();
           if (res.artifacts) artifacts.push(...res.artifacts);
-          await logRun(req.userId, plan.intent, step.tool, "approval_required", res.answer);
-          await updateQueue(req.userId, queueTask, {
-            status: "waiting_approval",
-            assignedExecutor: step.tool,
-            result: res.answer ?? "Approval required.",
-            log: `Waiting for approval from ${step.tool}.`,
-          });
+          await Promise.all([
+            logRun(req.userId, plan.intent, step.tool, "approval_required", res.answer),
+            updateQueue(req.userId, queueTask, {
+              status: "waiting_approval",
+              assignedExecutor: step.tool,
+              result: res.answer ?? "Approval required.",
+              log: `Waiting for approval from ${step.tool}.`,
+            }),
+          ]);
           return {
             status: "approval_required",
             answer: res.answer ?? "I can do that, but I need your approval first.",
@@ -172,13 +178,15 @@ export async function execute(
           call.status = "failed";
           call.error = err instanceof Error ? err.message : String(err);
           call.completedAt = new Date().toISOString();
-          await logRun(req.userId, plan.intent, step.tool, "failed", call.error);
-          await updateQueue(req.userId, queueTask, {
-            status: "failed",
-            assignedExecutor: step.tool,
-            error: call.error,
-            log: `Approval queue failed for ${step.tool}.`,
-          });
+          await Promise.all([
+            logRun(req.userId, plan.intent, step.tool, "failed", call.error),
+            updateQueue(req.userId, queueTask, {
+              status: "failed",
+              assignedExecutor: step.tool,
+              error: call.error,
+              log: `Approval queue failed for ${step.tool}.`,
+            }),
+          ]);
           // Do NOT return approval_required here — the tool threw before it could
           // create an ApprovalAction row. Returning approval_required would tell
           // the user "pending approval" when nothing is actually in the queue.
@@ -232,25 +240,29 @@ export async function execute(
 
       if (res.artifacts) artifacts.push(...res.artifacts);
       console.log(`[hermes-execution] SUCCESS tool=${step.tool}`);
-      await logRun(req.userId, plan.intent, step.tool, "completed", (res.answer ?? "").slice(0, 500));
-      await updateQueue(req.userId, queueTask, {
-        status: "executing",
-        assignedExecutor: step.tool,
-        log: `Completed ${step.tool}.`,
-      });
+      await Promise.all([
+        logRun(req.userId, plan.intent, step.tool, "completed", (res.answer ?? "").slice(0, 500)),
+        updateQueue(req.userId, queueTask, {
+          status: "executing",
+          assignedExecutor: step.tool,
+          log: `Completed ${step.tool}.`,
+        }),
+      ]);
 
     } catch (err) {
       call.status = "failed";
       call.error = err instanceof Error ? err.message : String(err);
       call.completedAt = new Date().toISOString();
       console.error(`[hermes-execution] FAILED tool=${step.tool}`, err);
-      await logRun(req.userId, plan.intent, step.tool, "failed", call.error);
-      await updateQueue(req.userId, queueTask, {
-        status: "failed",
-        assignedExecutor: step.tool,
-        error: call.error,
-        log: `Failed at ${step.tool}.`,
-      });
+      await Promise.all([
+        logRun(req.userId, plan.intent, step.tool, "failed", call.error),
+        updateQueue(req.userId, queueTask, {
+          status: "failed",
+          assignedExecutor: step.tool,
+          error: call.error,
+          log: `Failed at ${step.tool}.`,
+        }),
+      ]);
       return {
         status: "failed",
         answer: `Execution failed at step "${step.tool}": ${call.error}`,
