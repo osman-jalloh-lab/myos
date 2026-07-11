@@ -219,6 +219,25 @@ interface MemoryContextDebugData {
   lastUpdated: string;
 }
 
+interface AgentBusEnvelope {
+  id: string;
+  fromAgent: string;
+  toAgent: string | null;
+  envelopeType: string;
+  payload: unknown;
+  status: "pending" | "consumed" | "expired";
+  correlationId: string | null;
+  expiresAt: string;
+  consumedAt: string | null;
+  createdAt: string;
+}
+
+interface AgentBusData {
+  envelopes: AgentBusEnvelope[];
+  counts: Record<string, number>;
+  lastUpdated: string;
+}
+
 interface SkillView {
   id: string;
   name: string;
@@ -233,7 +252,7 @@ interface SkillView {
   estimatedCostSaving: "none" | "low" | "medium" | "high";
   lastUsedAt: string | null;
   usageCount: number;
-  source: "built_in" | "installed" | "scouted";
+  source: "built_in" | "installed" | "scouted" | "user";
   validationStatus: "valid" | "missing_metadata" | "invalid";
   category: string;
   dateAdded: string | null;
@@ -401,7 +420,7 @@ interface AccountsHealthData {
   results?: Array<{ accountId: string; status: string; email?: string; error?: string | null }>;
 }
 
-type Tab = "overview" | "health" | "agents" | "memory" | "skills" | "projects" | "builds" | "runs" | "logs" | "chat";
+type Tab = "overview" | "health" | "agents" | "memory" | "skills" | "projects" | "builds" | "runs" | "bus" | "logs" | "chat";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -2610,6 +2629,66 @@ function LogsPanel({ runs, audit }: { runs: AgentRun[]; audit: AuditEntry[] }) {
 
 // ── Chat panel ────────────────────────────────────────────────────────────────
 
+function AgentBusPanel({ data }: { data: AgentBusData | null }) {
+  const envelopes = data?.envelopes ?? [];
+  const pending = envelopes.filter((envelope) => envelope.status === "pending");
+  const recent = envelopes.slice(0, 18);
+  const payloadPreview = (payload: unknown) => {
+    if (typeof payload === "string") return payload.slice(0, 420);
+    return JSON.stringify(payload, null, 2).slice(0, 420);
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 14 }}>
+          <div>
+            <div style={{ color: "#94A3B8", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Agent Bus</div>
+            <h2 style={{ fontSize: 24, margin: 0, fontFamily: "Fraunces, serif" }}>Envelope Traffic</h2>
+          </div>
+          <div style={{ color: "#647089", fontSize: 12 }}>{data?.lastUpdated ? `Updated ${timeAgo(data.lastUpdated)}` : "Loading"}</div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
+          {[
+            ["Pending", data?.counts.pending ?? 0, "#FBBF24"],
+            ["Consumed", data?.counts.consumed ?? 0, "#34D399"],
+            ["Expired", data?.counts.expired ?? 0, "#94A3B8"],
+            ["Recent", envelopes.length, "#60A5FA"],
+          ].map(([label, value, color]) => (
+            <div key={String(label)} style={{ border: "1px solid rgba(148,163,184,0.16)", borderRadius: 8, padding: "10px 12px", background: "rgba(15,23,42,0.45)" }}>
+              <div style={{ color: String(color), fontSize: 22, fontWeight: 850 }}>{value}</div>
+              <div style={{ color: "#94A3B8", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14 }}>
+        <MemoryList
+          title="Pending Handoffs"
+          empty="No pending envelopes"
+          items={pending.map((envelope) => ({
+            key: envelope.id,
+            head: `${envelope.fromAgent} -> ${envelope.toAgent ?? "any"}`,
+            body: payloadPreview(envelope.payload),
+            meta: `${envelope.envelopeType} / expires ${timeAgo(envelope.expiresAt)}`,
+          }))}
+        />
+        <MemoryList
+          title="Recent Envelopes"
+          empty="No agent envelopes yet"
+          items={recent.map((envelope) => ({
+            key: envelope.id,
+            head: `${envelope.fromAgent} -> ${envelope.toAgent ?? "any"} [${statusLabel(envelope.status)}]`,
+            body: payloadPreview(envelope.payload),
+            meta: `${envelope.envelopeType} / ${timeAgo(envelope.createdAt)}${envelope.consumedAt ? ` / consumed ${timeAgo(envelope.consumedAt)}` : ""}`,
+          }))}
+        />
+      </div>
+    </div>
+  );
+}
+
 function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [input, setInput] = useState("");
@@ -2758,6 +2837,7 @@ export default function CommandCenterClient() {
   const [executionEvents, setExecutionEvents] = useState<ExecutionTraceEvent[]>([]);
   const [healthCenter, setHealthCenter] = useState<HealthCenterData | null>(null);
   const [accountsHealth, setAccountsHealth] = useState<AccountsHealthData | null>(null);
+  const [agentBus, setAgentBus] = useState<AgentBusData | null>(null);
   const [healthAction, setHealthAction] = useState<string | null>(null);
   const [accountHealthAction, setAccountHealthAction] = useState(false);
   const [skills, setSkills] = useState<SkillView[]>([]);
@@ -2767,7 +2847,7 @@ export default function CommandCenterClient() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, memoryRes, memoryDebugRes, skillsRes, queueRes, runRes, healthRes, accountsRes] = await Promise.allSettled([
+      const [projRes, buildsRes, approvalsRes, logsRes, chatRes, memoryRes, memoryDebugRes, skillsRes, queueRes, runRes, healthRes, accountsRes, busRes] = await Promise.allSettled([
         fetch("/api/command-center/projects").then((r) => r.json() as Promise<{ projects: Project[] }>),
         fetch("/api/command-center/builds").then((r) => r.json() as Promise<{ builds: Build[] }>),
         fetch("/api/approvals").then((r) => r.json() as Promise<{ actions: ApprovalAction[] }>),
@@ -2780,6 +2860,7 @@ export default function CommandCenterClient() {
         fetch("/api/command-center/runs").then((r) => r.json() as Promise<ExecutionRunsData>),
         fetch("/api/command-center/health-center").then((r) => r.json() as Promise<HealthCenterData>),
         fetch("/api/accounts").then((r) => r.json() as Promise<AccountsHealthData>),
+        fetch("/api/command-center/agent-bus").then((r) => r.json() as Promise<AgentBusData>),
       ]);
 
       if (projRes.status === "fulfilled") setProjects(projRes.value.projects ?? []);
@@ -2803,6 +2884,7 @@ export default function CommandCenterClient() {
       }
       if (healthRes.status === "fulfilled" && !("error" in healthRes.value)) setHealthCenter(healthRes.value);
       if (accountsRes.status === "fulfilled" && !("error" in accountsRes.value)) setAccountsHealth(accountsRes.value);
+      if (busRes.status === "fulfilled" && !("error" in busRes.value)) setAgentBus(busRes.value);
 
       const webMsgs = chatRes.status === "fulfilled" ? (chatRes.value.messages ?? []).map((m) => ({ ...m, channel: "dashboard" })) : [];
       setChatMessages(webMsgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()));
@@ -2997,9 +3079,9 @@ export default function CommandCenterClient() {
 
       {/* Tabs */}
       <div style={{ padding: "0 24px", borderBottom: "1px solid #28324A", display: "flex", gap: 6, minHeight: 38, alignItems: "center", overflowX: "auto" }}>
-        {(["overview", "health", "agents", "memory", "skills", "projects", "builds", "runs", "logs", "chat"] as Tab[]).map((t) => (
+        {(["overview", "health", "agents", "memory", "skills", "projects", "builds", "runs", "bus", "logs", "chat"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)} style={pillStyle(tab === t)}>
-            {t === "health" ? "Health Center" : t === "runs" ? "Run Inspector" : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t === "health" ? "Health Center" : t === "runs" ? "Run Inspector" : t === "bus" ? "Agent Bus" : t.charAt(0).toUpperCase() + t.slice(1)}
             {t === "overview" && pendingCount > 0 && (
               <span style={{ marginLeft: 6, background: "#FBBF24", color: "#0E1424", borderRadius: 999, padding: "0 5px", fontSize: 10, fontWeight: 800 }}>
                 {pendingCount}
@@ -3116,6 +3198,7 @@ export default function CommandCenterClient() {
                 onCopyDiagnostic={copyDiagnostic}
               />
             )}
+            {tab === "bus" && <AgentBusPanel data={agentBus} />}
             {tab === "logs" && <LogsPanel runs={runs} audit={audit} />}
             {tab === "chat" && <ChatPanel initialMessages={chatMessages} />}
           </>
