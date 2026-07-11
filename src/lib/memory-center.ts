@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { after } from "next/server";
 import { prisma } from "@/lib/db";
 import { createApproval } from "@/lib/approvals";
 import { contextCards } from "@/lib/memory";
@@ -90,6 +91,12 @@ type ProjectRow = {
 
 const SECRET_RE = /\b(api[_\s-]?key|token|secret|password|credential|cookie)\b/i;
 const SECRET_VALUE_RE = /(api[_\s-]?key|token|secret|password|credential|cookie)\s*(?:is|=|:)\s*["']?[A-Za-z0-9_\-./+=]{8,}["']?/gi;
+let memoryCenterTablesEnsured = false;
+let memoryCenterTablesEnsurePromise: Promise<void> | null = null;
+
+function runAfterResponse(callback: () => Promise<void> | void): void {
+  after(callback);
+}
 
 function iso(value: Date | string | null | undefined): string {
   if (!value) return new Date().toISOString();
@@ -105,32 +112,42 @@ export function sanitizeMemoryForPrompt(fact: string): { text: string; redacted:
 }
 
 async function ensureMemoryCenterTables(): Promise<void> {
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS MemoryItemState (
-      userId TEXT NOT NULL,
-      memoryId TEXT NOT NULL,
-      pinned INTEGER NOT NULL DEFAULT 0,
-      archived INTEGER NOT NULL DEFAULT 0,
-      confidence INTEGER NOT NULL DEFAULT 100,
-      updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
-      PRIMARY KEY (userId, memoryId)
-    )
-  `);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE IF NOT EXISTS MemoryRetrievalLog (
-      id TEXT PRIMARY KEY,
-      userId TEXT NOT NULL,
-      runId TEXT,
-      agentName TEXT,
-      taskType TEXT,
-      query TEXT NOT NULL,
-      retrievedJson TEXT NOT NULL,
-      redactedCount INTEGER NOT NULL DEFAULT 0,
-      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-  await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS MemoryRetrievalLog_userId_createdAt_idx ON MemoryRetrievalLog(userId, createdAt)`);
-  await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS MemoryRetrievalLog_runId_idx ON MemoryRetrievalLog(runId)`);
+  if (memoryCenterTablesEnsured) return;
+  if (!memoryCenterTablesEnsurePromise) {
+    memoryCenterTablesEnsurePromise = (async () => {
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS MemoryItemState (
+          userId TEXT NOT NULL,
+          memoryId TEXT NOT NULL,
+          pinned INTEGER NOT NULL DEFAULT 0,
+          archived INTEGER NOT NULL DEFAULT 0,
+          confidence INTEGER NOT NULL DEFAULT 100,
+          updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (userId, memoryId)
+        )
+      `);
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS MemoryRetrievalLog (
+          id TEXT PRIMARY KEY,
+          userId TEXT NOT NULL,
+          runId TEXT,
+          agentName TEXT,
+          taskType TEXT,
+          query TEXT NOT NULL,
+          retrievedJson TEXT NOT NULL,
+          redactedCount INTEGER NOT NULL DEFAULT 0,
+          createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS MemoryRetrievalLog_userId_createdAt_idx ON MemoryRetrievalLog(userId, createdAt)`);
+      await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS MemoryRetrievalLog_runId_idx ON MemoryRetrievalLog(runId)`);
+      memoryCenterTablesEnsured = true;
+    })().catch((error) => {
+      memoryCenterTablesEnsurePromise = null;
+      throw error;
+    });
+  }
+  await memoryCenterTablesEnsurePromise;
 }
 
 async function stateByMemory(userId: string): Promise<Map<string, MemoryStateRow>> {
@@ -363,19 +380,31 @@ export async function retrieveMemoryForPrompt(params: {
     .filter((decision) => relevantDecisionWords.some((word) => decision.decision.toLowerCase().includes(word) || decision.projectName.toLowerCase().includes(word)))
     .slice(0, 3);
 
-  await ensureMemoryCenterTables();
-  await prisma.$executeRawUnsafe(
-    `INSERT INTO MemoryRetrievalLog (id, userId, runId, agentName, taskType, query, retrievedJson, redactedCount, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-    crypto.randomUUID(),
-    params.userId,
-    params.runId ?? null,
-    params.agentName ?? null,
-    params.taskType ?? null,
-    params.message.slice(0, 500),
-    JSON.stringify(confirmedFacts),
+  const retrievalLog = {
+    id: crypto.randomUUID(),
+    userId: params.userId,
+    runId: params.runId ?? null,
+    agentName: params.agentName ?? null,
+    taskType: params.taskType ?? null,
+    query: params.message.slice(0, 500),
+    retrievedJson: JSON.stringify(confirmedFacts),
     redactedCount,
-  );
+  };
+  runAfterResponse(async () => {
+    await ensureMemoryCenterTables();
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO MemoryRetrievalLog (id, userId, runId, agentName, taskType, query, retrievedJson, redactedCount, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      retrievalLog.id,
+      retrievalLog.userId,
+      retrievalLog.runId,
+      retrievalLog.agentName,
+      retrievalLog.taskType,
+      retrievalLog.query,
+      retrievalLog.retrievedJson,
+      retrievalLog.redactedCount,
+    ).catch(() => undefined);
+  });
 
   return { confirmedFacts, projectDecisions: relevantProjectDecisions, redactedCount };
 }
