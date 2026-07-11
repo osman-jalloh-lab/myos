@@ -23,6 +23,9 @@ export type RegisteredSkill = {
   usageCount: number;
   source: "built_in" | "installed" | "scouted";
   validationStatus: "valid" | "missing_metadata" | "invalid";
+  executionTool: string | null;
+  executionRisk: "read" | "internal_write" | "external_write" | null;
+  executionRequiresApproval: boolean;
 };
 
 export type SkillRegistryEntry = RegisteredSkill & {
@@ -70,6 +73,16 @@ type SkillStateRow = {
   enabled: boolean | number;
   lastUsedAt: Date | string | null;
   usageCount: number | bigint | null;
+};
+
+export type PlannerSkillCatalogEntry = {
+  id: string;
+  name: string;
+  description: string;
+  tool: string;
+  risk: "read" | "internal_write" | "external_write";
+  requiresApproval: boolean;
+  triggers: string[];
 };
 
 let cache: { createdAt: number; entries: SkillRegistryEntry[] } | null = null;
@@ -255,6 +268,12 @@ function asEvaluationPrompts(value: unknown): SkillEvaluationPrompt[] {
   });
 }
 
+function executionRiskFrom(value: unknown): RegisteredSkill["executionRisk"] {
+  const text = asString(value).toLowerCase();
+  if (text === "read" || text === "internal_write" || text === "external_write") return text;
+  return null;
+}
+
 function safetyClassFrom(value: unknown, requiresApproval?: boolean): RegisteredSkill["safetyClass"] {
   const text = asString(value).toLowerCase();
   if (text === "local_execution") return "local_execution";
@@ -332,7 +351,7 @@ function buildRegistryEntry({
   hasJson: boolean;
   hasSkillMd: boolean;
 }): SkillRegistryEntry {
-  const execution = meta.execution as { risk?: unknown; requiresApproval?: unknown; pipeline?: unknown } | undefined;
+  const execution = meta.execution as { tool?: unknown; risk?: unknown; requiresApproval?: unknown; pipeline?: unknown } | undefined;
   const name = asString(meta.name) || id;
   const description = asString(meta.description) || "Local skill instructions.";
   const ownerAgents = asStringArray(meta.ownerAgents).length ? asStringArray(meta.ownerAgents) : [asString(meta.agent) || "hermes"];
@@ -344,6 +363,7 @@ function buildRegistryEntry({
     ? asStringArray(meta.requiredCapabilities)
     : asStringArray(execution?.pipeline);
   const safetyClass = safetyClassFrom(meta.safetyClass ?? execution?.risk, Boolean(execution?.requiresApproval));
+  const executionRisk = executionRiskFrom(execution?.risk);
   const validation = validationStatus(meta, hasJson, hasSkillMd);
   const category = asString(meta.category) || tags[0] || "workflow";
   const outputContract = asOutputContract(meta.outputContract);
@@ -363,6 +383,9 @@ function buildRegistryEntry({
     usageCount: 0,
     source,
     validationStatus: validation.validationStatus,
+    executionTool: asString(execution?.tool) || null,
+    executionRisk,
+    executionRequiresApproval: Boolean(execution?.requiresApproval),
     category,
     dateAdded,
     validationWarnings: validation.validationWarnings,
@@ -507,6 +530,23 @@ export async function getRegisteredSkills(userId: string, refresh = false): Prom
       lastUsedAt: row?.lastUsedAt ? new Date(row.lastUsedAt).toISOString() : skill.lastUsedAt,
       usageCount: row?.usageCount ? Number(row.usageCount) : skill.usageCount,
     };
+  });
+}
+
+export async function getPlannerSkillCatalog(userId: string): Promise<PlannerSkillCatalogEntry[]> {
+  const skills = await getRegisteredSkills(userId);
+  return skills.flatMap((skill) => {
+    if (!skill.enabled || !skill.executionTool) return [];
+    const risk = skill.executionRisk ?? (skill.safetyClass === "approval_required" ? "external_write" : "read");
+    return [{
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      tool: skill.executionTool,
+      risk,
+      requiresApproval: skill.executionRequiresApproval || skill.safetyClass === "approval_required" || risk === "external_write",
+      triggers: [...skill.triggerExamples, ...skill.strongSignals, ...skill.whenToUse].slice(0, 8),
+    }];
   });
 }
 

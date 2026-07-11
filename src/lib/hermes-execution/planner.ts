@@ -5,10 +5,11 @@
 
 import type { ExecutionRequest, ExecutionPlan, ExecutionStep } from "./types";
 import { hasTool } from "./tool-registry";
+import { getPlannerSkillCatalog, type PlannerSkillCatalogEntry } from "@/lib/skills/registry";
 
 // ── tool catalog (shown to the LLM) ──────────────────────────────────────────
 
-const TOOL_CATALOG = `
+const CORE_TOOL_CATALOG = `
 Tools available in Parawi/MyOS:
 - build_app: Build or rebuild the entire app, site, or a major section. Trigger: "build the app", "build the site", "build hermes", "build myos", "rebuild the whole thing", "build the full app"
 - build_page: Build or create a specific page or route. Trigger: "build a page", "build the /X page", "build a simple /X page", "create a /X route", "add a /X page", "make the /X page", "build a simple page called X"
@@ -32,11 +33,23 @@ Tools available in Parawi/MyOS:
 - chat: Everything else — questions, advice, general conversation.
 `.trim();
 
-const PLANNER_SYSTEM = `You are the intent classifier for Parawi/MyOS, a personal AI operating system.
+function registryCatalogText(skills: PlannerSkillCatalogEntry[]): string {
+  if (!skills.length) return "";
+  const lines = skills.map((skill) => {
+    const triggers = skill.triggers.length ? ` Trigger: ${skill.triggers.join("; ")}` : "";
+    const approval = skill.requiresApproval ? " Requires approval." : "";
+    return `- ${skill.id}: ${skill.description} Tool: ${skill.tool}. Risk: ${skill.risk}.${approval}${triggers}`;
+  });
+  return `\nExecutable skills from the Skills Registry:\n${lines.join("\n")}`;
+}
+
+async function plannerSystemPrompt(userId: string): Promise<string> {
+  const registryCatalog = await getPlannerSkillCatalog(userId).catch(() => []);
+  return `You are the intent classifier for Parawi/MyOS, a personal AI operating system.
 
 Given a user message, return ONLY a valid JSON object — no explanation, no markdown, just JSON.
 
-${TOOL_CATALOG}
+${CORE_TOOL_CATALOG}${registryCatalogText(registryCatalog)}
 
 JSON format:
 {
@@ -45,10 +58,11 @@ JSON format:
   "extractedUrl": "<GitHub URL if present, else null>",
   "reasoning": "<one short line>"
 }`;
+}
 
 // ── LLM-based planner ─────────────────────────────────────────────────────────
 
-async function planWithLLM(message: string): Promise<{
+async function planWithLLM(userId: string, message: string): Promise<{
   intent: string;
   confidence: number;
   extractedUrl: string | null;
@@ -66,7 +80,7 @@ async function planWithLLM(message: string): Promise<{
       body: JSON.stringify({
         model: "llama-3.1-8b-instant",
         messages: [
-          { role: "system", content: PLANNER_SYSTEM },
+          { role: "system", content: await plannerSystemPrompt(userId) },
           { role: "user", content: message },
         ],
         temperature: 0.1,
@@ -473,7 +487,7 @@ export async function plan(req: ExecutionRequest): Promise<ExecutionPlan> {
   }
 
   // 1. Try LLM-based planning first (fast Groq call, 4s timeout)
-  const llmResult = await planWithLLM(msg);
+  const llmResult = await planWithLLM(req.userId, msg);
 
   if (llmResult && llmResult.confidence >= 0.6) {
     console.log(`[hermes-planner] LLM intent=${llmResult.intent} confidence=${llmResult.confidence}`);

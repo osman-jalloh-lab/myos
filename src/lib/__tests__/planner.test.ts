@@ -2,6 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { plan } from "@/lib/hermes-execution/planner";
 import type { ExecutionRequest } from "@/lib/hermes-execution/types";
 
+const plannerCatalogMock = vi.hoisted(() => ({
+  getPlannerSkillCatalog: vi.fn(),
+}));
+
+vi.mock("@/lib/skills/registry", () => ({
+  getPlannerSkillCatalog: plannerCatalogMock.getPlannerSkillCatalog,
+}));
+
 const originalGroqKey = process.env.GROQ_API_KEY;
 
 function request(message: string): ExecutionRequest {
@@ -28,6 +36,7 @@ function llmResponse(intent: string, confidence = 0.85): Response {
 describe("Hermes execution planner", () => {
   beforeEach(() => {
     process.env.GROQ_API_KEY = "test-groq-key";
+    plannerCatalogMock.getPlannerSkillCatalog.mockResolvedValue([]);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(llmResponse("email_draft")));
   });
 
@@ -64,5 +73,28 @@ describe("Hermes execution planner", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(result.intent).toBe("email_draft");
     expect(result.confidence).toBe(0.85);
+  });
+
+  it("includes executable registry skills in the LLM catalog", async () => {
+    plannerCatalogMock.getPlannerSkillCatalog.mockResolvedValue([
+      {
+        id: "custom-calendar-auditor",
+        name: "Calendar Auditor",
+        description: "Audit calendar conflicts and schedule risk.",
+        tool: "internal.calendar.audit",
+        risk: "read",
+        requiresApproval: false,
+        triggers: ["audit my calendar", "find schedule conflicts"],
+      },
+    ]);
+    const fetchSpy = vi.mocked(fetch);
+
+    await plan(request("Can you help me look at my week?"));
+
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)) as { messages: Array<{ role: string; content: string }> };
+    const system = body.messages.find((message) => message.role === "system")?.content ?? "";
+    expect(system).toContain("Executable skills from the Skills Registry");
+    expect(system).toContain("custom-calendar-auditor");
+    expect(system).toContain("internal.calendar.audit");
   });
 });
