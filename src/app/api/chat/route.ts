@@ -3,9 +3,11 @@ import { auth } from "@/lib/auth";
 import { chatHistory, channelHistory, persistExecutedMessage, sendMessage } from "@/lib/chat";
 import { handleBuildIntake } from "@/lib/build-intake";
 import { shouldUseExecutionLayer } from "@/lib/hermes-execution/detect-execution-request";
-import { runHermesExecution } from "@/lib/hermes-execution/run";
+import { skillResolutionToExecutionPlan } from "@/lib/hermes-execution/execution-bridge";
+import { runHermesExecution, runHermesExecutionPlan } from "@/lib/hermes-execution/run";
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { normalizeAgentKey } from "@/lib/agent-roster";
+import { recordSkillUsageTelemetry, resolveRelevantSkills } from "@/lib/skills/routing";
 
 /**
  * GET  /api/chat?agent=<name>  — recent chat history for a thread
@@ -79,6 +81,31 @@ export async function POST(req: Request) {
     });
   }
   const executionMessage = intake.action === "ready" ? intake.message : trimmed;
+
+  const skillResolution = !targetAgent
+    ? await resolveRelevantSkills({ userId: session.user.id, message: executionMessage, maxSkills: 3 }).catch(() => null)
+    : null;
+  const skillPlan = skillResolution ? skillResolutionToExecutionPlan(skillResolution, executionMessage) : null;
+  if (!targetAgent && skillResolution && skillPlan) {
+    try {
+      const execData = await runHermesExecutionPlan(session.user.id, executionMessage, "chat", skillPlan);
+      await recordSkillUsageTelemetry({ userId: session.user.id, resolution: skillResolution, modelCallAvoided: true, executed: true }).catch(() => undefined);
+      const answer = execData.answer ?? "Execution completed without a result summary.";
+      const result = await persistExecutedMessage(session.user.id, trimmed, answer, "dashboard");
+      return NextResponse.json({
+        userMessage: result.userMessage,
+        reply: {
+          ...result.reply,
+          content: answer,
+          executionStatus: execData.status,
+          artifacts: execData.artifacts ?? [],
+          toolCalls: [],
+        },
+      });
+    } catch {
+      console.error("[/api/chat] skill execution bridge failed, falling back to normal routing");
+    }
+  }
 
   // ── execution layer (feature-flagged, additive) ─────────────────────────────
   // When HERMES_EXECUTION_ENABLED=true and the message matches an action intent,

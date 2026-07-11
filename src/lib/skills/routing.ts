@@ -43,6 +43,9 @@ export type ResolvedSkill = {
   outputContract: SkillOutputContract;
   safetyRules: string[];
   approvalRequiredFor: string[];
+  executionTool: string | null;
+  executionRisk: SkillRegistryEntry["executionRisk"];
+  executionRequiresApproval: boolean;
 };
 
 export type RejectedSkill = {
@@ -80,6 +83,7 @@ export type SkillUsageTelemetryInput = {
   userId: string;
   resolution: SkillResolution;
   modelCallAvoided?: boolean;
+  executed?: boolean;
 };
 
 type ScoredSkill = SkillScoreResult & {
@@ -148,6 +152,9 @@ function toResolvedSkill(entry: ScoredSkill, role: ResolvedSkill["role"]): Resol
     outputContract,
     safetyRules: skill.safetyRules ?? [],
     approvalRequiredFor: skill.approvalRequiredFor ?? [],
+    executionTool: skill.executionTool,
+    executionRisk: skill.executionRisk,
+    executionRequiresApproval: skill.executionRequiresApproval,
   };
 }
 
@@ -443,9 +450,11 @@ async function ensureSkillRoutingTelemetryTables(): Promise<void> {
           confidence INTEGER NOT NULL DEFAULT 0,
           reason TEXT NOT NULL,
           modelCallAvoided INTEGER NOT NULL DEFAULT 0,
+          executed INTEGER NOT NULL DEFAULT 0,
           createdAt TEXT NOT NULL DEFAULT (datetime('now'))
         )
       `);
+      await prisma.$executeRawUnsafe(`ALTER TABLE SkillUsageTelemetry ADD COLUMN executed INTEGER NOT NULL DEFAULT 0`).catch(() => undefined);
       await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS SkillUsageTelemetry_userId_createdAt_idx ON SkillUsageTelemetry(userId, createdAt)`);
       await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS SkillUsageTelemetry_skillId_createdAt_idx ON SkillUsageTelemetry(skillId, createdAt)`);
       await prisma.$executeRawUnsafe(`
@@ -475,8 +484,8 @@ type TelemetryRow = {
   reason: string;
 };
 
-async function insertTelemetryRows(userId: string, resolution: SkillResolution, rows: TelemetryRow[], modelCallAvoided: boolean): Promise<void> {
-  const values = rows.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))").join(", ");
+async function insertTelemetryRows(userId: string, resolution: SkillResolution, rows: TelemetryRow[], modelCallAvoided: boolean, executed: boolean): Promise<void> {
+  const values = rows.map(() => "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))").join(", ");
   const params = rows.flatMap((row) => [
     crypto.randomUUID(),
     userId,
@@ -488,10 +497,11 @@ async function insertTelemetryRows(userId: string, resolution: SkillResolution, 
     row.confidence,
     row.reason.slice(0, 1000),
     modelCallAvoided ? 1 : 0,
+    executed ? 1 : 0,
   ]);
   await prisma.$executeRawUnsafe(
     `INSERT INTO SkillUsageTelemetry
-     (id, userId, skillId, skillName, agentName, projectId, taskType, confidence, reason, modelCallAvoided, createdAt)
+     (id, userId, skillId, skillName, agentName, projectId, taskType, confidence, reason, modelCallAvoided, executed, createdAt)
      VALUES ${values}`,
     ...params,
   );
@@ -514,6 +524,7 @@ export async function recordSkillUsageTelemetry({
   userId,
   resolution,
   modelCallAvoided = false,
+  executed = false,
 }: SkillUsageTelemetryInput): Promise<void> {
   await ensureSkillRoutingTelemetryTables();
   const rows = resolution.matched
@@ -530,6 +541,6 @@ export async function recordSkillUsageTelemetry({
         reason: resolution.reason,
       }];
 
-  await insertTelemetryRows(userId, resolution, rows, modelCallAvoided);
+  await insertTelemetryRows(userId, resolution, rows, modelCallAvoided, executed);
   await markSkillsUsed(userId, rows.map((row) => row.skillId).filter((skillId) => skillId !== "none"));
 }

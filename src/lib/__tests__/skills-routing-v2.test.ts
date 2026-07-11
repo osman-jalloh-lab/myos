@@ -18,6 +18,7 @@ import {
 } from "@/lib/skills/registry";
 import { inferAgent, scoreRegisteredSkill } from "@/lib/skills/scoring";
 import { resolveRelevantSkills, skillInstructionBlock } from "@/lib/skills/routing";
+import { skillResolutionToExecutionPlan } from "@/lib/hermes-execution/execution-bridge";
 
 describe("skill routing v2", () => {
   it("routes I-9 document requests to the specific HR skill and injects safe behavior", async () => {
@@ -110,5 +111,33 @@ describe("skill routing v2", () => {
     expect(approvalSkills).toHaveLength(3);
     expect(approvalSkills.every((skill) => skill.safetyClass === "approval_required")).toBe(true);
     expect(approvalSkills.every((skill) => skill.approvalRequiredFor.length > 0)).toBe(true);
+  });
+
+  it("turns an executable primary skill into an execution plan", async () => {
+    clearSkillRegistryCache();
+    const resolution = await resolveRelevantSkills({
+      userId: "user_1",
+      message: "Check my email for recruiter follow-ups.",
+      maxSkills: 3,
+    });
+
+    const plan = skillResolutionToExecutionPlan(resolution, "Check my email for recruiter follow-ups.");
+
+    expect(resolution.primarySkill?.executionTool).toBeTruthy();
+    expect(plan?.intent).toBe(`skill:${resolution.primarySkill?.id}`);
+    expect(plan?.steps[0]?.tool).toBe(resolution.primarySkill?.executionTool);
+    expect(plan?.steps[0]?.requiresApproval).toBe(true);
+  });
+
+  it("resolves build-orchestrator for main-thread build messages", async () => {
+    clearSkillRegistryCache();
+    const resolution = await resolveRelevantSkills({
+      userId: "user_1",
+      message: "Continue all the builds and give me the logs after.",
+      maxSkills: 4,
+    });
+
+    expect(resolution.primarySkill?.id).toBe("build-orchestrator");
+    expect(resolution.primarySkill?.confidence).toBeGreaterThanOrEqual(75);
   });
 });

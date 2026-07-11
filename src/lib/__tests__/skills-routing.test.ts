@@ -141,7 +141,9 @@ describe("skill-first routing", () => {
     expect(calls.some((sql) => sql.includes("CREATE TABLE IF NOT EXISTS SkillRegistryState"))).toBe(true);
     expect(countSql(/INSERT INTO SkillUsageTelemetry/)).toBe(1);
     expect(countSql(/INSERT INTO SkillRegistryState/)).toBe(1);
-    expect(mocks.executeRaw.mock.calls.find((call: unknown[]) => String(call[0]).includes("INSERT INTO SkillUsageTelemetry"))).toHaveLength(21);
+    const telemetryInsert = mocks.executeRaw.mock.calls.find((call: unknown[]) => String(call[0]).includes("INSERT INTO SkillUsageTelemetry")) as unknown[] | undefined;
+    expect(String(telemetryInsert?.[0])).toContain("modelCallAvoided, executed, createdAt");
+    expect(telemetryInsert).toHaveLength(23);
     expect(mocks.executeRaw.mock.calls.find((call: unknown[]) => String(call[0]).includes("INSERT INTO SkillRegistryState"))).toHaveLength(5);
 
     mocks.executeRaw.mockClear();
