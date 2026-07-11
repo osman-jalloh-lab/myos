@@ -32,6 +32,7 @@ model User {
   executionRuns       ExecutionRun[]
   engineeringTasks    EngineeringTask[]
   emailCorrespondents EmailCorrespondent[]
+  userSkills          UserSkill[]
 }
 
 model GoogleAccount {
@@ -390,6 +391,24 @@ model ProjectTask {
   @@index([projectId, updatedAt])
   @@index([userId, updatedAt])
   @@index([status])
+}
+
+model UserSkill {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillId     String
+  name        String
+  description String
+  category    String   @default("workflow")
+  definition  String
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, skillId])
+  @@index([userId, enabled])
+  @@index([userId, updatedAt])
 }
 
 model ExecutionRun {

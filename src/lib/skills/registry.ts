@@ -21,7 +21,7 @@ export type RegisteredSkill = {
   estimatedCostSaving: "none" | "low" | "medium" | "high";
   lastUsedAt: string | null;
   usageCount: number;
-  source: "built_in" | "installed" | "scouted";
+  source: "built_in" | "installed" | "scouted" | "user";
   validationStatus: "valid" | "missing_metadata" | "invalid";
   executionTool: string | null;
   executionRisk: "read" | "internal_write" | "external_write" | null;
@@ -73,6 +73,17 @@ type SkillStateRow = {
   enabled: boolean | number;
   lastUsedAt: Date | string | null;
   usageCount: number | bigint | null;
+};
+
+type UserSkillRow = {
+  skillId: string;
+  name: string;
+  description: string;
+  category: string | null;
+  definition: string;
+  enabled: boolean;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 };
 
 export type PlannerSkillCatalogEntry = {
@@ -475,6 +486,51 @@ async function scanFolderSkills(root: string, sourceLabel: string): Promise<Skil
   }));
 }
 
+async function scanUserSkills(userId: string): Promise<SkillRegistryEntry[]> {
+  const client = prisma as typeof prisma & {
+    userSkill?: {
+      findMany: (args: unknown) => Promise<UserSkillRow[]>;
+    };
+  };
+  if (!client.userSkill?.findMany) return [];
+
+  const rows = await client.userSkill.findMany({
+    where: { userId },
+    orderBy: { updatedAt: "desc" },
+  }).catch(() => []);
+
+  return rows.flatMap((row) => {
+    let definition: unknown;
+    try {
+      definition = JSON.parse(row.definition);
+    } catch {
+      return [];
+    }
+    if (!definition || typeof definition !== "object" || Array.isArray(definition)) return [];
+    const raw = definition as Record<string, unknown>;
+    const meta = {
+      ...raw,
+      id: row.skillId,
+      name: row.name,
+      description: row.description,
+      category: row.category ?? asString(raw.category) ?? "workflow",
+    };
+    const instructions = asString(raw.instructions) || asString(raw.body) || null;
+    const entry = buildRegistryEntry({
+      id: row.skillId,
+      meta,
+      source: "user",
+      pathValue: `db:user-skill:${row.skillId}`,
+      instructionFile: null,
+      instructionPreview: instructions,
+      dateAdded: new Date(row.createdAt).toISOString(),
+      hasJson: true,
+      hasSkillMd: true,
+    });
+    return [{ ...entry, enabled: Boolean(row.enabled) }];
+  });
+}
+
 async function ensureSkillStateTable(): Promise<void> {
   if (skillStateTableEnsured) return;
   if (!skillStateTableEnsurePromise) {
@@ -512,13 +568,14 @@ export async function getRegisteredSkills(userId: string, refresh = false): Prom
   if (refresh) clearSkillRegistryCache();
   if (!cache || Date.now() - cache.createdAt > CACHE_MS) {
     const projectsRoot = resolveLocalProjectsRoot();
-    const [repo, agent, local] = await Promise.all([
+    const [repo, agent, local, user] = await Promise.all([
       scanRepoSkills(),
       scanFolderSkills(path.join(os.homedir(), ".agents", "skills"), "agent"),
       scanFolderSkills(path.join(projectsRoot, "skills"), "local"),
+      scanUserSkills(userId),
     ]);
     const byId = new Map<string, SkillRegistryEntry>();
-    for (const skill of [...repo, ...agent, ...local]) if (!byId.has(skill.id)) byId.set(skill.id, skill);
+    for (const skill of [...repo, ...agent, ...local, ...user]) if (!byId.has(skill.id)) byId.set(skill.id, skill);
     cache = { createdAt: Date.now(), entries: [...byId.values()].sort((a, b) => a.name.localeCompare(b.name)) };
   }
   const state = await stateBySkill(userId);
