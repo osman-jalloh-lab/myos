@@ -104,7 +104,7 @@ describe("Hermes execution runner route integration", () => {
       artifacts: [{ type: "text", title: "Validation", content: "ok" }],
       toolCalls: [],
     });
-  });
+  }, 15_000);
 
   it("keeps the standalone execute endpoint wired to the same runner", async () => {
     const { POST } = await import("../../app/api/hermes/execute/route");

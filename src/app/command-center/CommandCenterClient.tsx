@@ -238,6 +238,35 @@ interface AgentBusData {
   lastUpdated: string;
 }
 
+interface ProjectFlowNode {
+  id: string;
+  label: string;
+  kind: "project" | "plan" | "task" | "agent" | "wakeup" | "capability_gap" | "approval" | "run" | "artifact";
+  status?: string | null;
+  agentKey?: string | null;
+}
+
+interface ProjectFlowEdge {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+}
+
+interface ProjectFlowData {
+  project: { id: string; name: string; status: string; phase: string; assignedAgent: string | null; latestPlanId: string | null; updatedAt: string | null };
+  plan: { id: string; revision: number; status: string; acceptedAt: string | null } | null;
+  nodes: ProjectFlowNode[];
+  edges: ProjectFlowEdge[];
+  tasks: Array<{ id: string; title: string; status: string; priority: string; assignedAgent: string | null; responsibleAgent: string | null; acceptanceCriteria: string | null; outputContract: string | null; blockedReason: string | null; completedAt: string | null; updatedAt: string | null }>;
+  wakeups: Array<{ id: string; projectTaskId: string | null; agentKey: string; source: string; reason: string; status: string; coalescedCount: number; requestedAt: string | null }>;
+  capabilityGaps: Array<{ id: string; projectTaskId: string | null; capabilityName: string; capabilityType: string; status: string; assignedAgent: string | null; blockedReason: string | null; createdAt: string | null }>;
+  approvals: Array<{ id: string; actionType: string; status: string; createdAt: string | null; resolvedAt: string | null }>;
+  runs: Array<{ id: string; taskId: string | null; executor: string; status: string; currentPhase: string; currentActivity: string | null; startedAt: string | null; completedAt: string | null }>;
+  artifacts: Array<{ id: string; kind: string; label: string; uri?: string }>;
+  timeline: Array<{ kind: string; title: string; at: string | null; details: Record<string, unknown> }>;
+}
+
 interface SkillView {
   id: string;
   name: string;
@@ -1417,6 +1446,159 @@ function AgentOfficesPanel({
   );
 }
 
+const ORG_LINES = [
+  ["Osman", "Hermes", "owner"],
+  ["Hermes", "Project Manager", "delivery"],
+  ["Project Manager", "Council", "advisory"],
+  ["Project Manager", "Sophos", "skill agency"],
+  ["Project Manager", "Prometheus", "engineering"],
+  ["Project Manager", "Argus", "QA"],
+  ["Project Manager", "Fugu", "design"],
+  ["Project Manager", "Iris", "communications"],
+  ["Hermes", "Athena", "career"],
+  ["Hermes", "Themis", "HR compliance"],
+] as const;
+
+function ProjectControlPlanePanel({ projectId }: { projectId: string }) {
+  const [data, setData] = useState<ProjectFlowData | null>(null);
+  const [view, setView] = useState<"org" | "flow" | "tasks" | "timeline">("flow");
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    fetch(`/api/command-center/project-flow?projectId=${encodeURIComponent(projectId)}`)
+      .then(async (res) => {
+        const body = await res.json();
+        if (!res.ok) throw new Error(body?.error ?? "Project flow unavailable.");
+        return body as ProjectFlowData;
+      })
+      .then((body) => { if (!cancelled) setData(body); })
+      .catch((err: Error) => { if (!cancelled) setError(err.message); });
+    return () => { cancelled = true; };
+  }, [projectId]);
+
+  if (error) {
+    return (
+      <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(248,113,113,0.25)", color: "#FCA5A5", fontSize: 12 }}>
+        {error}
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(96,165,250,0.22)", color: "#94A3B8", fontSize: 12 }}>
+        Loading project control plane...
+      </div>
+    );
+  }
+
+  const taskById = new Map(data.tasks.map((task) => [`task:${task.id}`, task]));
+  const agentNodes = data.nodes.filter((node) => node.kind === "agent").slice(0, 10);
+  const workNodes = data.nodes.filter((node) => node.kind !== "agent").slice(0, 18);
+  const blockers = data.edges.filter((edge) => edge.label === "blocks");
+
+  return (
+    <div style={{ marginBottom: 12, padding: 12, borderRadius: 8, border: "1px solid rgba(96,165,250,0.22)", background: "rgba(8,13,24,0.38)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 11, color: "#60A5FA", fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase" }}>Project control plane</div>
+          <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 3 }}>
+            Phase {statusLabel(data.project.phase)} {data.plan ? `- plan r${data.plan.revision} ${data.plan.status}` : "- no accepted plan"}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {(["org", "flow", "tasks", "timeline"] as const).map((item) => (
+            <button
+              key={item}
+              onClick={() => setView(item)}
+              style={{
+                padding: "6px 9px",
+                borderRadius: 8,
+                border: view === item ? "1px solid rgba(96,165,250,0.55)" : "1px solid rgba(93,111,143,0.25)",
+                background: view === item ? "rgba(96,165,250,0.14)" : "rgba(15,23,42,0.5)",
+                color: view === item ? "#BFDBFE" : "#94A3B8",
+                fontSize: 11,
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              {item === "org" ? "Org" : item === "tasks" ? "Task graph" : item.charAt(0).toUpperCase() + item.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {view === "org" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(190px,1fr))", gap: 8 }}>
+          {ORG_LINES.map(([from, to, label]) => (
+            <div key={`${from}-${to}`} style={{ padding: "9px 10px", borderRadius: 8, background: "rgba(40,50,74,0.32)", border: "1px solid rgba(93,111,143,0.2)" }}>
+              <div style={{ fontSize: 12, color: "#F1F4FB", fontWeight: 800 }}>{from}</div>
+              <div style={{ fontSize: 11, color: "#94A3B8", margin: "4px 0" }}>{label}</div>
+              <div style={{ fontSize: 12, color: "#D8DEEB" }}>{to}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {view === "flow" && (
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.1fr) minmax(220px,0.9fr)", gap: 10 }}>
+          <div style={{ display: "grid", gap: 7 }}>
+            {workNodes.map((node) => (
+              <div key={node.id} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "center", padding: "8px 10px", borderRadius: 8, background: "rgba(40,50,74,0.32)" }}>
+                <span style={{ fontSize: 12, color: "#F1F4FB", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node.label}</span>
+                <span style={badgeStyle(statusColor(node.status ?? node.kind))}>{statusLabel(node.status ?? node.kind)}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: "grid", gap: 7, alignContent: "start" }}>
+            {agentNodes.map((node) => (
+              <div key={node.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, padding: "8px 10px", borderRadius: 8, background: "rgba(15,23,42,0.55)" }}>
+                <span style={{ color: agentColor(node.agentKey ?? node.label), fontWeight: 800, fontSize: 12 }}>{node.label}</span>
+                <span style={{ color: "#94A3B8", fontSize: 11 }}>{data.edges.filter((edge) => edge.from === node.id || edge.to === node.id).length} links</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {view === "tasks" && (
+        <div style={{ display: "grid", gap: 8 }}>
+          {data.tasks.length === 0 && <div style={{ color: "#94A3B8", fontSize: 12 }}>No durable project tasks yet.</div>}
+          {data.tasks.map((task) => {
+            const blockedBy = blockers.filter((edge) => edge.to === `task:${task.id}`).map((edge) => taskById.get(edge.from)?.title).filter(Boolean);
+            return (
+              <div key={task.id} style={{ padding: "9px 10px", borderRadius: 8, background: "rgba(40,50,74,0.32)", border: task.blockedReason ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(93,111,143,0.18)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                  <div style={{ color: "#F1F4FB", fontSize: 12, fontWeight: 800 }}>{task.title}</div>
+                  <span style={badgeStyle(statusColor(task.status))}>{statusLabel(task.status)}</span>
+                </div>
+                <div style={{ marginTop: 5, color: "#94A3B8", fontSize: 11 }}>
+                  {task.assignedAgent ?? "unassigned"} - {task.outputContract ?? "no output contract"}
+                  {blockedBy.length > 0 ? ` - blocked by ${blockedBy.join(", ")}` : ""}
+                </div>
+                {task.blockedReason && <div style={{ marginTop: 5, color: "#FCA5A5", fontSize: 11 }}>{task.blockedReason}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {view === "timeline" && (
+        <div style={{ display: "grid", gap: 7, maxHeight: 320, overflow: "auto" }}>
+          {data.timeline.slice(0, 40).map((event, index) => (
+            <div key={`${event.kind}-${event.at}-${index}`} style={{ display: "grid", gridTemplateColumns: "92px minmax(0,1fr)", gap: 10, padding: "8px 10px", borderRadius: 8, background: "rgba(40,50,74,0.28)" }}>
+              <span style={{ color: "#647089", fontSize: 11 }}>{event.at ? timeAgo(event.at) : "unknown"}</span>
+              <span style={{ color: "#D8DEEB", fontSize: 12 }}>{event.title}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProjectsPanel({ projects }: { projects: Project[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggle = (id: string) => setExpanded((s) => {
@@ -1477,6 +1659,8 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
           )}
 
           {(p.localFolderPath || p.localDevUrl) && <LocalPreviewDetails project={p} />}
+
+          <ProjectControlPlanePanel projectId={p.id} />
 
           {(p.qaStatus || p.qaChecklist?.length) && (
             <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(251,191,36,0.07)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 8 }}>

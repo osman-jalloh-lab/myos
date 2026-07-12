@@ -34,6 +34,8 @@ model User {
   emailCorrespondents EmailCorrespondent[]
   userSkills          UserSkill[]
   agentEnvelopes      AgentEnvelope[]
+  agentWakeups        AgentWakeup[]
+  capabilityGaps      CapabilityGap[]
 }
 
 model GoogleAccount {
@@ -369,29 +371,266 @@ model Project {
   fuguPolishStatus       String?
   localQaStatus          String?
   localQaChecklist       String?
+  phase                  String    @default("planning")
+  latestPlanId           String?
+  requestFingerprint     String?
+  completionEvidence     String?
+  completedAt            DateTime?
   createdAt              DateTime?
   updatedAt              DateTime?
 
   @@index([userId, status])
+  @@index([userId, phase])
   @@index([userId, updatedAt])
   @@index([route])
 }
 
 model ProjectTask {
-  id            String    @id @default(cuid())
-  projectId     String
-  userId        String
-  title         String
-  description   String?
-  status        String    @default("pending")
-  assignedAgent String?
-  nextStep      String?
-  createdAt     DateTime?
-  updatedAt     DateTime?
+  id                   String    @id @default(cuid())
+  projectId            String
+  userId               String?
+  parentTaskId         String?
+  goalId               String?
+  title                String
+  description          String?
+  status               String    @default("backlog")
+  priority             String    @default("medium")
+  assignedAgent        String?
+  responsibleAgent     String?
+  acceptanceCriteria   String?
+  requiredCapabilities String?
+  outputContract       String?
+  claimedRunId         String?
+  activeRunId          String?
+  executionLockedAt    DateTime?
+  attemptCount         Int       @default(0)
+  maxAttempts          Int       @default(3)
+  blockedReason        String?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  cancelledAt          DateTime?
+  nextStep             String?
+  createdAt            DateTime?
+  updatedAt            DateTime?
 
+  @@index([projectId, status])
   @@index([projectId, updatedAt])
+  @@index([assignedAgent, status])
+  @@index([parentTaskId])
   @@index([userId, updatedAt])
   @@index([status])
+}
+
+model ProjectTaskDependency {
+  id             String   @id @default(cuid())
+  projectId      String
+  taskId         String
+  blockingTaskId String
+  createdAt      DateTime @default(now())
+
+  @@unique([taskId, blockingTaskId])
+  @@index([projectId])
+  @@index([blockingTaskId])
+}
+
+model ProjectPlan {
+  id                   String    @id @default(cuid())
+  projectId            String
+  revision             Int
+  status               String
+  body                 String
+  decisionSnapshot     String?
+  capabilityResolution String?
+  requestFingerprint   String
+  createdByAgent       String?
+  acceptedByUserId     String?
+  acceptedAt           DateTime?
+  createdAt            DateTime  @default(now())
+
+  @@unique([projectId, revision])
+  @@index([projectId, status])
+}
+
+model ProjectPlanDecomposition {
+  id             String    @id @default(cuid())
+  projectId      String
+  planId         String
+  status         String    @default("in_flight")
+  requestedTasks String
+  createdTaskIds String
+  ownerAgent     String?
+  ownerRunId     String?
+  fingerprint    String
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@unique([projectId, planId])
+  @@index([fingerprint])
+}
+
+model ProjectTaskArtifact {
+  id             String   @id @default(cuid())
+  projectId      String
+  projectTaskId  String
+  executionRunId String?
+  wakeupId       String?
+  agentKey       String
+  artifactType   String
+  title          String
+  summary        String?
+  content        String?
+  safeLocation   String?
+  contentHash    String
+  source         String
+  metadata       String?
+  createdAt      DateTime @default(now())
+
+  @@index([projectId, createdAt])
+  @@index([projectTaskId])
+  @@index([executionRunId])
+  @@index([wakeupId])
+  @@index([artifactType])
+}
+
+model AgentWakeup {
+  id                   String    @id @default(cuid())
+  userId               String
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId            String?
+  projectTaskId        String?
+  agentKey             String
+  source               String
+  reason               String
+  payload              String?
+  status               String    @default("queued")
+  coalescedCount       Int       @default(0)
+  requestedByActorType String?
+  requestedByActorId   String?
+  idempotencyKey       String?   @unique
+  runId                String?
+  requestedAt          DateTime  @default(now())
+  claimedAt            DateTime?
+  finishedAt           DateTime?
+  error                String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([agentKey, status, requestedAt])
+  @@index([projectId, requestedAt])
+  @@index([projectTaskId])
+}
+
+model CapabilityGap {
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId           String
+  projectTaskId       String?
+  capabilityName      String
+  capabilityType      String
+  status              String   @default("detected")
+  assignedAgent       String?
+  selectedCandidateId String?
+  resolvedSkillId     String?
+  blockedReason       String?
+  attemptCount        Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([projectId, status])
+  @@index([userId, status])
+}
+
+model Skill {
+  id                     String   @id @default(cuid())
+  skillId                String   @unique
+  name                   String
+  description            String
+  status                 String   @default("draft")
+  currentVersionId       String?
+  latestValidationStatus String?
+  riskClassification     String?
+  approvalRequired       Boolean  @default(false)
+  rollbackInformation    String?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@index([status])
+}
+
+model SkillVersion {
+  id                String   @id @default(cuid())
+  skillId           String
+  version           Int
+  definition        String
+  executionTool     String?
+  ownerAgents       String?
+  permissionScope   String?
+  validationStatus  String   @default("draft")
+  rollbackReference String?
+  createdAt         DateTime @default(now())
+
+  @@unique([skillId, version])
+  @@index([skillId, validationStatus])
+}
+
+model SkillSource {
+  id                   String   @id @default(cuid())
+  skillId              String
+  versionId            String?
+  repository           String
+  filePath             String
+  commitSha            String
+  license              String?
+  trustLevel           String
+  compatibility        String?
+  fileInventory        String?
+  contentHash          String
+  requiredDependencies String?
+  requiredCredentials  String?
+  permissionScope      String?
+  rollbackPlan         String?
+  createdAt            DateTime @default(now())
+
+  @@index([skillId])
+  @@index([commitSha])
+}
+
+model SkillEvaluationCase {
+  id        String   @id @default(cuid())
+  skillId   String
+  versionId String?
+  caseType  String
+  prompt    String
+  expected  String?
+  createdAt DateTime @default(now())
+
+  @@index([skillId, caseType])
+}
+
+model SkillEvaluationRun {
+  id          String   @id @default(cuid())
+  skillId     String
+  versionId   String?
+  status      String
+  result      String
+  passedCount Int      @default(0)
+  failedCount Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([skillId, createdAt])
+}
+
+model AgentSkillAssignment {
+  id        String   @id @default(cuid())
+  agentKey  String
+  skillId   String
+  versionId String?
+  status    String   @default("active")
+  createdAt DateTime @default(now())
+
+  @@unique([agentKey, skillId])
+  @@index([agentKey, status])
 }
 
 model UserSkill {
