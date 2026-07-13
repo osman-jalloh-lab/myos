@@ -62,9 +62,9 @@ export const MODEL_PROVIDER_REGISTRY: ProviderRegistryEntry[] = [
     baseUrlEnv: "DEEPSEEK_BASE_URL",
     defaultModel: "deepseek-chat",
     environment: "Both",
-    council: false,
+    council: true,
     testable: true,
-    routePreview: "Deferred. Not part of Council v1.",
+    routePreview: "Independent challenge, alternative reasoning, and dissent in whole-Council debates.",
   },
   {
     family: "gemini",
