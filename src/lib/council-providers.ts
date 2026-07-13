@@ -153,12 +153,34 @@ async function callOllama(entry: ProviderRegistryEntry, message: string): Promis
   return parsed.message?.content?.trim() || parsed.message?.thinking?.trim() || "";
 }
 
+async function callGroq(entry: ProviderRegistryEntry, message: string): Promise<string> {
+  const data = await postJson("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cleanCredential(process.env.GROQ_API_KEY)}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: selectedProviderModel(entry),
+      messages: [
+        { role: "system", content: councilSystemPrompt(entry) },
+        { role: "user", content: message },
+      ],
+      temperature: 0.35,
+      max_tokens: 650,
+    }),
+  });
+  const parsed = data as { choices?: { message?: { content?: string } }[] };
+  return parsed.choices?.[0]?.message?.content?.trim() || "";
+}
+
 async function callProvider(entry: ProviderRegistryEntry, message: string): Promise<string> {
   if (entry.family === "openai") return callOpenAI(entry, message);
   if (entry.family === "anthropic") return callAnthropic(entry, message);
   if (entry.family === "deepseek") return callDeepSeek(entry, message);
   if (entry.family === "gemini") return callGemini(entry, message);
   if (entry.family === "ollama") return callOllama(entry, message);
+  if (entry.family === "groq") return callGroq(entry, message);
   throw new Error(`${entry.provider} is not a Council participant.`);
 }
 
@@ -168,6 +190,10 @@ export function councilProviderEntries(): ProviderRegistryEntry[] {
 
 export function getCouncilProvider(family: ProviderFamily): ProviderRegistryEntry | null {
   return councilProviderEntries().find((entry) => entry.family === family) ?? null;
+}
+
+export function getProviderOffice(family: ProviderFamily): ProviderRegistryEntry | null {
+  return MODEL_PROVIDER_REGISTRY.find((entry) => entry.family === family) ?? null;
 }
 
 export async function runCouncilProvider(entry: ProviderRegistryEntry, message: string): Promise<CouncilProviderResponse> {

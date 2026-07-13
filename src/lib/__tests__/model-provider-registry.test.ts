@@ -11,12 +11,13 @@ describe("model provider registry", () => {
     expect(MODEL_PROVIDER_REGISTRY.filter((entry) => entry.council).map((entry) => [entry.family, entry.role])).toEqual([
       ["openai", "engineering"],
       ["anthropic", "architecture"],
+      ["deepseek", "challenger"],
       ["ollama", "local_reviewer"],
     ]);
   });
 
-  it("keeps DeepSeek and Gemini out of Council v1", () => {
-    expect(MODEL_PROVIDER_REGISTRY.find((entry) => entry.family === "deepseek")).toMatchObject({ council: false });
+  it("seats DeepSeek while keeping Gemini out of the Council", () => {
+    expect(MODEL_PROVIDER_REGISTRY.find((entry) => entry.family === "deepseek")).toMatchObject({ council: true });
     expect(MODEL_PROVIDER_REGISTRY.find((entry) => entry.family === "gemini")).toMatchObject({ council: false, testable: false });
   });
 
