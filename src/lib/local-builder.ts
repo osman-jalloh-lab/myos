@@ -16,6 +16,7 @@ import {
   type FuguGateVerdict,
 } from "@/lib/fugu-design-critic";
 import { createExecutionQueueTask, updateExecutionQueueTask } from "@/lib/execution-queue";
+import { assertLocalWorkerQueueAction } from "@/lib/local-worker-action-policy";
 import { loadAgentKnowledgeContext, type KnowledgeCard } from "@/lib/knowledge-cards";
 import { runBrowserQa } from "@/lib/browser-qa";
 import {
@@ -1821,6 +1822,8 @@ export async function queueLocalBuilderWorkerTask(
   projectId?: string,
   assignedExecutor: "local_worker" | "hermes_agent" = "local_worker"
 ): Promise<LocalBuildProject | null> {
+  assertLocalWorkerQueueAction(action);
+
   const db = getDb();
   await ensureLocalBuilderColumns(db);
 

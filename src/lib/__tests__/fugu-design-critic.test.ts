@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FUGU_NOT_CONNECTED_MESSAGE,
+  getFuguDesignGateMode,
   runFuguDesignCritique,
   runFuguDesignGate,
   validateFuguDesignGatePayload,
@@ -10,12 +11,14 @@ import { canStartBuildWithFuguGate } from "../local-builder";
 const originalKey = process.env.SAKANA_API_KEY;
 const originalPassScore = process.env.FUGU_DESIGN_PASS_SCORE;
 const originalGateMode = process.env.FUGU_DESIGN_GATE_MODE;
+const originalHermesGateMode = process.env.HERMES_FUGU_GATE_MODE;
 const originalRetryBase = process.env.FUGU_RETRY_BASE_MS;
 
 afterEach(() => {
   process.env.SAKANA_API_KEY = originalKey;
   process.env.FUGU_DESIGN_PASS_SCORE = originalPassScore;
   process.env.FUGU_DESIGN_GATE_MODE = originalGateMode;
+  process.env.HERMES_FUGU_GATE_MODE = originalHermesGateMode;
   process.env.FUGU_RETRY_BASE_MS = originalRetryBase;
   vi.restoreAllMocks();
 });
@@ -124,5 +127,21 @@ describe("Fugu design gate", () => {
     expect(canStartBuildWithFuguGate({ fuguGateStatus: "pass" }, "required")).toMatchObject({ allowed: true });
     expect(canStartBuildWithFuguGate({ fuguGateStatus: "error", fuguGateOverrideReason: "Owner accepted visual risk for prototype." }, "required")).toMatchObject({ allowed: true });
     expect(canStartBuildWithFuguGate({ fuguGateStatus: "revise" }, "recommended")).toMatchObject({ allowed: true });
+  });
+
+  it("defaults to recommended mode and allows non-passing verdicts", () => {
+    delete process.env.HERMES_FUGU_GATE_MODE;
+    delete process.env.FUGU_DESIGN_GATE_MODE;
+
+    expect(getFuguDesignGateMode()).toBe("recommended");
+    expect(canStartBuildWithFuguGate({ fuguGateStatus: "revise" })).toMatchObject({ allowed: true });
+    expect(canStartBuildWithFuguGate({ fuguGateStatus: "unavailable" })).toMatchObject({ allowed: true });
+  });
+
+  it("keeps required mode as an explicit Hermes environment escape hatch", () => {
+    process.env.HERMES_FUGU_GATE_MODE = "required";
+
+    expect(getFuguDesignGateMode()).toBe("required");
+    expect(canStartBuildWithFuguGate({ fuguGateStatus: "revise" })).toMatchObject({ allowed: false });
   });
 });

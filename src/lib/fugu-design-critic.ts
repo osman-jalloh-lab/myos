@@ -89,8 +89,8 @@ export function getFuguDesignPassScore(): number {
 }
 
 export function getFuguDesignGateMode(): FuguGateMode {
-  const value = process.env.FUGU_DESIGN_GATE_MODE?.trim().toLowerCase();
-  return value === "off" || value === "recommended" || value === "required" ? value : "required";
+  const value = (process.env.HERMES_FUGU_GATE_MODE ?? process.env.FUGU_DESIGN_GATE_MODE)?.trim().toLowerCase();
+  return value === "off" || value === "recommended" || value === "required" ? value : "recommended";
 }
 
 export function validateFuguDesignGatePayload(payload: unknown, threshold = getFuguDesignPassScore()): FuguDesignGate {

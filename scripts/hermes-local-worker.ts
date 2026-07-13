@@ -12,6 +12,7 @@ import { parseHermesChatOutput, sanitizeHermesOutput } from "../src/lib/hermes-n
 import { councilProviderEntries, formatCouncilResponse, getCouncilProvider, runCouncilProvider, type CouncilChatMode } from "../src/lib/council-providers";
 import type { ProviderFamily } from "../src/lib/model-provider-registry";
 import { DEFAULT_LOCAL_PROJECTS_ROOT, resolveLocalProjectsRoot } from "../src/lib/local-projects-root";
+import { LOCAL_WORKER_ACTIONS, settleNonWorkerAction } from "../src/lib/local-worker-action-policy";
 
 type QueueTask = {
   id: string;
@@ -53,7 +54,6 @@ const POLL_MS = Number(process.env.HERMES_LOCAL_WORKER_POLL_MS ?? 15_000);
 const HEARTBEAT_MS = Number(process.env.HERMES_LOCAL_WORKER_HEARTBEAT_MS ?? 15_000);
 const LEASE_MS = 5 * 60_000;
 const WORKER_ID = process.env.HERMES_LOCAL_WORKER_ID?.trim() || `local-worker:${os.hostname()}:${process.pid}`;
-const ALLOWED_ACTIONS = new Set(["prepare", "generate", "runQa", "rebuild", "build", "npmBuild", "startDev", "stopDev"]);
 
 let currentTask: string | null = null;
 let lastError: string | null = null;
@@ -1258,9 +1258,30 @@ async function executeTask(db: Client, task: QueueTask): Promise<void> {
 }
 async function executeLocalWorkerTask(db: Client, task: QueueTask): Promise<void> {
   const { action, message } = parseTaskPayload(task);
-  if (!ALLOWED_ACTIONS.has(action)) {
-    throw new Error(`Unsupported local worker action: ${action}`);
-  }
+  const settled = await settleNonWorkerAction(action, {
+    trace: (traceMessage, severity) => traceEvent(db, task, {
+      phase: severity === "error" ? "failed" : "completed",
+      source: "local_worker",
+      severity,
+      message: traceMessage,
+      details: { commandCategory: action, serverOnly: severity === "info" },
+      lastSafeError: severity === "error" ? traceMessage : null,
+      status: severity === "error" ? "failed" : "completed",
+    }),
+    complete: async (completionMessage) => {
+      await updateTask(db, task, { status: "completed", result: completionMessage, error: null, log: completionMessage });
+      if (task.projectId) {
+        await db.execute({
+          sql: `UPDATE Project SET status = CASE WHEN status = 'queued_for_local_worker' THEN 'Brief Ready' ELSE status END, localBuildError = NULL, localBuildLog = substr(coalesce(localBuildLog, '') || char(10) || ?, -12000), updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
+          args: [completionMessage, task.projectId, task.userId],
+        });
+      }
+    },
+    fail: (reason) => updateTask(db, task, { status: "failed", result: null, error: reason, log: `Failed: ${reason}` }),
+  });
+  if (settled) return;
+
+  if (!LOCAL_WORKER_ACTIONS.has(action)) return;
 
   const builder = await import("../src/lib/local-builder");
   currentTask = `${action}: ${task.title}`;

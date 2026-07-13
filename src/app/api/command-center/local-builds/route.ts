@@ -20,6 +20,7 @@ import {
 } from "@/lib/local-builder";
 import { redactInternalDetails } from "@/lib/hermes-execution/response-formatter";
 import { getHermesAgentReadiness, getLocalWorkerLiveness, workerOfflineNotice } from "@/lib/worker-watch";
+import { isServerOnlyLocalBuilderAction } from "@/lib/local-worker-action-policy";
 
 // Build-shaped actions default to Hermes Nous (hermes_agent) when it is
 // installed + authed + has a model on the worker machine; Codex CLI via
@@ -132,7 +133,7 @@ export async function POST(req: Request) {
     selectedExecutor = "local_worker";
   }
 
-  if (isServerlessRuntime() || selectedExecutor === "hermes_agent") {
+  if (!isServerOnlyLocalBuilderAction(action) && (isServerlessRuntime() || selectedExecutor === "hermes_agent")) {
     let queued: LocalBuildProject | null;
     try {
       queued = await queueLocalBuilderWorkerTask(session.user.id, action, message ?? "", projectId, selectedExecutor);
