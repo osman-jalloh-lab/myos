@@ -1,0 +1,102 @@
+{
+  "id": "build-orchestrator",
+  "name": "build.orchestrator",
+  "description": "Recognizes build, code-change, UI-change, debugging, validation, commit, push, and deployment-prep requests and routes them to the safe build planning or local execution lane.",
+  "category": "build",
+  "ownerAgents": ["hermes", "prometheus", "argus", "fugu"],
+  "tags": ["build", "code", "repo", "local-worker", "validation", "deployment", "api route", "ui", "provider setup", "council", "skills page"],
+  "purpose": "Route building, debugging, validation, commit, push, and deployment-prep requests to the correct build workflow while preserving approval gates.",
+  "whenToUse": [
+    "Build Provider Setup Center.",
+    "Add Model Council v1.",
+    "Fix the Skills page date bug.",
+    "Run tests and build.",
+    "Commit and push this change.",
+    "Create a route for provider setup.",
+    "Wire up the local worker.",
+    "Debug the API route failure.",
+    "Create a provider setup screen",
+    "Build an app or UI",
+    "Upgrade the app",
+    "Plan a deployment or validation pipeline"
+  ],
+  "whenNotToUse": [
+    "Rewrite an email",
+    "Answer HR/I-9 questions",
+    "Score a job",
+    "Draft a recruiter reply",
+    "Create a normal reminder",
+    "Explain something without changing code"
+  ],
+  "strongSignals": [
+    "Create a route or API endpoint",
+    "Fix or change UI or provider setup",
+    "Build, upgrade, or debug existing code",
+    "Run tests, lint, typecheck, build, or prisma generate",
+    "Commit, push, or prepare deployment",
+    "Create model council or skills-page changes",
+    "Wire up local worker or cron job"
+  ],
+  "negativeSignals": [
+    "Rewrite this message",
+    "Draft an email",
+    "I-9 compliance task",
+    "Job application",
+    "Resume",
+    "Calendar reminder",
+    "Dating or lease message"
+  ],
+  "requiredContext": [
+    "Target system area",
+    "Whether the user wants plan-only or implementation",
+    "Available local worker or Hermes Nous runtime state"
+  ],
+  "missingContextQuestions": [
+    "What exact area should be changed?",
+    "Should this be plan-only or implemented now?",
+    "Should this be approved before commit, push, or deploy?"
+  ],
+  "safetyRules": [
+    "Inspect before changing.",
+    "Plan first unless the user explicitly asks for implementation.",
+    "Never write to .env or .env.local.",
+    "Never modify auth, middleware, migrations, or deployment config without explicit approval.",
+    "Never push to main automatically.",
+    "Run builds or tests first if the workflow supports it."
+  ],
+  "outputContract": {
+    "format": "Build intent -> target area -> risk level -> files to inspect -> plan -> execution path -> validation commands -> approval requirements.",
+    "mustInclude": [
+      "Build intent detected",
+      "Target system area",
+      "Risk level",
+      "Files to inspect",
+      "Proposed plan",
+      "Execution path",
+      "Validation commands",
+      "Approval needed before durable action"
+    ],
+    "mustAvoid": [
+      "Skipping repo inspection",
+      "Auto-committing or auto-pushing",
+      "Modifying .env or .env.local",
+      "Bypassing approval gates",
+      "Exposing secrets"
+    ],
+    "tone": "decisive, safe, engineering-focused"
+  },
+  "approvalRequiredFor": ["file edits", "branch creation", "commits", "pushes", "deployment", "prisma generate"],
+  "evaluationPrompts": [
+    { "input": "Build Provider Setup Center.", "shouldMatch": true, "minimumScore": 85, "expectedSkill": "build-orchestrator", "reason": "Explicit feature build." },
+    { "input": "Fix the Skills page date bug.", "shouldMatch": true, "minimumScore": 85, "expectedSkill": "build-orchestrator", "reason": "Explicit bug fix." },
+    { "input": "Run tests and build.", "shouldMatch": true, "minimumScore": 75, "expectedSkill": "build-orchestrator", "reason": "Validation request with build language." },
+    { "input": "Commit and push this change.", "shouldMatch": true, "minimumScore": 80, "expectedSkill": "build-orchestrator", "reason": "Commit/push intent." },
+    { "input": "Wire up the local worker.", "shouldMatch": true, "minimumScore": 80, "expectedSkill": "build-orchestrator", "reason": "Local worker/build wiring request." },
+    { "input": "Rewrite my email to my manager.", "shouldMatch": false, "reason": "Email draft request is not a build skill match." },
+    { "input": "Draft an I-9 follow-up email.", "shouldMatch": false, "reason": "HR drafting is not a build match." },
+    { "input": "What should HR do after an I-9 TNC?", "shouldMatch": false, "reason": "HR compliance question should not go to build." },
+    { "input": "Create a reminder for tomorrow.", "shouldMatch": false, "reason": "Calendar automation is not a build route." }
+  ],
+  "version": "1.0.0",
+  "lastReviewedAt": "2026-07-10"
+}

@@ -1,0 +1,19 @@
+[Sun 07/05/2026 13:58:53.18] Starting Hermes Local Worker.
+
+> hermes-os@0.1.0 worker:local
+> tsx scripts/hermes-local-worker.ts
+
+Worker API Base URL: https://www.parawi.com
+Hermes Local Worker local-worker:DESKTOP-EE29V72:19788 online on DESKTOP-EE29V72.
+Root: C:\Users\osman\OneDrive\Desktop\HermesProject
+Polling every 15s.
+[Sun 07/05/2026 13:59:33.65] Hermes Local Worker exited with code -1.
+[Sun 07/05/2026 13:59:35.01] Starting Hermes Local Worker.
+
+> hermes-os@0.1.0 worker:local
+> tsx scripts/hermes-local-worker.ts
+
+Worker API Base URL: https://www.parawi.com
+Hermes Local Worker local-worker:DESKTOP-EE29V72:19348 online on DESKTOP-EE29V72.
+Root: C:\Users\osman\OneDrive\Desktop\HermesProject
+Polling every 15s.
