@@ -1,0 +1,152 @@
+---
+id: build-validation-runner
+name: Build Validation Runner
+description: Run or recommend validation commands after code changes.
+category: build
+ownerAgents:
+  - prometheus
+  - argus
+tags:
+  - build-validation-runner
+  - typecheck
+  - lint
+  - tests
+  - build
+  - vercel
+  - prisma
+purpose: Run checks after changes and turn failures into specific next steps instead of vague build errors.
+whenToUse:
+  - run tests and build
+  - run typecheck
+  - run lint
+  - run build
+  - prisma generate
+  - deployment readiness
+  - vercel status
+  - verify changes are safe to ship
+whenNotToUse:
+  - rewrite an email
+  - answer HR/I-9 questions
+  - score a job
+  - draft a recruiter reply
+  - create a normal task
+  - explain something without changing code
+strongSignals:
+  - run tests
+  - run build
+  - run typecheck
+  - run lint
+  - prisma generate
+  - deployment readiness
+  - vercel status
+  - is this safe to push
+  - safe to deploy
+weakSignals:
+  - check build
+  - run checks
+  - validating
+  - readiness
+  - deployment
+  - pipeline
+negativeSignals:
+  - email
+  - i-9
+  - job application
+  - resume
+  - rewrite
+  - calendar
+  - dating text
+  - lease message
+outputContract:
+  format: Validation report with clear pass/fail outcomes.
+  mustInclude:
+    - commands run
+    - results
+    - failures
+    - likely cause
+    - fix recommendation
+    - safe to push?
+    - safe to deploy?
+  mustAvoid:
+    - vague status
+    - skipping likely cause
+    - recommending deploy before failures are explained
+requiredContext:
+  - commands to run
+  - latest change set
+  - environment assumptions
+missingContextQuestions:
+  - Do you want typecheck, lint, tests, and build?
+  - Should this check deployment status as well?
+safetyRules:
+  - Do not run destructive commands unless asked.
+  - Never touch secrets or env values while validating.
+  - Clearly separate read checks from write-capable deploy steps.
+  - Preserve existing approval gates for deploy actions.
+approvalRequiredFor:
+  - production deployment
+  - deployment promotion
+positiveExamples:
+  - "Run tests and build."
+  - "Run typecheck, lint, tests, and build."
+  - "Check Vercel deployment status after the PR merge."
+  - "Validate the provider setup UI before deploying."
+  - "Is this safe to push?"
+negativeExamples:
+  - "Rewrite my email to my manager.",
+  - "Help me answer an I-9 question.",
+  - "Draft a recruiter follow-up.",
+  - "Create a task to follow up tomorrow.",
+  - "Explain how Next.js routing works."
+evaluationPrompts:
+  - input: "Run typecheck, lint, tests, and build."
+    shouldMatch: true
+    minimumScore: 85
+    expectedSkill: build-validation-runner
+    reason: "Explicit validation command set with strong build routing words."
+  - input: "Run tests and build."
+    shouldMatch: true
+    minimumScore: 85
+    expectedSkill: build-validation-runner
+    reason: "Direct validation request with clear test/build intent."
+  - input: "Check Vercel deployment."
+    shouldMatch: true
+    minimumScore: 75
+    expectedSkill: build-validation-runner
+    reason: "Deployment status check with build/deploy language."
+  - input: "Rewrite my email to my leasing office."
+    shouldMatch: false
+    reason: "Comms request, not validation."
+  - input: "Draft an I-9 follow-up email."
+    shouldMatch: false
+    reason: "HR/compliance request, not validation."
+version: "1.0.0"
+lastReviewedAt: "2026-07-09"
+---
+
+# Build Validation Runner
+
+Use this for validation runs after changes.
+
+This skill does not make code changes. It runs or recommends checks and explains failures.
+
+Recommended validation order:
+1. Inspection / repo state
+2. typecheck
+3. lint
+4. test
+5. build
+6. deployment status
+
+Output contract:
+- commands run
+- results
+- failures
+- likely cause
+- fix recommendation
+- safe to push?
+- safe to deploy?
+
+Do not bypass approval gates. Do not expose secrets. Do not modify secrets or deployment config here.
+
+If local worker status is stale or offline, note it in failures instead of silently assuming cloud execution worked.

@@ -1,0 +1,165 @@
+---
+id: repo-change-planner
+name: Repo Change Planner
+description: Plan safe code changes before edits and keep rollback options explicit.
+category: build
+ownerAgents:
+  - prometheus
+tags:
+  - repo
+  - plan
+  - rollback
+  - changes
+  - inspection
+safetyClass: read_only
+source: hermes-os
+purpose: Reduce random edits and destructive drift by requiring a lightweight change plan before code is written.
+whenToUse:
+  - Plan the files needed to add Model Council v1.
+  - Plan code changes for the Skills page date bug.
+  - What files should I inspect before adding a provider setup route?
+  - Plan the API route changes for build validation.
+  - Plan changes for repo or schema edits
+whenNotToUse:
+  - Write files without inspection
+  - Skip rollback planning
+  - Assume deployment state without evidence
+  - Rewrite an email
+  - Answer HR/I-9 questions
+  - Score a job
+  - Draft a recruiter reply
+  - Create a normal task
+  - Explain something without changing code
+strongSignals:
+  - plan changes
+  - files to inspect first
+  - expected edits
+  - rollback plan
+  - validation commands
+  - user approval checkpoint
+  - inspect before editing
+  - what should change
+  - api route changes
+  - provider setup plan
+weakSignals:
+  - change plan
+  - inspect files
+  - approval checkpoint
+  - rollback
+  - migration plan
+negativeSignals:
+  - email
+  - i-9
+  - job application
+  - resume
+  - rewrite
+  - calendar
+  - dating text
+  - lease message
+requiredContext:
+  - target feature or bug
+  - changed file set estimate
+  - approval expectations
+missingContextQuestions:
+  - What files will this change touch?
+  - Is there a migration or env-side effect?
+  - Do you want a branch or inline change?
+outputContract:
+  format: Short change plan with risk, rollback, and validation.
+  mustInclude:
+    - target files
+    - files to inspect first
+    - expected edits
+    - risk level
+    - rollback plan
+    - validation commands
+    - user approval checkpoint
+  mustAvoid:
+    - writing files without a plan
+    - skipping inspection
+    - skipping rollback plan
+    - assuming deployment state
+approvalRequiredFor:
+  - code edits
+  - branch creation
+  - migration changes
+  - deployment config changes
+positiveExamples:
+  - "Plan the files needed to add Model Council v1."
+  - "Plan code changes for the Skills page date bug."
+  - "What files should I inspect before adding a provider setup route?"
+  - "Plan the API route changes for build validation."
+negativeExamples:
+  - "Rewrite my email to my manager."
+  - "Help me answer an I-9 question."
+  - "Draft a recruiter follow-up."
+  - "Create a task to follow up tomorrow."
+  - "Explain how Next.js routing works."
+evaluationPrompts:
+  - input: "Plan the files needed to add Model Council v1."
+    shouldMatch: true
+    minimumScore: 85
+    expectedSkill: repo-change-planner
+    reason: "Positive repo change plan request with exact repo target."
+  - input: "Plan code changes for the Skills page date bug."
+    shouldMatch: true
+    minimumScore: 85
+    expectedSkill: repo-change-planner
+    reason: "Positive bug-fix change plan request."
+  - input: "What files should I inspect before adding a provider setup route?"
+    shouldMatch: true
+    minimumScore: 85
+    expectedSkill: repo-change-planner
+    reason: "Positive inspection-first plan request."
+  - input: "Plan the API route changes for build validation."
+    shouldMatch: true
+    minimumScore: 75
+    expectedSkill: repo-change-planner
+    reason: "Positive API change plan request with explicit planning intent."
+  - input: "Service the install plan after the reagent change."
+    shouldMatch: true
+    minimumScore: 55
+    expectedSkill: repo-change-planner
+    reason: "Ambiguous deployment plan request; route as a repo/execution plan candidate."
+  - input: "Rewrite my email to my manager."
+    shouldMatch: false
+    reason: "Negative writing request should not route to repo change planning."
+  - input: "Help me answer an I-9 question."
+    shouldMatch: false
+    reason: "Negative compliance request should not route to repo change planning."
+  - input: "Draft a recruiter follow-up."
+    shouldMatch: false
+    reason: "Negative job/writing request should not route to repo change planning."
+  - input: "Create a task to follow up tomorrow."
+    shouldMatch: false
+    reason: "Task creation, not a repo change plan request."
+  - input: "Explain how Next.js routing works."
+    shouldMatch: false
+    reason: "Explanation-only request, no change intent."
+version: "1.0.0"
+lastReviewedAt: "2026-07-10"
+---
+
+# Repo Change Planner
+
+Use this before making repo changes.
+
+Inputs:
+- Target feature or bug
+- Existing files to inspect
+- Expected changes
+- Validation plan
+- Rollback option
+
+Output rules:
+- Stay concise
+- Keep rollback realistic
+- Do not write code here
+- Do not assume deployment state
+
+Safety:
+- Never modify auth, middleware, migrations, or deployment config without explicit approval.
+- Never push to main automatically.
+- Do not touch .env or .env.local.
+
+If the user approves the plan, route to `build-orchestrator` with the planned file list and expected diff.

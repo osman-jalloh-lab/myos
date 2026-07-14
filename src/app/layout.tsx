@@ -1,5 +1,5 @@
 import "./globals.css";
-import { Fraunces, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Fraunces, Hanken_Grotesk, JetBrains_Mono, Lato, Playfair_Display } from "next/font/google";
 
 const fraunces = Fraunces({
   subsets: ["latin"],
@@ -19,6 +19,18 @@ const jetbrains = JetBrains_Mono({
   variable: "--font-mono",
   display: "swap",
 });
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-lux-serif",
+  display: "swap",
+});
+const lato = Lato({
+  subsets: ["latin"],
+  weight: ["300", "400", "700"],
+  variable: "--font-lux-sans",
+  display: "swap",
+});
 
 export const metadata = {
   title: "Hermes OS",
@@ -29,7 +41,10 @@ export const dynamic = "force-dynamic";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${fraunces.variable} ${hanken.variable} ${jetbrains.variable}`}>
+    <html
+      lang="en"
+      className={`${fraunces.variable} ${hanken.variable} ${jetbrains.variable} ${playfair.variable} ${lato.variable}`}
+    >
       <body style={{ fontFamily: "var(--font-sans, system-ui, sans-serif)" }}>
         {children}
       </body>

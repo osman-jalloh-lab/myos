@@ -8,6 +8,7 @@ import { runHermesExecution, runHermesExecutionPlan } from "@/lib/hermes-executi
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { normalizeAgentKey } from "@/lib/agent-roster";
 import { recordSkillUsageTelemetry, resolveRelevantSkills } from "@/lib/skills/routing";
+import { handleProjectControlChat } from "@/lib/project-control/chat-workflow";
 
 /**
  * GET  /api/chat?agent=<name>  — recent chat history for a thread
@@ -63,6 +64,31 @@ export async function POST(req: Request) {
   const trimmed = body.message.trim();
   const contextChatId = `dashboard:shared:${session.user.id}`;
   const targetAgent = body.agentName?.trim() ? normalizeAgentKey(body.agentName) : null;
+  const projectWorkflow = await handleProjectControlChat({
+    userId: session.user.id,
+    message: trimmed,
+    targetAgent,
+  }).catch((error) => {
+    console.error("[/api/chat] project-control routing failed", error);
+    return null;
+  });
+  if (!targetAgent && projectWorkflow?.handled && projectWorkflow.answer) {
+    const result = await persistExecutedMessage(session.user.id, trimmed, projectWorkflow.answer, "dashboard");
+    return NextResponse.json({
+      classification: projectWorkflow.classification,
+      projectId: projectWorkflow.projectId,
+      planId: projectWorkflow.planId,
+      userMessage: result.userMessage,
+      reply: {
+        ...result.reply,
+        content: projectWorkflow.answer,
+        executionStatus: "project_control",
+        quickActions: projectWorkflow.quickActions ?? [],
+        artifacts: [],
+        toolCalls: [],
+      },
+    });
+  }
   const intake = !targetAgent
     ? await handleBuildIntake(contextChatId, session.user.id, trimmed).catch(() => ({ action: "none" as const }))
     : { action: "none" as const };
