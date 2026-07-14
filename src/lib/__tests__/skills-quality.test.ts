@@ -64,4 +64,25 @@ describe("skills quality v2", () => {
     const scouted = skills.filter((skill) => skill.source === "scouted");
     expect(scouted.every((skill) => skill.safetyClass !== "local_execution")).toBe(true);
   });
+
+  it("keeps the skill upgrade pack instruction-backed with complete routing boundaries", async () => {
+    clearSkillRegistryCache();
+    const skills = await getRegisteredSkills("user_1", true);
+    const upgradedIds = [
+      "email-draft",
+      "email-triage",
+      "task-create",
+      "capability-answer",
+      "github-inspect",
+    ];
+
+    for (const id of upgradedIds) {
+      const skill = skills.find((entry) => entry.id === id);
+      expect(skill, id).toBeTruthy();
+      expect(skill?.validationStatus, id).toBe("valid");
+      expect(skill?.instructionFile, id).toMatch(/SKILL\.md$/);
+      expect(skill?.whenToUse.length, id).toBeGreaterThanOrEqual(3);
+      expect(skill?.whenNotToUse.length, id).toBeGreaterThanOrEqual(2);
+    }
+  });
 });

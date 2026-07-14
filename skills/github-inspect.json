@@ -19,6 +19,15 @@
     "risk": "read",
     "requiresApproval": false
   },
+  "whenToUse": [
+    "Osman pastes a GitHub URL and wants a quick read on the project.",
+    "Osman asks about a repo's language, activity, or license before using it.",
+    "Research on a tool or dependency that lives on GitHub."
+  ],
+  "whenNotToUse": [
+    "Do not use to clone, edit, build, or run repo code. That is the builder and worker path.",
+    "Do not use for private repos or anything needing auth beyond public metadata."
+  ],
   "examples": [
     "inspect https://github.com/vercel/next.js",
     "what is this repo https://github.com/anthropics/anthropic-sdk-python",

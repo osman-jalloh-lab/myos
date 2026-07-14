@@ -16,6 +16,15 @@
     "requiresApproval": false,
     "pipeline": ["internal.email.search", "internal.email.classifyImportant"]
   },
+  "whenToUse": [
+    "Osman asks what is in his inbox, what needs a reply, or what he is missing.",
+    "Osman asks for recruiter replies, interview requests, or job follow-ups.",
+    "Osman asks about deadlines or time-sensitive mail."
+  ],
+  "whenNotToUse": [
+    "Do not use to write or send a reply. Hand off to email.draft for that.",
+    "Do not use for non-email tasks or reminders. That is task.create."
+  ],
   "examples": [
     "check my email for job follow-ups",
     "what's in my inbox today?",

@@ -20,10 +20,13 @@
     "is the worker available"
   ],
   "whenToUse": [
-    "Use when the user asks whether Hermes can perform a task or whether a capability is connected."
+    "Osman asks whether Hermes can do a specific action such as send email, run a build, or inspect a repo.",
+    "Osman asks what Hermes can or cannot do right now.",
+    "A request depends on a capability whose availability should be confirmed before promising it."
   ],
   "whenNotToUse": [
-    "Do not use to execute the requested task; answer capability status only."
+    "Do not use to perform the action. Route to the real skill for that.",
+    "Do not use for general knowledge questions unrelated to Hermes's own capabilities."
   ],
   "outputContract": {
     "format": "One honest capability status with the reason and any approval or worker limitation.",

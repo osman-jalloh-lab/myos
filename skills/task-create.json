@@ -15,6 +15,15 @@
     "risk": "internal_write",
     "requiresApproval": false
   },
+  "whenToUse": [
+    "Osman says to remind him, add a to-do, or follow up on something.",
+    "Osman gives a task with a date or deadline attached.",
+    "A conversation produces a clear next action worth tracking."
+  ],
+  "whenNotToUse": [
+    "Do not use to send email or take any external action. Those are their own skills.",
+    "Do not use to fabricate a due date. If none is given, leave it empty."
+  ],
   "examples": [
     "create a task to follow up with the Leidos recruiter tomorrow",
     "remind me to submit my timesheet by Friday",

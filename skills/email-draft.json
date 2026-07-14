@@ -15,6 +15,15 @@
     "risk": "external_write",
     "requiresApproval": true
   },
+  "whenToUse": [
+    "Osman asks to reply to a recruiter, hiring manager, or interviewer.",
+    "Osman asks for a follow-up, thank-you, or status-check email tied to a job or application.",
+    "Osman asks to compose any outbound email that should wait for his review."
+  ],
+  "whenNotToUse": [
+    "Do not use to send, schedule, or auto-approve an email. This skill only queues.",
+    "Do not use to read or triage the inbox. That is email.triage."
+  ],
   "examples": [
     "draft a reply to the recruiter saying I'm still interested",
     "write an email to the hiring manager at Booz Allen thanking them for the interview",
