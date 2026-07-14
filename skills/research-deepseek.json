@@ -1,0 +1,158 @@
+{
+  "id": "research-deepseek",
+  "name": "research.deepseek",
+  "description": "Ask DeepSeek directly for public, non-sensitive research and drafts of skills, plans, outlines, or code snippets. DeepSeek never receives private context and never writes files.",
+  "category": "research",
+  "agent": "argus",
+  "ownerAgents": ["argus"],
+  "tags": ["deepseek", "research", "planning", "skill-drafting", "code-drafting", "low-cost"],
+  "safetyClass": "read_only",
+  "inputs": {
+    "message": {
+      "type": "string",
+      "description": "A public, non-sensitive research or drafting prompt for DeepSeek."
+    }
+  },
+  "required": ["message"],
+  "execution": {
+    "tool": "internal.research.deepseek",
+    "risk": "read",
+    "requiresApproval": false
+  },
+  "purpose": "Use one low-cost DeepSeek call for everyday public research and advisory drafting while structurally refusing PRIVATE and SECRET content before the provider is called.",
+  "whenToUse": [
+    "Osman explicitly asks to use or ask DeepSeek for a non-sensitive question.",
+    "Osman wants public research, comparison, brainstorming, or an outline from a low-cost model.",
+    "Osman wants DeepSeek to draft a skill, implementation plan, or code snippet without writing files."
+  ],
+  "whenNotToUse": [
+    "Do not use for I-9, E-Verify, finance, payroll, email content, SSNs, EINs, credentials, PRIVATE data, or SECRET data.",
+    "Do not use to read repo files automatically or to create, edit, commit, push, or deploy files.",
+    "Do not use when the user did not request DeepSeek and the normal domestic model route is appropriate."
+  ],
+  "strongSignals": [
+    "ask deepseek",
+    "use deepseek",
+    "deepseek research",
+    "deepseek draft",
+    "with deepseek",
+    "cheap research model"
+  ],
+  "negativeSignals": [
+    "I-9",
+    "E-Verify",
+    "email body",
+    "bank account",
+    "payroll",
+    "API key",
+    "commit this",
+    "push this"
+  ],
+  "requiredContext": [
+    "The exact public, non-sensitive question or drafting request to send to DeepSeek.",
+    "Any public source text deliberately included by the user, without automatic memory or repo context."
+  ],
+  "missingContextQuestions": [
+    "What exact non-sensitive question should DeepSeek answer?",
+    "If a repo file is needed, which specific public, secret-free file are you deliberately opting in?"
+  ],
+  "outputContract": {
+    "format": "Direct DeepSeek research or draft, followed by a short advisory-only boundary when a write would be needed.",
+    "mustInclude": [
+      "The requested research, plan, skill draft, outline, or code snippet.",
+      "A clear handoff to the approval-gated build path for any durable write."
+    ],
+    "mustAvoid": [
+      "Sending or repeating PRIVATE or SECRET content.",
+      "Claiming files were read, created, edited, committed, pushed, or deployed."
+    ]
+  },
+  "safetyRules": [
+    "Run the shared classifier before resolving or calling the DeepSeek provider.",
+    "Refuse PRIVATE and SECRET content before any DeepSeek network call and direct it to Groq/Ollama.",
+    "Pass only the explicit user prompt; never attach memory or repo files automatically.",
+    "Keep all outputs advisory and route durable writes through existing approvals."
+  ],
+  "approvalRequiredFor": [
+    "Creating or editing skill files",
+    "Changing repository code",
+    "Committing, pushing, opening a PR, or deploying"
+  ],
+  "positiveExamples": [
+    "Ask DeepSeek to compare two public TypeScript validation strategies.",
+    "Use DeepSeek to research current approaches to agent evaluation.",
+    "Have DeepSeek draft a SKILL.md outline for a public API workflow.",
+    "Ask DeepSeek for a plan to refactor this non-sensitive sample function.",
+    "Use DeepSeek to draft a code snippet for parsing public JSON data."
+  ],
+  "negativeExamples": [
+    "Ask DeepSeek to review this employee's I-9 and SSN.",
+    "Send DeepSeek the pasted recruiter email from my inbox.",
+    "Have DeepSeek edit the repo, commit the files, and push them."
+  ],
+  "evaluationPrompts": [
+    {
+      "input": "Ask DeepSeek to research public benchmarks for TypeScript runtimes.",
+      "shouldMatch": true,
+      "minimumScore": 85,
+      "expectedSkill": "research-deepseek",
+      "reason": "Explicit public DeepSeek research request."
+    },
+    {
+      "input": "Use DeepSeek to draft a skill for summarizing public release notes.",
+      "shouldMatch": true,
+      "minimumScore": 85,
+      "expectedSkill": "research-deepseek",
+      "reason": "Explicit DeepSeek skill-drafting request."
+    },
+    {
+      "input": "Have DeepSeek outline a plan for this non-sensitive API client.",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "research-deepseek",
+      "reason": "Explicit DeepSeek planning request."
+    },
+    {
+      "input": "Ask DeepSeek for a JavaScript snippet that parses a public RSS feed.",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "research-deepseek",
+      "reason": "Explicit DeepSeek code-drafting request."
+    },
+    {
+      "input": "Use the cheap DeepSeek research tool to compare two public libraries.",
+      "shouldMatch": true,
+      "minimumScore": 80,
+      "expectedSkill": "research-deepseek",
+      "reason": "Explicit low-cost DeepSeek research request."
+    },
+    {
+      "input": "Ask DeepSeek to review this I-9 record and SSN 123-45-6789.",
+      "shouldMatch": true,
+      "minimumScore": 55,
+      "expectedSkill": "research-deepseek",
+      "reason": "Ambiguous safety case: explicit DeepSeek request must reach the structural refusal gate."
+    },
+    {
+      "input": "Research this topic for me.",
+      "shouldMatch": false,
+      "expectedSkill": "research-deepseek",
+      "reason": "Ambiguous provider choice with no explicit DeepSeek signal."
+    },
+    {
+      "input": "Check my inbox for recruiter messages.",
+      "shouldMatch": false,
+      "expectedSkill": "research-deepseek",
+      "reason": "Private email task belongs to Iris and the domestic route."
+    },
+    {
+      "input": "Use DeepSeek to draft the plan, then implement and commit it.",
+      "shouldMatch": true,
+      "minimumScore": 70,
+      "expectedSkill": "research-deepseek",
+      "reason": "Multi-skill request: DeepSeek may draft, while the approval-gated builder owns writes."
+    }
+  ],
+  "version": "1.0.0",
+  "lastReviewedAt": "2026-07-13"
+}

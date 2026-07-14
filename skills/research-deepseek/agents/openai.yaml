@@ -1,0 +1,4 @@
+interface:
+  display_name: "DeepSeek Research"
+  short_description: "Research and draft public, non-sensitive material with DeepSeek"
+  default_prompt: "Use DeepSeek to research or draft this non-sensitive request without writing files."

@@ -5,31 +5,15 @@ import type { CouncilProviderResponse } from "@/lib/council-providers";
 import type { ProviderFamily } from "@/lib/model-provider-registry";
 import type { ChatMessageView } from "@/lib/chat";
 import type { RouteResult } from "@/agents/hermes";
-import type { DataClass } from "@/lib/modelRouter";
+import { classifyCouncilMessage, COUNCIL_PRIVATE_REFUSAL } from "@/lib/data-class-classifier";
+
+export { classifyCouncilMessage, COUNCIL_PRIVATE_REFUSAL } from "@/lib/data-class-classifier";
 
 export const COUNCIL_TARGET = "model_council";
 export const councilProviderTarget = (family: ProviderFamily) => `council_${family}`;
 
 const DIRECT_COUNCIL_FAMILIES = new Set<ProviderFamily>(["openai", "anthropic", "deepseek", "gemini", "ollama", "groq"]);
 const DOMESTIC_PRIVATE_FAMILIES = new Set<ProviderFamily>(["groq", "ollama"]);
-
-export const COUNCIL_PRIVATE_REFUSAL = "The Council can't review private data (I-9, finance, email content). Ask a specific domestic office (Groq/Ollama) or handle it in the normal private-data flow.";
-
-// TODO: Replace this Council-only stopgap with one shared content classifier used by modelRouter and every model entry point.
-export function classifyCouncilMessage(message: string): DataClass {
-  const text = message.trim();
-  if (/\b(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|client[_ -]?secret|password)\s*[:=]\s*\S+/i.test(text)) return "SECRET";
-  const privatePatterns = [
-    /\b\d{3}-\d{2}-\d{4}\b/, // SSN
-    /\b\d{2}-\d{7}\b/, // EIN
-    /\b(?:i-?9|e-?verify|employment authorization|work authorization|alien registration|a-number)\b/i,
-    /\b(?:bank account|routing number|checking account|savings account|credit card|debit card|account number|tax return|pay stub|payroll)\b/i,
-    /(?:^|\n)\s*from:\s*.+(?:\n|\r\n?)\s*(?:to|sent|date):\s*.+(?:\n|\r\n?)\s*subject:/i,
-    /\b(?:email body|pasted email|inbox message|gmail message)\b/i,
-  ];
-  if (privatePatterns.some((pattern) => pattern.test(text))) return "PRIVATE";
-  return "PUBLIC";
-}
 
 function assertCouncilPrivacy(message: string, mode: CouncilChatMode, providerFamily?: ProviderFamily): void {
   const dataClass = classifyCouncilMessage(message);

@@ -142,6 +142,34 @@ export function registerInternalTools(): void {
     },
   });
 
+  registerTool({
+    name: "internal.research.deepseek",
+    description: "Ask DeepSeek one public, non-sensitive research or drafting question without writing files.",
+    risk: "read",
+    requiresApproval: false,
+    execute: async (input) => {
+      const { runDeepSeekResearch } = await import("@/lib/deepseek-research");
+      const message = String(input.message ?? "");
+      const result = await runDeepSeekResearch(message);
+      return {
+        answer: result.answer,
+        result: result.providerResult,
+        artifacts: [
+          {
+            type: "text" as const,
+            title: "DeepSeek research draft",
+            content: result.answer,
+            metadata: {
+              provider: result.providerResult.provider,
+              model: result.providerResult.model,
+              advisoryOnly: true,
+            },
+          },
+        ],
+      };
+    },
+  });
+
   // ── internal.github.inspectRepo ─────────────────────────────────────────────
 
   registerTool({

@@ -147,6 +147,17 @@ describe("internal.capabilities.answer", () => {
   });
 });
 
+describe("internal.research.deepseek", () => {
+  it("registers the direct DeepSeek tool as read-only and non-writing", () => {
+    const tool = getTool("internal.research.deepseek");
+    expect(tool).toMatchObject({
+      name: "internal.research.deepseek",
+      risk: "read",
+      requiresApproval: false,
+    });
+  });
+});
+
 describe("internal.agent.handoff", () => {
   it("registers the agent handoff tool as an internal write", () => {
     const tool = getTool("internal.agent.handoff");

@@ -57,7 +57,7 @@ async function postJson(url: string, init: RequestInit, timeoutMs = PROVIDER_TIM
   return response.json();
 }
 
-async function callOpenAI(entry: ProviderRegistryEntry, message: string): Promise<string> {
+async function callOpenAI(entry: ProviderRegistryEntry, message: string, systemPrompt: string): Promise<string> {
   const data = await postJson("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -67,7 +67,7 @@ async function callOpenAI(entry: ProviderRegistryEntry, message: string): Promis
     body: JSON.stringify({
       model: selectedProviderModel(entry),
       messages: [
-        { role: "system", content: councilSystemPrompt(entry) },
+        { role: "system", content: systemPrompt },
         { role: "user", content: message },
       ],
       temperature: 0.35,
@@ -78,7 +78,7 @@ async function callOpenAI(entry: ProviderRegistryEntry, message: string): Promis
   return parsed.choices?.[0]?.message?.content?.trim() || "";
 }
 
-async function callAnthropic(entry: ProviderRegistryEntry, message: string): Promise<string> {
+async function callAnthropic(entry: ProviderRegistryEntry, message: string, systemPrompt: string): Promise<string> {
   const data = await postJson("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -89,7 +89,7 @@ async function callAnthropic(entry: ProviderRegistryEntry, message: string): Pro
     body: JSON.stringify({
       model: selectedProviderModel(entry),
       max_tokens: 650,
-      system: councilSystemPrompt(entry),
+      system: systemPrompt,
       messages: [{ role: "user", content: message }],
     }),
   });
@@ -97,7 +97,7 @@ async function callAnthropic(entry: ProviderRegistryEntry, message: string): Pro
   return (parsed.content ?? []).filter((item) => item.type === "text").map((item) => item.text ?? "").join("").trim();
 }
 
-async function callDeepSeek(entry: ProviderRegistryEntry, message: string): Promise<string> {
+async function callDeepSeek(entry: ProviderRegistryEntry, message: string, systemPrompt: string): Promise<string> {
   const baseUrl = (process.env.DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com").replace(/\/$/, "");
   const data = await postJson(`${baseUrl}/chat/completions`, {
     method: "POST",
@@ -108,7 +108,7 @@ async function callDeepSeek(entry: ProviderRegistryEntry, message: string): Prom
     body: JSON.stringify({
       model: selectedProviderModel(entry),
       messages: [
-        { role: "system", content: councilSystemPrompt(entry) },
+        { role: "system", content: systemPrompt },
         { role: "user", content: message },
       ],
       temperature: 0.35,
@@ -119,13 +119,13 @@ async function callDeepSeek(entry: ProviderRegistryEntry, message: string): Prom
   return parsed.choices?.[0]?.message?.content?.trim() || "";
 }
 
-async function callGemini(entry: ProviderRegistryEntry, message: string): Promise<string> {
+async function callGemini(entry: ProviderRegistryEntry, message: string, systemPrompt: string): Promise<string> {
   const model = encodeURIComponent(selectedProviderModel(entry));
   const data = await postJson(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(cleanCredential(process.env.GEMINI_API_KEY))}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      systemInstruction: { parts: [{ text: councilSystemPrompt(entry) }] },
+      systemInstruction: { parts: [{ text: systemPrompt }] },
       contents: [{ role: "user", parts: [{ text: message }] }],
       generationConfig: { temperature: 0.35, maxOutputTokens: 650 },
     }),
@@ -134,7 +134,7 @@ async function callGemini(entry: ProviderRegistryEntry, message: string): Promis
   return parsed.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim() || "";
 }
 
-async function callOllama(entry: ProviderRegistryEntry, message: string): Promise<string> {
+async function callOllama(entry: ProviderRegistryEntry, message: string, systemPrompt: string): Promise<string> {
   const baseUrl = (process.env.OLLAMA_BASE_URL?.trim() || "http://127.0.0.1:11434").replace(/\/$/, "");
   const data = await postJson(`${baseUrl}/api/chat`, {
     method: "POST",
@@ -142,7 +142,7 @@ async function callOllama(entry: ProviderRegistryEntry, message: string): Promis
     body: JSON.stringify({
       model: selectedProviderModel(entry),
       messages: [
-        { role: "system", content: councilSystemPrompt(entry) },
+        { role: "system", content: systemPrompt },
         { role: "user", content: message },
       ],
       options: { num_predict: 180, temperature: 0.25 },
@@ -153,7 +153,7 @@ async function callOllama(entry: ProviderRegistryEntry, message: string): Promis
   return parsed.message?.content?.trim() || parsed.message?.thinking?.trim() || "";
 }
 
-async function callGroq(entry: ProviderRegistryEntry, message: string): Promise<string> {
+async function callGroq(entry: ProviderRegistryEntry, message: string, systemPrompt: string): Promise<string> {
   const data = await postJson("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -163,7 +163,7 @@ async function callGroq(entry: ProviderRegistryEntry, message: string): Promise<
     body: JSON.stringify({
       model: selectedProviderModel(entry),
       messages: [
-        { role: "system", content: councilSystemPrompt(entry) },
+        { role: "system", content: systemPrompt },
         { role: "user", content: message },
       ],
       temperature: 0.35,
@@ -174,13 +174,13 @@ async function callGroq(entry: ProviderRegistryEntry, message: string): Promise<
   return parsed.choices?.[0]?.message?.content?.trim() || "";
 }
 
-async function callProvider(entry: ProviderRegistryEntry, message: string): Promise<string> {
-  if (entry.family === "openai") return callOpenAI(entry, message);
-  if (entry.family === "anthropic") return callAnthropic(entry, message);
-  if (entry.family === "deepseek") return callDeepSeek(entry, message);
-  if (entry.family === "gemini") return callGemini(entry, message);
-  if (entry.family === "ollama") return callOllama(entry, message);
-  if (entry.family === "groq") return callGroq(entry, message);
+async function callProvider(entry: ProviderRegistryEntry, message: string, systemPrompt: string): Promise<string> {
+  if (entry.family === "openai") return callOpenAI(entry, message, systemPrompt);
+  if (entry.family === "anthropic") return callAnthropic(entry, message, systemPrompt);
+  if (entry.family === "deepseek") return callDeepSeek(entry, message, systemPrompt);
+  if (entry.family === "gemini") return callGemini(entry, message, systemPrompt);
+  if (entry.family === "ollama") return callOllama(entry, message, systemPrompt);
+  if (entry.family === "groq") return callGroq(entry, message, systemPrompt);
   throw new Error(`${entry.provider} is not a Council participant.`);
 }
 
@@ -196,7 +196,11 @@ export function getProviderOffice(family: ProviderFamily): ProviderRegistryEntry
   return MODEL_PROVIDER_REGISTRY.find((entry) => entry.family === family) ?? null;
 }
 
-export async function runCouncilProvider(entry: ProviderRegistryEntry, message: string): Promise<CouncilProviderResponse> {
+export async function runCouncilProvider(
+  entry: ProviderRegistryEntry,
+  message: string,
+  options: { systemPrompt?: string } = {}
+): Promise<CouncilProviderResponse> {
   const started = Date.now();
   if (!envConfigured(entry)) {
     return {
@@ -211,7 +215,7 @@ export async function runCouncilProvider(entry: ProviderRegistryEntry, message: 
     };
   }
   try {
-    const text = await callProvider(entry, message);
+    const text = await callProvider(entry, message, options.systemPrompt ?? councilSystemPrompt(entry));
     return {
       family: entry.family,
       provider: entry.provider,

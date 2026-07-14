@@ -129,6 +129,27 @@ describe("skill routing v2", () => {
     expect(plan?.steps[0]?.requiresApproval).toBe(true);
   });
 
+  it("routes explicit DeepSeek research to the single-provider read-only tool", async () => {
+    clearSkillRegistryCache();
+    const message = "Ask DeepSeek to compare two public TypeScript validation strategies.";
+    const resolution = await resolveRelevantSkills({
+      userId: "user_1",
+      message,
+      maxSkills: 3,
+    });
+    const plan = skillResolutionToExecutionPlan(resolution, message);
+
+    expect(resolution.primarySkill?.id).toBe("research-deepseek");
+    expect(resolution.primarySkill?.ownerAgents).toEqual(["argus"]);
+    expect(resolution.primarySkill?.safetyClass).toBe("read_only");
+    expect(plan?.steps).toHaveLength(1);
+    expect(plan?.steps[0]).toMatchObject({
+      tool: "internal.research.deepseek",
+      risk: "read",
+      requiresApproval: false,
+    });
+  });
+
   it("resolves build-orchestrator for main-thread build messages", async () => {
     clearSkillRegistryCache();
     const resolution = await resolveRelevantSkills({
