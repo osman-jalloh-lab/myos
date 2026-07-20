@@ -144,6 +144,14 @@ export const CHAT_ROSTER_AGENTS: RosterAgent[] = [
     color: AGENT_COLORS.prometheus,
     emptyStateText: "Ask Prometheus to shape an idea, website, or app build into concrete next steps.",
   },
+  {
+    id: "mercury",
+    letter: "M",
+    name: "Mercury",
+    role: "travel & external tools",
+    color: AGENT_COLORS.mercury,
+    emptyStateText: "Ask Mercury to compare flights, maps, weather, or public prices. Mercury is safety-gated and never books directly.",
+  },
 ];
 
 export const COUNCIL_REVIEWER_AGENTS: RosterAgent[] = [
