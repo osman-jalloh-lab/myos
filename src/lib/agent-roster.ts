@@ -35,10 +35,10 @@ export const AGENT_ALIASES: Record<string, AgentKey> = {
 export const AGENT_COLORS: Record<AgentKey, string> = {
   hermes: "#A78BFA",
   iris: "#60A5FA",
-  kairos: "#A78BFA",
+  kairos: "#38BDF8",
   argus: "#FBBF24",
   plutus: "#34D399",
-  athena: "#FBBF24",
+  athena: "#E879F9",
   mnemosyne: "#2DD4BF",
   sophos: "#7DD3FC",
   tyche: "#A3E635",
@@ -181,9 +181,14 @@ export const COUNCIL_REVIEWER_AGENTS: RosterAgent[] = [
   },
 ];
 
+/** The Command Center surfaces every core agent except the finance-only Plutus. */
+export const COMMAND_CENTER_AGENTS: RosterAgent[] = CHAT_ROSTER_AGENTS.filter(
+  (agent) => agent.id !== "plutus",
+);
+
 export const TASK_ASSIGNABLE_AGENT_KEYS: CoreAgentKey[] = CHAT_ROSTER_AGENTS.map((agent) =>
   normalizeAgentKey(agent.id)
-).filter((agent): agent is CoreAgentKey => !agent.startsWith("council_"));
+).filter((agent): agent is CoreAgentKey => !agent.startsWith("council_") && agent !== "plutus");
 
 export const COMMAND_AGENT_PREFIXES: CoreAgentKey[] = [
   ...TASK_ASSIGNABLE_AGENT_KEYS.filter((agent) => agent !== "hermes"),

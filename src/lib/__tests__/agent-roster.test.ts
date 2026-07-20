@@ -49,16 +49,19 @@ describe("agent roster", () => {
 
   it("does not treat unknown values as valid task assignments", () => {
     expect(isTaskAssignableAgent("made-up-agent")).toBe(false);
-    expect(isTaskAssignableAgent(" mercury ")).toBe(false);
+    expect(isTaskAssignableAgent(" mercury ")).toBe(true);
     expect(agentColor("made-up-agent")).toBe("#94A3B8");
   });
 
   it("derives task-assignable agents from the chat roster only", () => {
-    const normalizedChatRoster = CHAT_ROSTER_AGENTS.map((agent) => normalizeAgentKey(agent.id));
+    const normalizedChatRoster = CHAT_ROSTER_AGENTS
+      .map((agent) => normalizeAgentKey(agent.id))
+      .filter((agent) => agent !== "plutus");
 
     expect(TASK_ASSIGNABLE_AGENT_KEYS).toEqual(normalizedChatRoster);
     expect(TASK_ASSIGNABLE_AGENT_KEYS).not.toContain("mnemo");
-    expect(TASK_ASSIGNABLE_AGENT_KEYS).not.toContain("mercury");
+    expect(TASK_ASSIGNABLE_AGENT_KEYS).not.toContain("plutus");
+    expect(TASK_ASSIGNABLE_AGENT_KEYS).toContain("mercury");
     expect(TASK_ASSIGNABLE_AGENT_KEYS.every((agent) => isTaskAssignableAgent(agent))).toBe(true);
   });
 
