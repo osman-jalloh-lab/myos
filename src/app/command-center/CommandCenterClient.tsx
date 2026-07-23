@@ -6,7 +6,7 @@ import LiveBuildConsole from "./LiveBuildConsole";
 import AgentRoster from "@/components/AgentRoster";
 import CouncilChatPanel from "@/components/CouncilChatPanel";
 import HermesNousChatPanel from "@/components/HermesNousChatPanel";
-import { agentColor, CHAT_ROSTER_AGENTS, COUNCIL_REVIEWER_AGENTS } from "@/lib/agent-roster";
+import { agentColor, CHAT_ROSTER_AGENTS, COMMAND_CENTER_AGENTS, COUNCIL_REVIEWER_AGENTS } from "@/lib/agent-roster";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -847,6 +847,8 @@ function OverviewPanel({
         ))}
       </div>
 
+      <AgentNetworkStrip onOpen={() => onTabSwitch("agents")} />
+
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 10, alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <AgentCommandPanel runs={runs} health={health} projects={projects} memoryDebug={memoryDebug} onTabSwitch={onTabSwitch} onOfficeSelect={onOfficeSelect} />
@@ -861,6 +863,29 @@ function OverviewPanel({
     </div>
   );
 }
+
+function AgentNetworkStrip({ onOpen }: { onOpen: () => void }) {
+  return <section style={{ ...missionCardStyle, padding: "15px 16px" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 12 }}>
+      <div><div style={{ color: "#C4B5FD", fontFamily: "JetBrains Mono, monospace", fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase" }}>Agent network</div><div style={{ color: "#F1F4FB", fontFamily: "Fraunces, serif", fontSize: 20, marginTop: 3 }}>Your operating collective</div></div>
+      <button onClick={onOpen} style={smallButtonStyle("#B6A6FF")}>Open network</button>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(112px, 1fr))", gap: 8 }}>
+      {COMMAND_CENTER_AGENTS.map((agent) => <button key={agent.id} onClick={onOpen} style={{ textAlign: "left", padding: "10px", borderRadius: 10, border: `1px solid ${agent.color}30`, background: "rgba(255,255,255,.025)", color: "#F1F4FB", cursor: "pointer" }}><div style={{ display: "flex", alignItems: "center", gap: 7 }}><span style={{ width: 24, height: 24, display: "grid", placeItems: "center", borderRadius: 8, background: `${agent.color}22`, color: agent.color, fontFamily: "Fraunces, serif", fontWeight: 700 }}>{agent.letter}</span><span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", boxShadow: "0 0 8px #4ADE80" }} /></div><div style={{ fontSize: 12, fontWeight: 800, marginTop: 8 }}>{agent.name}</div><div style={{ color: "#94A3B8", fontSize: 10, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{agent.role}</div></button>)}
+    </div>
+  </section>;
+}
+
+function TaskAssignmentModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (draft: { title: string; description: string; assignedAgent: string; priority: string }) => Promise<void> }) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [agent, setAgent] = useState<string>(COMMAND_CENTER_AGENTS[0]?.id ?? "hermes");
+  const [priority, setPriority] = useState("medium");
+  const [submitting, setSubmitting] = useState(false);
+  return <div role="dialog" aria-modal="true" aria-label="Assign a new task" style={{ position: "fixed", inset: 0, zIndex: 50, display: "grid", placeItems: "center", padding: 18, background: "rgba(3,3,8,.72)", backdropFilter: "blur(7px)" }}><form onSubmit={(event) => { event.preventDefault(); setSubmitting(true); void onSubmit({ title, description, assignedAgent: agent, priority }); }} style={{ width: "min(620px, 100%)", padding: 22, borderRadius: 18, background: "linear-gradient(160deg, rgba(27,29,51,.98), rgba(11,12,23,.98))", border: "1px solid rgba(182,166,255,.3)" }}><div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start", marginBottom: 18 }}><div><div style={{ color: "#B6A6FF", fontFamily: "JetBrains Mono, monospace", fontSize: 10, letterSpacing: ".13em", textTransform: "uppercase" }}>Task assignment</div><h2 style={{ fontFamily: "Fraunces, serif", fontSize: 25, margin: "5px 0 0" }}>Give the collective a clear brief</h2></div><button type="button" onClick={onClose} style={{ border: 0, background: "transparent", color: "#B9B7C9", cursor: "pointer", fontSize: 20 }}>×</button></div><div style={{ display: "grid", gap: 13 }}><input required autoFocus value={title} onChange={(event) => setTitle(event.target.value)} placeholder="What needs to happen?" style={taskInput} /><textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Context and expected outcome." rows={3} style={{ ...taskInput, resize: "vertical" }} /><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><select value={agent} onChange={(event) => setAgent(event.target.value)} style={taskInput}>{COMMAND_CENTER_AGENTS.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.role}</option>)}</select><select value={priority} onChange={(event) => setPriority(event.target.value)} style={taskInput}><option value="low">Low priority</option><option value="medium">Medium priority</option><option value="high">High priority</option></select></div><div style={{ color: "#D6D2E7", fontSize: 11, lineHeight: 1.45 }}>This creates a tracked task. It does not execute external actions or bypass approval controls.</div><button type="submit" disabled={submitting || !title.trim()} style={{ border: 0, borderRadius: 9, padding: "10px 14px", background: "#8B7BFF", color: "white", cursor: "pointer", fontWeight: 800 }}>{submitting ? "Assigning…" : "Create task"}</button></div></form></div>;
+}
+
+const taskInput: CSSProperties = { width: "100%", boxSizing: "border-box", borderRadius: 9, border: "1px solid rgba(255,255,255,.14)", background: "rgba(0,0,0,.23)", color: "#F1EEFF", padding: "10px 11px", fontFamily: "Hanken Grotesk, sans-serif", fontSize: 13, outline: "none" };
 
 const missionCardStyle: React.CSSProperties = {
   background: "linear-gradient(180deg, rgba(27,36,55,0.92), rgba(15,22,38,0.88))",
@@ -2844,6 +2869,7 @@ export default function CommandCenterClient() {
   const [skillRegistry, setSkillRegistry] = useState<SkillRegistryData | null>(null);
   const [skillScoutResult, setSkillScoutResult] = useState<SkillScoutResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [taskComposerOpen, setTaskComposerOpen] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -3057,28 +3083,41 @@ export default function CommandCenterClient() {
     }
   };
 
+  const createDashboardTask = async (draft: { title: string; description: string; assignedAgent: string; priority: string }) => {
+    const response = await fetch("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(draft) });
+    if (!response.ok) throw new Error("Task creation failed.");
+    setTaskComposerOpen(false);
+    await fetchAll();
+  };
+
   return (
-    <div style={{ minHeight: "100vh", background: "var(--cc-bg-page, #0E1424)", color: "var(--cc-fg-primary, #F1F4FB)", fontFamily: "Hanken Grotesk, sans-serif" }}>
+    <div style={{ minHeight: "100vh", display: "flex", background: "radial-gradient(1000px 520px at 15% -10%, rgba(139,123,255,.14), transparent 62%), radial-gradient(800px 480px at 100% 100%, rgba(96,165,250,.08), transparent 62%), #06060B", color: "#F1F4FB", fontFamily: "Hanken Grotesk, sans-serif" }}>
+      <aside style={{ position: "sticky", top: 0, alignSelf: "flex-start", width: 226, height: "100vh", flexShrink: 0, boxSizing: "border-box", padding: "22px 12px", borderRight: "1px solid rgba(255,255,255,.08)", background: "rgba(8,8,15,.72)", backdropFilter: "blur(18px)" }}>
+        <div style={{ padding: "0 10px 22px", color: "#F3F0FA", fontFamily: "Fraunces, serif", fontSize: 19 }}>HERMES OS<div style={{ marginTop: 4, color: "#A99BFF", fontFamily: "JetBrains Mono, monospace", fontSize: 9, letterSpacing: ".13em" }}>COMMAND CENTER</div></div>
+        <nav aria-label="Command Center navigation" style={{ display: "grid", gap: 4 }}>{([['overview', 'Overview'], ['agents', 'Agent Network'], ['runs', 'Task Board'], ['projects', 'Projects'], ['logs', 'Audit Logs'], ['health', 'System Health']] as Array<[Tab, string]>).map(([id, label]) => <button key={id} onClick={() => setTab(id)} style={{ width: "100%", border: tab === id ? "1px solid rgba(139,123,255,.34)" : "1px solid transparent", borderRadius: 10, padding: "10px 11px", textAlign: "left", color: tab === id ? "#F0EDFF" : "#9A96A9", background: tab === id ? "rgba(139,123,255,.13)" : "transparent", cursor: "pointer", fontSize: 12 }}>{label}</button>)}</nav>
+      </aside>
+      <div style={{ minWidth: 0, flex: 1 }}>
       {/* Header */}
-      <div style={{ borderBottom: "1px solid #28324A", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 42 }}>
+      <div style={{ borderBottom: "1px solid rgba(255,255,255,.09)", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 58, background: "rgba(6,6,11,.64)", backdropFilter: "blur(18px)", position: "sticky", top: 0, zIndex: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <a href="/" style={{ fontSize: 11, color: "#94A3B8", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
             <span>←</span> Dashboard
           </a>
           <div style={{ width: 1, height: 16, background: "#28324A" }} />
-          <span style={{ fontSize: 14, fontWeight: 800, fontFamily: "Fraunces, serif", color: "#D8DEEB" }}>
-            Mission Control
+          <span style={{ fontSize: 17, fontWeight: 700, fontFamily: "Fraunces, serif", color: "#F1EEFF" }}>
+            HERMES OS <span style={{ color: "#8B7BFF", fontFamily: "JetBrains Mono, monospace", fontSize: 9, letterSpacing: "0.12em" }}>COMMAND CENTER</span>
           </span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#4B5563" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#94A3B8" }}>
           {loading && <span>Syncing...</span>}
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(healthCenter?.overall.status ?? "healthy"), animation: "pulse 2s infinite" }} />
           <span>{healthCenter ? `Health: ${systemHealth.score}%` : "Live"}</span>
+          <button onClick={() => setTaskComposerOpen(true)} style={{ border: 0, borderRadius: 10, padding: "9px 14px", background: "linear-gradient(135deg, #8B7BFF, #6A5CFF)", color: "#fff", fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 20px rgba(139,123,255,.28)" }}>+ New Task</button>
         </div>
       </div>
 
       {/* Tabs */}
-      <div style={{ padding: "0 24px", borderBottom: "1px solid #28324A", display: "flex", gap: 6, minHeight: 38, alignItems: "center", overflowX: "auto" }}>
+      <div style={{ display: "none" }}>
         {(["overview", "health", "agents", "memory", "skills", "projects", "builds", "runs", "bus", "logs", "chat"] as Tab[]).map((t) => (
           <button key={t} onClick={() => setTab(t)} style={pillStyle(tab === t)}>
             {t === "health" ? "Health Center" : t === "runs" ? "Run Inspector" : t === "bus" ? "Agent Bus" : t.charAt(0).toUpperCase() + t.slice(1)}
@@ -3203,6 +3242,8 @@ export default function CommandCenterClient() {
             {tab === "chat" && <ChatPanel initialMessages={chatMessages} />}
           </>
         )}
+      </div>
+      {taskComposerOpen && <TaskAssignmentModal onClose={() => setTaskComposerOpen(false)} onSubmit={createDashboardTask} />}
       </div>
     </div>
   );

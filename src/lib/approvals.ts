@@ -21,7 +21,8 @@ export type ApprovalActionType =
   | "skill_scout_import"
   | "skill_scout_arm"
   | "task_handoff"
-  | "self_improvement_proposal";
+  | "self_improvement_proposal"
+  | "obsidian_write_note";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected" | "executed";
 
@@ -93,6 +94,7 @@ const SCOPE_BLOCKED: Record<ApprovalActionType, string | null> = {
   skill_scout_arm: null,
   task_handoff: null,
   self_improvement_proposal: "Safe self-improvement proposals are advisory only. Branch implementation requires a separate explicit Osman-approved work request; this approval does not edit code, prompts, env, schema, branches, deployments, or integrations.",
+  obsidian_write_note: null,
 };
 
 async function writeAuditLog(
@@ -318,6 +320,26 @@ async function executeIfPossible(row: {
     const { executeApprovedAgentHandoff } = await import("@/lib/agent-bus");
     const envelope = await executeApprovedAgentHandoff(payload, row.userId);
     executionNote = `Published task handoff envelope ${envelope.id}.`;
+  }
+
+  if (actionType === "obsidian_write_note") {
+    const payload = JSON.parse(row.payload) as {
+      operation: "obsidian.writeNote";
+      path: string;
+      content: string;
+      mode: "overwrite" | "append";
+    };
+    const { createExecutionQueueTask } = await import("@/lib/execution-queue");
+    const { OBSIDIAN_WORKER_EXECUTOR } = await import("@/lib/obsidian-worker-task");
+    const task = await createExecutionQueueTask({
+      userId: row.userId,
+      title: `Obsidian: ${payload.operation}`,
+      description: JSON.stringify(payload),
+      priority: "medium",
+      assignedExecutor: OBSIDIAN_WORKER_EXECUTOR,
+      initialLog: `Approved ${payload.operation} for the local worker.`,
+    });
+    executionNote = `Approved Obsidian write queued for the local worker (task ${task.id.slice(0, 8)}).`;
   }
 
   const executed = await prisma.approvalAction.update({

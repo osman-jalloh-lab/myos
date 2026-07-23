@@ -1,0 +1,1737 @@
+{
+  "version": "1.0.0",
+  "generated_at": "2026-07-19T19:14:33.786139",
+  "root": "skills",
+  "total": 118,
+  "skills": [
+    {
+      "id": "_TEMPLATE",
+      "name": "skill-name",
+      "path": "skills\\_TEMPLATE",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "agent-tool-profile-enforcement",
+      "name": "agent-tool-profile-enforcement",
+      "path": "skills\\agent-tool-profile-enforcement",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "airtable",
+      "name": "airtable",
+      "path": "skills\\airtable",
+      "category": "project",
+      "tags": [
+        "[Airtable",
+        "Productivity",
+        "Database",
+        "API]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "apple-notes",
+      "name": "apple-notes",
+      "path": "skills\\apple-notes",
+      "category": "project",
+      "tags": [
+        "[Notes",
+        "Apple",
+        "macOS",
+        "note-taking]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "apple-reminders",
+      "name": "apple-reminders",
+      "path": "skills\\apple-reminders",
+      "category": "project",
+      "tags": [
+        "[Reminders",
+        "tasks",
+        "todo",
+        "macOS",
+        "Apple]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "architecture-diagram",
+      "name": "architecture-diagram",
+      "path": "skills\\architecture-diagram",
+      "category": "project",
+      "tags": [
+        "[architecture",
+        "diagrams",
+        "SVG",
+        "HTML",
+        "visualization",
+        "infrastructure",
+        "cloud]"
+      ],
+      "linked_sample": [
+        "templates"
+      ]
+    },
+    {
+      "id": "arxiv",
+      "name": "arxiv",
+      "path": "skills\\arxiv",
+      "category": "project",
+      "tags": [
+        "[Research",
+        "Arxiv",
+        "Papers",
+        "Academic",
+        "Science",
+        "API]"
+      ],
+      "linked_sample": [
+        "scripts"
+      ]
+    },
+    {
+      "id": "ascii-art",
+      "name": "ascii-art",
+      "path": "skills\\ascii-art",
+      "category": "project",
+      "tags": [
+        "[ASCII",
+        "Art",
+        "Banners",
+        "Creative",
+        "Unicode",
+        "Text-Art",
+        "pyfiglet",
+        "figlet",
+        "cowsay",
+        "boxes]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "ascii-video",
+      "name": "ascii-video",
+      "path": "skills\\ascii-video",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "baoyu-article-illustrator",
+      "name": "baoyu-article-illustrator",
+      "path": "skills\\baoyu-article-illustrator",
+      "category": "project",
+      "tags": [
+        "[article-illustration",
+        "creative",
+        "image-generation]"
+      ],
+      "linked_sample": [
+        "PORT_NOTES.md",
+        "prompts",
+        "references"
+      ]
+    },
+    {
+      "id": "baoyu-comic",
+      "name": "baoyu-comic",
+      "path": "skills\\baoyu-comic",
+      "category": "project",
+      "tags": [
+        "[comic",
+        "knowledge-comic",
+        "creative",
+        "image-generation]"
+      ],
+      "linked_sample": [
+        "PORT_NOTES.md",
+        "references"
+      ]
+    },
+    {
+      "id": "baoyu-infographic",
+      "name": "baoyu-infographic",
+      "path": "skills\\baoyu-infographic",
+      "category": "project",
+      "tags": [
+        "[infographic",
+        "visual-summary",
+        "creative",
+        "image-generation]"
+      ],
+      "linked_sample": [
+        "PORT_NOTES.md",
+        "references"
+      ]
+    },
+    {
+      "id": "blogwatcher",
+      "name": "blogwatcher",
+      "path": "skills\\blogwatcher",
+      "category": "project",
+      "tags": [
+        "[RSS",
+        "Blogs",
+        "Feed-Reader",
+        "Monitoring]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "build-orchestrator",
+      "name": "Build Orchestrator",
+      "path": "skills\\build-orchestrator",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "SKILL.md.bak-20260710"
+      ]
+    },
+    {
+      "id": "build-validation-runner",
+      "name": "Build Validation Runner",
+      "path": "skills\\build-validation-runner",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "SKILL.md.bak-20260710"
+      ]
+    },
+    {
+      "id": "career-application-workflow",
+      "name": "career-application-workflow",
+      "path": "skills\\career-application-workflow",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "claude-code",
+      "name": "claude-code",
+      "path": "skills\\claude-code",
+      "category": "project",
+      "tags": [
+        "[Coding-Agent",
+        "Claude",
+        "Anthropic",
+        "Code-Review",
+        "Refactoring",
+        "PTY",
+        "Automation]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "claude-design",
+      "name": "claude-design",
+      "path": "skills\\claude-design",
+      "category": "project",
+      "tags": [
+        "[design",
+        "html",
+        "prototype",
+        "ux",
+        "ui",
+        "creative",
+        "artifact",
+        "deck",
+        "motion",
+        "design-system]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "codebase-inspection",
+      "name": "codebase-inspection",
+      "path": "skills\\codebase-inspection",
+      "category": "project",
+      "tags": [
+        "[LOC",
+        "Code Analysis",
+        "pygount",
+        "Codebase",
+        "Metrics",
+        "Repository]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "codex",
+      "name": "codex",
+      "path": "skills\\codex",
+      "category": "project",
+      "tags": [
+        "[Coding-Agent",
+        "Codex",
+        "OpenAI",
+        "Code-Review",
+        "Refactoring]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "comfyui",
+      "name": "comfyui",
+      "path": "skills\\comfyui",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references",
+        "scripts",
+        "tests",
+        "workflows"
+      ]
+    },
+    {
+      "id": "creative-ideation",
+      "name": "ideation",
+      "path": "skills\\creative-ideation",
+      "category": "project",
+      "tags": [
+        "[Creative",
+        "Ideation",
+        "Projects",
+        "Brainstorming",
+        "Inspiration]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "debugging-hermes-tui-commands",
+      "name": "debugging-hermes-tui-commands",
+      "path": "skills\\debugging-hermes-tui-commands",
+      "category": "project",
+      "tags": [
+        "[debugging",
+        "hermes-agent",
+        "tui",
+        "slash-commands",
+        "typescript",
+        "python]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "design-md",
+      "name": "design-md",
+      "path": "skills\\design-md",
+      "category": "project",
+      "tags": [
+        "[design",
+        "design-system",
+        "tokens",
+        "ui",
+        "accessibility",
+        "wcag",
+        "tailwind",
+        "dtcg",
+        "google]"
+      ],
+      "linked_sample": [
+        "templates"
+      ]
+    },
+    {
+      "id": "excalidraw",
+      "name": "excalidraw",
+      "path": "skills\\excalidraw",
+      "category": "project",
+      "tags": [
+        "[Excalidraw",
+        "Diagrams",
+        "Flowcharts",
+        "Architecture",
+        "Visualization",
+        "JSON]"
+      ],
+      "linked_sample": [
+        "references",
+        "scripts"
+      ]
+    },
+    {
+      "id": "findmy",
+      "name": "findmy",
+      "path": "skills\\findmy",
+      "category": "project",
+      "tags": [
+        "[FindMy",
+        "AirTag",
+        "location",
+        "tracking",
+        "macOS",
+        "Apple]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "frontend-design",
+      "name": "frontend-design",
+      "path": "skills\\frontend-design",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "LICENSE.txt"
+      ]
+    },
+    {
+      "id": "gif-search",
+      "name": "gif-search",
+      "path": "skills\\gif-search",
+      "category": "project",
+      "tags": [
+        "[GIF",
+        "Media",
+        "Search",
+        "Tenor",
+        "API]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "github-auth",
+      "name": "github-auth",
+      "path": "skills\\github-auth",
+      "category": "project",
+      "tags": [
+        "[GitHub",
+        "Authentication",
+        "Git",
+        "gh-cli",
+        "SSH",
+        "Setup]"
+      ],
+      "linked_sample": [
+        "scripts"
+      ]
+    },
+    {
+      "id": "github-code-review",
+      "name": "github-code-review",
+      "path": "skills\\github-code-review",
+      "category": "project",
+      "tags": [
+        "[GitHub",
+        "Code-Review",
+        "Pull-Requests",
+        "Git",
+        "Quality]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "github-issues",
+      "name": "github-issues",
+      "path": "skills\\github-issues",
+      "category": "project",
+      "tags": [
+        "[GitHub",
+        "Issues",
+        "Project-Management",
+        "Bug-Tracking",
+        "Triage]"
+      ],
+      "linked_sample": [
+        "templates"
+      ]
+    },
+    {
+      "id": "github-pr-workflow",
+      "name": "github-pr-workflow",
+      "path": "skills\\github-pr-workflow",
+      "category": "project",
+      "tags": [
+        "[GitHub",
+        "Pull-Requests",
+        "CI/CD",
+        "Git",
+        "Automation",
+        "Merge]"
+      ],
+      "linked_sample": [
+        "references",
+        "templates"
+      ]
+    },
+    {
+      "id": "github-repo-management",
+      "name": "github-repo-management",
+      "path": "skills\\github-repo-management",
+      "category": "project",
+      "tags": [
+        "[GitHub",
+        "Repositories",
+        "Git",
+        "Releases",
+        "Secrets",
+        "Configuration]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "godmode",
+      "name": "godmode",
+      "path": "skills\\godmode",
+      "category": "project",
+      "tags": [
+        "[jailbreak",
+        "red-teaming",
+        "G0DM0D3",
+        "Parseltongue",
+        "GODMODE",
+        "uncensoring",
+        "safety-bypass",
+        "prompt-engineering",
+        "L1B3RT4S]"
+      ],
+      "linked_sample": [
+        "references",
+        "scripts",
+        "templates"
+      ]
+    },
+    {
+      "id": "google-workspace",
+      "name": "google-workspace",
+      "path": "skills\\google-workspace",
+      "category": "project",
+      "tags": [
+        "[Google",
+        "Gmail",
+        "Calendar",
+        "Drive",
+        "Sheets",
+        "Docs",
+        "Contacts",
+        "Email",
+        "OAuth]"
+      ],
+      "linked_sample": [
+        "references",
+        "scripts"
+      ]
+    },
+    {
+      "id": "grc-risk-role-screener",
+      "name": "grc-risk-role-screener",
+      "path": "skills\\grc-risk-role-screener",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "heartmula",
+      "name": "heartmula",
+      "path": "skills\\heartmula",
+      "category": "project",
+      "tags": [
+        "[music",
+        "audio",
+        "generation",
+        "ai",
+        "heartmula",
+        "heartcodec",
+        "lyrics",
+        "songs]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "hermes-agent",
+      "name": "hermes-agent",
+      "path": "skills\\hermes-agent",
+      "category": "project",
+      "tags": [
+        "[hermes",
+        "setup",
+        "configuration",
+        "multi-agent",
+        "spawning",
+        "cli",
+        "gateway",
+        "development]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "hermes-agent-skill-authoring",
+      "name": "hermes-agent-skill-authoring",
+      "path": "skills\\hermes-agent-skill-authoring",
+      "category": "project",
+      "tags": [
+        "[skills",
+        "authoring",
+        "hermes-agent",
+        "conventions",
+        "skill-md]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "hermes-local-worker",
+      "name": "hermes-local-worker",
+      "path": "skills\\hermes-local-worker",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "hermes-s6-container-supervision",
+      "name": "hermes-s6-container-supervision",
+      "path": "skills\\hermes-s6-container-supervision",
+      "category": "project",
+      "tags": [
+        "[docker",
+        "s6",
+        "supervision",
+        "gateway",
+        "profiles]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "hermes-telegram-gateway",
+      "name": "hermes-telegram-gateway",
+      "path": "skills\\hermes-telegram-gateway",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "himalaya",
+      "name": "himalaya",
+      "path": "skills\\himalaya",
+      "category": "project",
+      "tags": [
+        "[Email",
+        "IMAP",
+        "SMTP",
+        "CLI",
+        "Communication]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "huggingface-hub",
+      "name": "huggingface-hub",
+      "path": "skills\\huggingface-hub",
+      "category": "project",
+      "tags": [
+        "[huggingface",
+        "hf",
+        "models",
+        "datasets",
+        "hub",
+        "mlops]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "humanizer",
+      "name": "humanizer",
+      "path": "skills\\humanizer",
+      "category": "project",
+      "tags": [
+        "[writing",
+        "editing",
+        "humanize",
+        "anti-ai-slop",
+        "voice",
+        "prose",
+        "text]"
+      ],
+      "linked_sample": [
+        "LICENSE"
+      ]
+    },
+    {
+      "id": "i9-hr-compliance-specialist",
+      "name": "i9-hr-compliance-specialist",
+      "path": "skills\\i9-hr-compliance-specialist",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "imessage",
+      "name": "imessage",
+      "path": "skills\\imessage",
+      "category": "project",
+      "tags": [
+        "[iMessage",
+        "SMS",
+        "messaging",
+        "macOS",
+        "Apple]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "it-help-desk-trainer",
+      "name": "it-help-desk-trainer",
+      "path": "skills\\it-help-desk-trainer",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "job-application-ops",
+      "name": "job-application-ops",
+      "path": "skills\\job-application-ops",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "jupyter-live-kernel",
+      "name": "jupyter-live-kernel",
+      "path": "skills\\jupyter-live-kernel",
+      "category": "project",
+      "tags": [
+        "[jupyter",
+        "notebook",
+        "repl",
+        "data-science",
+        "exploration",
+        "iterative]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "kanban-codex-lane",
+      "name": "kanban-codex-lane",
+      "path": "skills\\kanban-codex-lane",
+      "category": "project",
+      "tags": [
+        "[kanban",
+        "codex",
+        "worktrees",
+        "autonomous-agents",
+        "prediction-market-bot]"
+      ],
+      "linked_sample": [
+        "templates"
+      ]
+    },
+    {
+      "id": "kanban-orchestrator",
+      "name": "kanban-orchestrator",
+      "path": "skills\\kanban-orchestrator",
+      "category": "project",
+      "tags": [
+        "[kanban",
+        "multi-agent",
+        "orchestration",
+        "routing]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "kanban-worker",
+      "name": "kanban-worker",
+      "path": "skills\\kanban-worker",
+      "category": "project",
+      "tags": [
+        "[kanban",
+        "multi-agent",
+        "collaboration",
+        "workflow",
+        "pitfalls]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "linear",
+      "name": "linear",
+      "path": "skills\\linear",
+      "category": "project",
+      "tags": [
+        "[Linear",
+        "Project Management",
+        "Issues",
+        "GraphQL",
+        "API",
+        "Productivity]"
+      ],
+      "linked_sample": [
+        "scripts"
+      ]
+    },
+    {
+      "id": "llm-wiki",
+      "name": "llm-wiki",
+      "path": "skills\\llm-wiki",
+      "category": "project",
+      "tags": [
+        "[wiki",
+        "knowledge-base",
+        "research",
+        "notes",
+        "markdown",
+        "rag-alternative]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "local-repo-quality-audit-and-fix",
+      "name": "local-repo-quality-audit-and-fix",
+      "path": "skills\\local-repo-quality-audit-and-fix",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "local-runtime-adapter",
+      "name": "local-runtime-adapter",
+      "path": "skills\\local-runtime-adapter",
+      "category": "project",
+      "tags": [
+        "[Local-Worker",
+        "Hermes",
+        "QA",
+        "Browser",
+        "Windows]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "local-worker-status",
+      "name": "Local Worker Status",
+      "path": "skills\\local-worker-status",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "SKILL.md.bak-20260710"
+      ]
+    },
+    {
+      "id": "local-workspace-discipline",
+      "name": "local-workspace-discipline",
+      "path": "skills\\local-workspace-discipline",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "macos-computer-use",
+      "name": "macos-computer-use",
+      "path": "skills\\macos-computer-use",
+      "category": "project",
+      "tags": [
+        "[computer-use",
+        "macos",
+        "desktop",
+        "automation",
+        "gui]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "manim-video",
+      "name": "manim-video",
+      "path": "skills\\manim-video",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references",
+        "scripts"
+      ]
+    },
+    {
+      "id": "maps",
+      "name": "maps",
+      "path": "skills\\maps",
+      "category": "project",
+      "tags": [
+        "[maps",
+        "geocoding",
+        "places",
+        "routing",
+        "distance",
+        "directions",
+        "nearby",
+        "location",
+        "openstreetmap",
+        "nominatim",
+        "overpass",
+        "osrm]"
+      ],
+      "linked_sample": [
+        "scripts"
+      ]
+    },
+    {
+      "id": "minecraft-modpack-server",
+      "name": "minecraft-modpack-server",
+      "path": "skills\\minecraft-modpack-server",
+      "category": "project",
+      "tags": [
+        "[minecraft",
+        "gaming",
+        "server",
+        "neoforge",
+        "forge",
+        "modpack]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "mlops__evaluation__lm-evaluation-harness",
+      "name": "evaluating-llms-harness",
+      "path": "skills\\mlops__evaluation__lm-evaluation-harness",
+      "category": "project",
+      "tags": [
+        "[Evaluation",
+        "LM Evaluation Harness",
+        "Benchmarking",
+        "MMLU",
+        "HumanEval",
+        "GSM8K",
+        "EleutherAI",
+        "Model Quality",
+        "Academic Benchmarks",
+        "Industry Standard]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "mlops__evaluation__weights-and-biases",
+      "name": "weights-and-biases",
+      "path": "skills\\mlops__evaluation__weights-and-biases",
+      "category": "project",
+      "tags": [
+        "[MLOps",
+        "Weights And Biases",
+        "WandB",
+        "Experiment Tracking",
+        "Hyperparameter Tuning",
+        "Model Registry",
+        "Collaboration",
+        "Real-Time Visualization",
+        "PyTorch",
+        "TensorFlow",
+        "HuggingFace]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "mlops__inference__llama-cpp",
+      "name": "llama-cpp",
+      "path": "skills\\mlops__inference__llama-cpp",
+      "category": "project",
+      "tags": [
+        "[llama.cpp",
+        "GGUF",
+        "Quantization",
+        "Hugging Face Hub",
+        "CPU Inference",
+        "Apple Silicon",
+        "Edge Deployment",
+        "AMD GPUs",
+        "Intel GPUs",
+        "NVIDIA",
+        "URL-first]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "mlops__inference__obliteratus",
+      "name": "obliteratus",
+      "path": "skills\\mlops__inference__obliteratus",
+      "category": "project",
+      "tags": [
+        "[Abliteration",
+        "Uncensoring",
+        "Refusal-Removal",
+        "LLM",
+        "Weight-Projection",
+        "SVD",
+        "Mechanistic-Interpretability",
+        "HuggingFace",
+        "Model-Surgery]"
+      ],
+      "linked_sample": [
+        "references",
+        "templates"
+      ]
+    },
+    {
+      "id": "mlops__inference__vllm",
+      "name": "serving-llms-vllm",
+      "path": "skills\\mlops__inference__vllm",
+      "category": "project",
+      "tags": [
+        "[vLLM",
+        "Inference Serving",
+        "PagedAttention",
+        "Continuous Batching",
+        "High Throughput",
+        "Production",
+        "OpenAI API",
+        "Quantization",
+        "Tensor Parallelism]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "mlops__models__audiocraft",
+      "name": "audiocraft-audio-generation",
+      "path": "skills\\mlops__models__audiocraft",
+      "category": "project",
+      "tags": [
+        "[Multimodal",
+        "Audio Generation",
+        "Text-to-Music",
+        "Text-to-Audio",
+        "MusicGen]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "mlops__models__segment-anything",
+      "name": "segment-anything-model",
+      "path": "skills\\mlops__models__segment-anything",
+      "category": "project",
+      "tags": [
+        "[Multimodal",
+        "Image Segmentation",
+        "Computer Vision",
+        "SAM",
+        "Zero-Shot]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "mlops__research__dspy",
+      "name": "dspy",
+      "path": "skills\\mlops__research__dspy",
+      "category": "project",
+      "tags": [
+        "[Prompt Engineering",
+        "DSPy",
+        "Declarative Programming",
+        "RAG",
+        "Agents",
+        "Prompt Optimization",
+        "LM Programming",
+        "Stanford NLP",
+        "Automatic Optimization",
+        "Modular AI]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "nano-pdf",
+      "name": "nano-pdf",
+      "path": "skills\\nano-pdf",
+      "category": "project",
+      "tags": [
+        "[PDF",
+        "Documents",
+        "Editing",
+        "NLP",
+        "Productivity]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "native-mcp",
+      "name": "native-mcp",
+      "path": "skills\\native-mcp",
+      "category": "project",
+      "tags": [
+        "[MCP",
+        "Tools",
+        "Integrations]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "nextjs-ai-routing-migration",
+      "name": "nextjs-ai-routing-migration",
+      "path": "skills\\nextjs-ai-routing-migration",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "nextjs-approved-action-ui",
+      "name": "nextjs-approved-action-ui",
+      "path": "skills\\nextjs-approved-action-ui",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references",
+        "templates"
+      ]
+    },
+    {
+      "id": "nextjs-deployment-readiness",
+      "name": "nextjs-deployment-readiness",
+      "path": "skills\\nextjs-deployment-readiness",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "nextjs-voice-feature-branches",
+      "name": "nextjs-voice-feature-branches",
+      "path": "skills\\nextjs-voice-feature-branches",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "nextjs-windows-repo-workflow",
+      "name": "nextjs-windows-repo-workflow",
+      "path": "skills\\nextjs-windows-repo-workflow",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "node-inspect-debugger",
+      "name": "node-inspect-debugger",
+      "path": "skills\\node-inspect-debugger",
+      "category": "project",
+      "tags": [
+        "[debugging",
+        "nodejs",
+        "node-inspect",
+        "cdp",
+        "breakpoints",
+        "ui-tui]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "notion",
+      "name": "notion",
+      "path": "skills\\notion",
+      "category": "project",
+      "tags": [
+        "[Notion",
+        "Productivity",
+        "Notes",
+        "Database",
+        "API",
+        "CLI",
+        "Workers]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "obsidian",
+      "name": "obsidian",
+      "path": "skills\\obsidian",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "ocr-and-documents",
+      "name": "ocr-and-documents",
+      "path": "skills\\ocr-and-documents",
+      "category": "project",
+      "tags": [
+        "[PDF",
+        "Documents",
+        "Research",
+        "Arxiv",
+        "Text-Extraction",
+        "OCR]"
+      ],
+      "linked_sample": [
+        "DESCRIPTION.md",
+        "scripts"
+      ]
+    },
+    {
+      "id": "opencode",
+      "name": "opencode",
+      "path": "skills\\opencode",
+      "category": "project",
+      "tags": [
+        "[Coding-Agent",
+        "OpenCode",
+        "Autonomous",
+        "Refactoring",
+        "Code-Review]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "openhue",
+      "name": "openhue",
+      "path": "skills\\openhue",
+      "category": "project",
+      "tags": [
+        "[Smart-Home",
+        "Hue",
+        "Lights",
+        "IoT",
+        "Automation]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "p5js",
+      "name": "p5js",
+      "path": "skills\\p5js",
+      "category": "project",
+      "tags": [
+        "[creative-coding",
+        "generative-art",
+        "p5js",
+        "canvas",
+        "interactive",
+        "visualization",
+        "webgl",
+        "shaders",
+        "animation]"
+      ],
+      "linked_sample": [
+        "references",
+        "scripts",
+        "templates"
+      ]
+    },
+    {
+      "id": "personal-context-anchor",
+      "name": "personal-context-anchor",
+      "path": "skills\\personal-context-anchor",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "petdex",
+      "name": "petdex",
+      "path": "skills\\petdex",
+      "category": "project",
+      "tags": [
+        "[petdex",
+        "mascot",
+        "display",
+        "cli",
+        "tui",
+        "desktop]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "pixel-art",
+      "name": "pixel-art",
+      "path": "skills\\pixel-art",
+      "category": "project",
+      "tags": [
+        "[creative",
+        "pixel-art",
+        "arcade",
+        "snes",
+        "nes",
+        "gameboy",
+        "retro",
+        "image",
+        "video]"
+      ],
+      "linked_sample": [
+        "ATTRIBUTION.md",
+        "references",
+        "scripts"
+      ]
+    },
+    {
+      "id": "plan",
+      "name": "plan",
+      "path": "skills\\plan",
+      "category": "project",
+      "tags": [
+        "[planning",
+        "plan-mode",
+        "implementation",
+        "workflow",
+        "design",
+        "documentation]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "pokemon-player",
+      "name": "pokemon-player",
+      "path": "skills\\pokemon-player",
+      "category": "project",
+      "tags": [
+        "[gaming",
+        "pokemon",
+        "emulator",
+        "pyboy",
+        "gameplay",
+        "gameboy]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "polymarket",
+      "name": "polymarket",
+      "path": "skills\\polymarket",
+      "category": "project",
+      "tags": [
+        "[polymarket",
+        "prediction-markets",
+        "market-data",
+        "trading]"
+      ],
+      "linked_sample": [
+        "references",
+        "scripts"
+      ]
+    },
+    {
+      "id": "popular-web-designs",
+      "name": "popular-web-designs",
+      "path": "skills\\popular-web-designs",
+      "category": "project",
+      "tags": [
+        "[design",
+        "css",
+        "html",
+        "ui",
+        "web-development",
+        "design-systems",
+        "templates]"
+      ],
+      "linked_sample": [
+        "templates"
+      ]
+    },
+    {
+      "id": "powerpoint",
+      "name": "powerpoint",
+      "path": "skills\\powerpoint",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "editing.md",
+        "LICENSE.txt",
+        "pptxgenjs.md",
+        "scripts"
+      ]
+    },
+    {
+      "id": "pr-packaging",
+      "name": "pr-packaging",
+      "path": "skills\\pr-packaging",
+      "category": "project",
+      "tags": [
+        "[GitHub",
+        "Pull-Request",
+        "Review",
+        "Diff]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "pretext",
+      "name": "pretext",
+      "path": "skills\\pretext",
+      "category": "project",
+      "tags": [
+        "[creative-coding",
+        "typography",
+        "pretext",
+        "ascii-art",
+        "canvas",
+        "generative",
+        "text-layout",
+        "kinetic-typography]"
+      ],
+      "linked_sample": [
+        "references",
+        "templates"
+      ]
+    },
+    {
+      "id": "project-starter",
+      "name": "Project Starter",
+      "path": "skills\\project-starter",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "SKILL.md.bak-20260710"
+      ]
+    },
+    {
+      "id": "python-debugpy",
+      "name": "python-debugpy",
+      "path": "skills\\python-debugpy",
+      "category": "project",
+      "tags": [
+        "[debugging",
+        "python",
+        "pdb",
+        "debugpy",
+        "breakpoints",
+        "dap",
+        "post-mortem]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "repo-change-planner",
+      "name": "Repo Change Planner",
+      "path": "skills\\repo-change-planner",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "SKILL.md.bak-20260710"
+      ]
+    },
+    {
+      "id": "requesting-code-review",
+      "name": "requesting-code-review",
+      "path": "skills\\requesting-code-review",
+      "category": "project",
+      "tags": [
+        "[code-review",
+        "security",
+        "verification",
+        "quality",
+        "pre-commit",
+        "auto-fix]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "research-paper-writing",
+      "name": "research-paper-writing",
+      "path": "skills\\research-paper-writing",
+      "category": "project",
+      "tags": [
+        "[Research",
+        "Paper Writing",
+        "Experiments",
+        "ML",
+        "AI",
+        "NeurIPS",
+        "ICML",
+        "ICLR",
+        "ACL",
+        "AAAI",
+        "COLM",
+        "LaTeX",
+        "Citations",
+        "Statistical Analysis]"
+      ],
+      "linked_sample": [
+        "references",
+        "templates"
+      ]
+    },
+    {
+      "id": "simplify-code",
+      "name": "simplify-code",
+      "path": "skills\\simplify-code",
+      "category": "project",
+      "tags": [
+        "[code-review",
+        "cleanup",
+        "refactor",
+        "delegation",
+        "subagent",
+        "parallel",
+        "simplify]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "sketch",
+      "name": "sketch",
+      "path": "skills\\sketch",
+      "category": "project",
+      "tags": [
+        "[sketch",
+        "mockup",
+        "design",
+        "ui",
+        "prototype",
+        "html",
+        "variants",
+        "exploration",
+        "wireframe",
+        "comparison]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "skill-registry-maintenance",
+      "name": "skill-registry-maintenance",
+      "path": "skills\\skill-registry-maintenance",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "songsee",
+      "name": "songsee",
+      "path": "skills\\songsee",
+      "category": "project",
+      "tags": [
+        "[Audio",
+        "Visualization",
+        "Spectrogram",
+        "Music",
+        "Analysis]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "songwriting-and-ai-music",
+      "name": "songwriting-and-ai-music",
+      "path": "skills\\songwriting-and-ai-music",
+      "category": "project",
+      "tags": [
+        "[songwriting",
+        "music",
+        "suno",
+        "parody",
+        "lyrics",
+        "creative]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "spike",
+      "name": "spike",
+      "path": "skills\\spike",
+      "category": "project",
+      "tags": [
+        "[spike",
+        "prototype",
+        "experiment",
+        "feasibility",
+        "throwaway",
+        "exploration",
+        "research",
+        "planning",
+        "mvp",
+        "proof-of-concept]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "spotify",
+      "name": "spotify",
+      "path": "skills\\spotify",
+      "category": "project",
+      "tags": [
+        "[spotify",
+        "music",
+        "playback",
+        "playlists",
+        "media]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "student-work-authorization-guard",
+      "name": "student-work-authorization-guard",
+      "path": "skills\\student-work-authorization-guard",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "subagent-driven-development",
+      "name": "subagent-driven-development",
+      "path": "skills\\subagent-driven-development",
+      "category": "project",
+      "tags": [
+        "[delegation",
+        "subagent",
+        "implementation",
+        "workflow",
+        "parallel]"
+      ],
+      "linked_sample": [
+        "references"
+      ]
+    },
+    {
+      "id": "systematic-debugging",
+      "name": "systematic-debugging",
+      "path": "skills\\systematic-debugging",
+      "category": "project",
+      "tags": [
+        "[debugging",
+        "troubleshooting",
+        "problem-solving",
+        "root-cause",
+        "investigation]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "teams-meeting-pipeline",
+      "name": "teams-meeting-pipeline",
+      "path": "skills\\teams-meeting-pipeline",
+      "category": "project",
+      "tags": [
+        "[Teams",
+        "Microsoft Graph",
+        "Meetings",
+        "Productivity",
+        "Operations]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "test-driven-development",
+      "name": "test-driven-development",
+      "path": "skills\\test-driven-development",
+      "category": "project",
+      "tags": [
+        "[testing",
+        "tdd",
+        "development",
+        "quality",
+        "red-green-refactor]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "touchdesigner-mcp",
+      "name": "touchdesigner-mcp",
+      "path": "skills\\touchdesigner-mcp",
+      "category": "project",
+      "tags": [
+        "[TouchDesigner",
+        "MCP",
+        "twozero",
+        "creative-coding",
+        "real-time-visuals",
+        "generative-art",
+        "audio-reactive",
+        "VJ",
+        "installation",
+        "GLSL]"
+      ],
+      "linked_sample": [
+        "references",
+        "scripts"
+      ]
+    },
+    {
+      "id": "webhook-subscriptions",
+      "name": "webhook-subscriptions",
+      "path": "skills\\webhook-subscriptions",
+      "category": "project",
+      "tags": [
+        "[webhook",
+        "events",
+        "automation",
+        "integrations",
+        "notifications",
+        "push]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "writing-humanizer",
+      "name": "writing-humanizer",
+      "path": "skills\\writing-humanizer",
+      "category": "project",
+      "tags": [],
+      "linked_sample": []
+    },
+    {
+      "id": "writing-plans",
+      "name": "writing-plans",
+      "path": "skills\\writing-plans",
+      "category": "project",
+      "tags": [
+        "[planning",
+        "design",
+        "implementation",
+        "workflow",
+        "documentation]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "xurl",
+      "name": "xurl",
+      "path": "skills\\xurl",
+      "category": "project",
+      "tags": [
+        "[twitter",
+        "x",
+        "social-media",
+        "xurl",
+        "official-api]"
+      ],
+      "linked_sample": []
+    },
+    {
+      "id": "youtube-content",
+      "name": "youtube-content",
+      "path": "skills\\youtube-content",
+      "category": "project",
+      "tags": [],
+      "linked_sample": [
+        "references",
+        "scripts"
+      ]
+    }
+  ]
+}
