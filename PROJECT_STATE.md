@@ -48,8 +48,9 @@ GitHub `main` is the destination, not proof of local completeness. Do not force-
 | Fugu gate/retry | Fragmented | Dedicated variant branch and runtime setting | Compare implementation before porting |
 | Skill upgrades | Highly divergent | The skill-upgrade variant has broad source drift | Review by subsystem, never bulk copy |
 | Cron buckets | Working by design | Dynamic `src/app/api/cron/[bucket]/route.ts` serves daily/weekly/monthly buckets | No action |
-| Environment docs | Updated on this branch | Runtime/local-worker settings documented in `.env.example` | Validate against all env reads |
-| Lint | In progress | Previous run had three p5js CommonJS errors and 25 warnings | Validate the ESM exporter fix; triage warnings separately |
+| Environment docs | Verified complete for static reads | Runtime/local-worker settings documented in `.env.example`; no non-platform static reads remain undocumented | Recheck when environment reads change |
+| Lint | Passing with warnings | `npm run lint` reports 0 errors and 25 warnings after the p5js ESM conversion | Triage warnings by subsystem in small commits |
+| Validation | Passing | `npm test -- --run`: 41 files / 161 tests passed; `npm run build` compiled successfully | Address Turbopack tracing warnings separately |
 | Master spec freshness | Stale/partial | Spec date and agent roster conflict with later implementation evidence | Reconcile after code consolidation |
 
 ## Feature provenance matrix
