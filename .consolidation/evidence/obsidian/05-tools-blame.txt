@@ -1,0 +1,98 @@
+ed2b1a37 (OSMAN JALLOH 2026-07-22  1) import { createApproval } from "@/lib/approvals";
+ed2b1a37 (OSMAN JALLOH 2026-07-22  2) import { createExecutionQueueTask } from "@/lib/execution-queue";
+ed2b1a37 (OSMAN JALLOH 2026-07-22  3) import {
+ed2b1a37 (OSMAN JALLOH 2026-07-22  4)   OBSIDIAN_WORKER_EXECUTOR,
+ed2b1a37 (OSMAN JALLOH 2026-07-22  5)   type ObsidianOperation,
+ed2b1a37 (OSMAN JALLOH 2026-07-22  6)   type ObsidianWorkerPayload,
+ed2b1a37 (OSMAN JALLOH 2026-07-22  7) } from "@/lib/obsidian-worker-task";
+ed2b1a37 (OSMAN JALLOH 2026-07-22  8) import { registerTool } from "../tool-registry";
+ed2b1a37 (OSMAN JALLOH 2026-07-22  9) import type { ToolContext } from "../types";
+ed2b1a37 (OSMAN JALLOH 2026-07-22 10) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22 11) function optionalPath(input: Record<string, unknown>): string | undefined {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 12)   const value = input.path;
+ed2b1a37 (OSMAN JALLOH 2026-07-22 13)   if (value === undefined) return undefined;
+ed2b1a37 (OSMAN JALLOH 2026-07-22 14)   if (typeof value !== "string" || !value.trim()) throw new Error("path must be a non-empty string when provided.");
+ed2b1a37 (OSMAN JALLOH 2026-07-22 15)   return value.trim();
+ed2b1a37 (OSMAN JALLOH 2026-07-22 16) }
+ed2b1a37 (OSMAN JALLOH 2026-07-22 17) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22 18) function requiredString(input: Record<string, unknown>, key: "path" | "query" | "content"): string {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 19)   const value = input[key];
+ed2b1a37 (OSMAN JALLOH 2026-07-22 20)   if (typeof value !== "string" || !value.trim()) throw new Error(`${key} is required.`);
+ed2b1a37 (OSMAN JALLOH 2026-07-22 21)   return value.trim();
+ed2b1a37 (OSMAN JALLOH 2026-07-22 22) }
+ed2b1a37 (OSMAN JALLOH 2026-07-22 23) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22 24) async function queueObsidianTask(
+ed2b1a37 (OSMAN JALLOH 2026-07-22 25)   ctx: ToolContext,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 26)   operation: Exclude<ObsidianOperation, "obsidian.writeNote">,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 27)   payload: ObsidianWorkerPayload,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 28) ) {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 29)   const task = await createExecutionQueueTask({
+ed2b1a37 (OSMAN JALLOH 2026-07-22 30)     userId: ctx.userId,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 31)     title: `Obsidian: ${operation}`,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 32)     description: JSON.stringify(payload),
+ed2b1a37 (OSMAN JALLOH 2026-07-22 33)     priority: "medium",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 34)     assignedExecutor: OBSIDIAN_WORKER_EXECUTOR,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 35)     initialLog: `Queued ${operation} for the local worker.`,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 36)   });
+ed2b1a37 (OSMAN JALLOH 2026-07-22 37)   return {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 38)     answer: `${operation} is queued for the local worker (task ${task.id.slice(0, 8)}).`,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 39)     artifacts: [{ type: "task" as const, title: `Obsidian ${operation}`, id: task.id }],
+ed2b1a37 (OSMAN JALLOH 2026-07-22 40)   };
+ed2b1a37 (OSMAN JALLOH 2026-07-22 41) }
+ed2b1a37 (OSMAN JALLOH 2026-07-22 42) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22 43) export function registerObsidianTools(): void {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 44)   registerTool({
+ed2b1a37 (OSMAN JALLOH 2026-07-22 45)     name: "obsidian.listNotes",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 46)     description: "List Markdown notes in the local Obsidian vault.",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 47)     risk: "read",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 48)     requiresApproval: false,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 49)     execute: async (input, ctx) => queueObsidianTask(ctx, "obsidian.listNotes", {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 50)       operation: "obsidian.listNotes",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 51)       path: optionalPath(input),
+ed2b1a37 (OSMAN JALLOH 2026-07-22 52)     }),
+ed2b1a37 (OSMAN JALLOH 2026-07-22 53)   });
+ed2b1a37 (OSMAN JALLOH 2026-07-22 54) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22 55)   registerTool({
+ed2b1a37 (OSMAN JALLOH 2026-07-22 56)     name: "obsidian.readNote",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 57)     description: "Read one Markdown note from the local Obsidian vault.",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 58)     risk: "read",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 59)     requiresApproval: false,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 60)     execute: async (input, ctx) => queueObsidianTask(ctx, "obsidian.readNote", {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 61)       operation: "obsidian.readNote",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 62)       path: requiredString(input, "path"),
+ed2b1a37 (OSMAN JALLOH 2026-07-22 63)     }),
+ed2b1a37 (OSMAN JALLOH 2026-07-22 64)   });
+ed2b1a37 (OSMAN JALLOH 2026-07-22 65) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22 66)   registerTool({
+ed2b1a37 (OSMAN JALLOH 2026-07-22 67)     name: "obsidian.searchNotes",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 68)     description: "Search the text of Markdown notes in the local Obsidian vault.",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 69)     risk: "read",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 70)     requiresApproval: false,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 71)     execute: async (input, ctx) => queueObsidianTask(ctx, "obsidian.searchNotes", {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 72)       operation: "obsidian.searchNotes",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 73)       query: requiredString(input, "query"),
+ed2b1a37 (OSMAN JALLOH 2026-07-22 74)       path: optionalPath(input),
+ed2b1a37 (OSMAN JALLOH 2026-07-22 75)     }),
+ed2b1a37 (OSMAN JALLOH 2026-07-22 76)   });
+ed2b1a37 (OSMAN JALLOH 2026-07-22 77) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22 78)   registerTool({
+ed2b1a37 (OSMAN JALLOH 2026-07-22 79)     name: "obsidian.writeNote",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 80)     description: "Request an approved overwrite or append to a local Obsidian note.",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 81)     risk: "internal_write",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 82)     requiresApproval: true,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 83)     execute: async (input, ctx) => {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 84)       const mode = input.mode === "append" ? "append" : input.mode === "overwrite" ? "overwrite" : null;
+ed2b1a37 (OSMAN JALLOH 2026-07-22 85)       if (!mode) throw new Error('mode must be "overwrite" or "append".');
+ed2b1a37 (OSMAN JALLOH 2026-07-22 86)       const approval = await createApproval(ctx.userId, "obsidian_write_note", {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 87)         operation: "obsidian.writeNote",
+ed2b1a37 (OSMAN JALLOH 2026-07-22 88)         path: requiredString(input, "path"),
+ed2b1a37 (OSMAN JALLOH 2026-07-22 89)         content: requiredString(input, "content"),
+ed2b1a37 (OSMAN JALLOH 2026-07-22 90)         mode,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 91)       });
+ed2b1a37 (OSMAN JALLOH 2026-07-22 92)       return {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 93)         answer: `Obsidian write queued for approval (id: ${approval.id.slice(0, 8)}).`,
+ed2b1a37 (OSMAN JALLOH 2026-07-22 94)         artifacts: [{ type: "task" as const, title: "Obsidian write pending approval", id: approval.id }],
+ed2b1a37 (OSMAN JALLOH 2026-07-22 95)       };
+ed2b1a37 (OSMAN JALLOH 2026-07-22 96)     },
+ed2b1a37 (OSMAN JALLOH 2026-07-22 97)   });
+ed2b1a37 (OSMAN JALLOH 2026-07-22 98) }

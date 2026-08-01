@@ -1,5 +1,18 @@
 # Decisions log
 
+## 2026-08-01 — Preserve incomplete Obsidian execution as evidence, not a live capability
+
+Decision: Keep `obsidian-worker-task.ts` and `obsidian-tools.ts` in the canonical repository,
+but do not expose, port, or expand them. Their provenance is recorded in
+`FEATURE_PROVENANCE.md` and `.consolidation/evidence/obsidian/`.
+
+Why: Both files were introduced by `ed2b1a3`, but no code registers the tools and no local-worker
+handler executes the declared `obsidian_worker` payload. The feature has no vault containment
+implementation or characterization tests. A future implementation requires separate approval and
+must enforce a configured vault boundary, approval policy, and worker-level tests.
+
+Owner: Osman Jalloh.
+
 ## 2026-08-01 — Establish one Hermes OS integration baseline
 
 Decision: Treat the local `hermes-os` repository as the candidate integration baseline while

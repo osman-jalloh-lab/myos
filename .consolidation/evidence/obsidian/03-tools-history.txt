@@ -1,0 +1,1 @@
+ed2b1a377130e2540bf398109224a3388d380f1f	2026-07-22T20:30:10-05:00	OSMAN JALLOH	Add skills registry and Obsidian integration

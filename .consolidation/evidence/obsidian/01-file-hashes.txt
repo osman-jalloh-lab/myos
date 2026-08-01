@@ -1,0 +1,8 @@
+
+Algorithm Hash                                                             Path                                        
+--------- ----                                                             ----                                        
+SHA256    F3A3D4E8BEAD1E03C7E2A68E3DB7040D8D9EE2991386450465F2844B16826FCC C:\Users\osman\OneDrive\Desktop\my os\her...
+SHA256    2FA38EE3B301FBA37FBAB2CF0E8C49E824EC1DDEB7BC967C24DE7EF50656B97B C:\Users\osman\OneDrive\Desktop\my os\her...
+
+
+

@@ -1,0 +1,23 @@
+ed2b1a37 (OSMAN JALLOH 2026-07-22  1) export const OBSIDIAN_WORKER_EXECUTOR = "obsidian_worker";
+ed2b1a37 (OSMAN JALLOH 2026-07-22  2) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22  3) export const OBSIDIAN_OPERATIONS = [
+ed2b1a37 (OSMAN JALLOH 2026-07-22  4)   "obsidian.listNotes",
+ed2b1a37 (OSMAN JALLOH 2026-07-22  5)   "obsidian.readNote",
+ed2b1a37 (OSMAN JALLOH 2026-07-22  6)   "obsidian.searchNotes",
+ed2b1a37 (OSMAN JALLOH 2026-07-22  7)   "obsidian.writeNote",
+ed2b1a37 (OSMAN JALLOH 2026-07-22  8) ] as const;
+ed2b1a37 (OSMAN JALLOH 2026-07-22  9) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22 10) export type ObsidianOperation = (typeof OBSIDIAN_OPERATIONS)[number];
+ed2b1a37 (OSMAN JALLOH 2026-07-22 11) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22 12) export type ObsidianWorkerPayload = {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 13)   operation: ObsidianOperation;
+ed2b1a37 (OSMAN JALLOH 2026-07-22 14)   path?: string;
+ed2b1a37 (OSMAN JALLOH 2026-07-22 15)   query?: string;
+ed2b1a37 (OSMAN JALLOH 2026-07-22 16)   content?: string;
+ed2b1a37 (OSMAN JALLOH 2026-07-22 17)   mode?: "overwrite" | "append";
+ed2b1a37 (OSMAN JALLOH 2026-07-22 18) };
+ed2b1a37 (OSMAN JALLOH 2026-07-22 19) 
+ed2b1a37 (OSMAN JALLOH 2026-07-22 20) export function isObsidianOperation(value: unknown): value is ObsidianOperation {
+ed2b1a37 (OSMAN JALLOH 2026-07-22 21)   return typeof value === "string"
+ed2b1a37 (OSMAN JALLOH 2026-07-22 22)     && (OBSIDIAN_OPERATIONS as readonly string[]).includes(value);
+ed2b1a37 (OSMAN JALLOH 2026-07-22 23) }

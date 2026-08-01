@@ -43,9 +43,9 @@ GitHub `main` is the destination, not proof of local completeness. Do not force-
 | Repository inventory | Complete for current workspace | `../hermes-repository-inventory.csv` contains path, remote, branch, HEAD, dirty state, and file counts | Update after each consolidation PR |
 | Recovery references | Complete | Each repository has `backup/pre-consolidation-2026-08-01`; clean repositories also have a `pre-consolidation-2026-08-01` tag | Retain until two successful release cycles |
 | Dirty work | Preserved | Binary patches for `hermes-os`, `hermes-os-deepseek-council`, and `paul` are in the workspace parent | Review independently; do not overwrite |
-| Obsidian execution | Baseline-only | `src/lib/obsidian-worker-task.ts` and `src/lib/hermes-execution/tools/obsidian-tools.ts` are absent from the variants | Locate tests and preserve first |
+| Obsidian execution | Characterized but incomplete | The two baseline-only files exist, but tools are unregistered and `obsidian_worker` has no worker implementation | Preserve as evidence; require an approved secure reimplementation |
 | DeepSeek council/direct | Fragmented | Dedicated variant branches and source/tests exist | Establish feature provenance matrix |
-| Fugu gate/retry | Fragmented | Dedicated variant branch and runtime setting | Compare implementation before porting |
+| Fugu/Sakana gate | Policy conflict | Canonical code still contains active Fugu/Sakana references; no variant code was imported | Plan a separate approved removal review |
 | Skill upgrades | Highly divergent | The skill-upgrade variant has broad source drift | Review by subsystem, never bulk copy |
 | Cron buckets | Working by design | Dynamic `src/app/api/cron/[bucket]/route.ts` serves daily/weekly/monthly buckets | No action |
 | Environment docs | Verified complete for static reads | Runtime/local-worker settings documented in `.env.example`; no non-platform static reads remain undocumented | Recheck when environment reads change |

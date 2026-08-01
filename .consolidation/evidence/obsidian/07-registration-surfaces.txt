@@ -1,0 +1,46 @@
+scripts/install-hermes-local-worker-startup.ps1:72:    -Description "Starts Hermes Local Worker at Windows logon so Mission Control can claim local_worker tasks." `
+scripts/seed-phase2-smoke-test.ts:29:      // Approval pre-persisted — required before executor may claim this task
+src/agents/hermes.ts:668:// Maps agent key ? the task type whose formatDirect() knows how to format its context.
+src/app/api/finance/route.ts:9: * and task type, and debt-payoff progress. Plutus never moves money — every
+src/components/HermesNousChatPanel.tsx:89:          <div style={queuedLine}>Waiting for local worker task {waitingTaskId.slice(0, 8)}...</div>
+src/lib/__tests__/hermes-nous-chat.test.ts:39:  it("persists a Hermes Nous user message and queues a hermes_chat worker task", async () => {
+src/lib/__tests__/response-formatter.test.ts:10:  it("redacts internal tool names, local paths, ids, and metadata from public responses", () => {
+src/lib/hermes-execution/mcp-adapter.ts:9://   import { registerTool } from "./tool-registry";
+src/lib/hermes-execution/mcp-adapter.ts:12://     registerTool({
+src/lib/hermes-execution/tool-registry.ts:9:export function registerTool(tool: ToolDefinition): void {
+src/lib/hermes-execution/tools/build-tools.ts:6:import { registerTool } from "../tool-registry";
+src/lib/hermes-execution/tools/build-tools.ts:358:          notice ?? "Local worker is online — it will claim this task on its next poll.",
+src/lib/hermes-execution/tools/build-tools.ts:507:  registerTool({
+src/lib/hermes-execution/tools/build-tools.ts:560:  registerTool({
+src/lib/hermes-execution/tools/build-tools.ts:572:  registerTool({
+src/lib/hermes-execution/tools/build-tools.ts:584:  registerTool({
+src/lib/hermes-execution/tools/build-tools.ts:654:  registerTool({
+src/lib/hermes-execution/tools/build-tools.ts:700:  registerTool({
+src/lib/hermes-execution/tools/build-tools.ts:735:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:5:import { registerTool } from "../tool-registry";
+src/lib/hermes-execution/tools/internal-tools.ts:131:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:147:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:248:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:294:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:339:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:374:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:420:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:455:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:495:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:531:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:598:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:612:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:643:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:765:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:829:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:920:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:950:  registerTool({
+src/lib/hermes-execution/tools/internal-tools.ts:995:  registerTool({
+src/lib/hermes-execution/tools/obsidian-tools.ts:8:import { registerTool } from "../tool-registry";
+src/lib/hermes-execution/tools/obsidian-tools.ts:44:  registerTool({
+src/lib/hermes-execution/tools/obsidian-tools.ts:55:  registerTool({
+src/lib/hermes-execution/tools/obsidian-tools.ts:66:  registerTool({
+src/lib/hermes-execution/tools/obsidian-tools.ts:78:  registerTool({
+src/lib/local-builder.ts:1906:  const log = `${rowString(project?.localBuildLog) || ""}\nQueued ${action} for local worker task ${task.id}.\nServerless runtime did not touch ${localFolderPath}.`.trim();
+src/lib/local-builder.ts:1920:      `Queued for local worker task ${task.id}`,
+src/lib/local-builder.ts:1926:  await logLocalBuilderRun(db, "queued", `local_build_queued action=${action} project=${projectName}`, `Queued local worker task ${task.id}: ${localFolderPath}`);

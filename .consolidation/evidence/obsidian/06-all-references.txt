@@ -1,0 +1,77 @@
+artifacts/skills-normalize-report.json:48:    "skills\\obsidian\\SKILL.md",
+artifacts/skills-sync-report.json:69:    "obsidian",
+skills/apple-notes/SKILL.md:11:    related_skills: [obsidian]
+skills/apple-notes/SKILL.md:35:- Obsidian vault management ? use the `obsidian` skill
+skills/apple-notes/SKILL.md:90:3. Use the `obsidian` skill for Markdown-native knowledge management
+skills/llm-wiki/SKILL.md:12:    related_skills: [obsidian, arxiv]
+skills/llm-wiki/SKILL.md:46:The wiki is just a directory of markdown files — open it in Obsidian, VS Code, or
+skills/llm-wiki/SKILL.md:405:### Obsidian Integration
+skills/llm-wiki/SKILL.md:407:The wiki directory works as an Obsidian vault out of the box:
+skills/llm-wiki/SKILL.md:414:- Set Obsidian's attachment folder to `raw/assets/`
+skills/llm-wiki/SKILL.md:415:- Enable "Wikilinks" in Obsidian settings (usually on by default)
+skills/llm-wiki/SKILL.md:418:If using the Obsidian skill alongside this one, set `OBSIDIAN_VAULT_PATH` to the
+skills/llm-wiki/SKILL.md:421:### Obsidian Headless (servers and headless machines)
+skills/llm-wiki/SKILL.md:423:On machines without a display, use `obsidian-headless` instead of the desktop app.
+skills/llm-wiki/SKILL.md:424:It syncs vaults via Obsidian Sync without a GUI — perfect for agents running on
+skills/llm-wiki/SKILL.md:425:servers that write to the wiki while Obsidian desktop reads it on another device.
+skills/llm-wiki/SKILL.md:430:npm install -g obsidian-headless
+skills/llm-wiki/SKILL.md:432:# Login (requires Obsidian account with Sync subscription)
+skills/llm-wiki/SKILL.md:451:# ~/.config/systemd/user/obsidian-wiki-sync.service
+skills/llm-wiki/SKILL.md:453:Description=Obsidian LLM Wiki Sync
+skills/llm-wiki/SKILL.md:469:systemctl --user enable --now obsidian-wiki-sync
+skills/llm-wiki/SKILL.md:475:vault in Obsidian on your laptop/phone — changes appear within seconds.
+skills/llm-wiki/SKILL.md:503:compiles sources into a concept wiki with the same Karpathy inspiration. It's Obsidian-compatible,
+skills/obsidian/SKILL.md:2:name: obsidian
+skills/obsidian/SKILL.md:3:description: Read, search, create, and edit notes in the Obsidian vault.
+skills/obsidian/SKILL.md:8:# Obsidian Vault
+skills/obsidian/SKILL.md:10:Use this skill for filesystem-first Obsidian vault work: reading notes, listing notes, searching note files, creating notes, appending content, and adding wikilinks.
+skills/obsidian/SKILL.md:16:The documented vault-path convention is the `OBSIDIAN_VAULT_PATH` environment variable, for example from `${HERMES_HOME:-~/.hermes}/.env`. If it is unset, use `~/Documents/Obsidian Vault`.
+skills/obsidian/SKILL.md:62:Obsidian links notes with `[[Note Name]]` syntax. When creating notes, use these to link related content.
+skills/popular-web-designs/templates/clickhouse.md:18:ClickHouse's interface is a high-performance cockpit rendered in acid yellow-green on obsidian black — a design that screams "speed" before you read a single word. The entire experience lives in darkness: pure black backgrounds (`#000000`) with dark charcoal cards (`#414141` borders) creating a terminal-grade aesthetic where the only chromatic interruption is the signature neon yellow-green (`#faff69`) that slashes across CTAs, borders, and highlighted moments like a highlighter pen on a dark console.
+skills/popular-web-designs/templates/raycast.md:18:Raycast's marketing site feels like the dark interior of a precision instrument — a Swiss watch case carved from obsidian. The background isn't just dark, it's an almost-black blue-tint (`#07080a`) that creates a sense of being inside a macOS native application rather than a website. Every surface, every border, every shadow is calibrated to evoke the feeling of a high-performance desktop utility: fast, minimal, trustworthy.
+skills/registry.json:1172:      "id": "obsidian",
+skills/registry.json:1173:      "name": "obsidian",
+skills/registry.json:1174:      "path": "skills\\obsidian",
+src/lib/approvals.ts:25:  | "obsidian_write_note";
+src/lib/approvals.ts:97:  obsidian_write_note: null,
+src/lib/approvals.ts:325:  if (actionType === "obsidian_write_note") {
+src/lib/approvals.ts:327:      operation: "obsidian.writeNote";
+src/lib/approvals.ts:333:    const { OBSIDIAN_WORKER_EXECUTOR } = await import("@/lib/obsidian-worker-task");
+src/lib/approvals.ts:336:      title: `Obsidian: ${payload.operation}`,
+src/lib/approvals.ts:342:    executionNote = `Approved Obsidian write queued for the local worker (task ${task.id.slice(0, 8)}).`;
+src/lib/hermes-execution/tools/obsidian-tools.ts:5:  type ObsidianOperation,
+src/lib/hermes-execution/tools/obsidian-tools.ts:6:  type ObsidianWorkerPayload,
+src/lib/hermes-execution/tools/obsidian-tools.ts:7:} from "@/lib/obsidian-worker-task";
+src/lib/hermes-execution/tools/obsidian-tools.ts:24:async function queueObsidianTask(
+src/lib/hermes-execution/tools/obsidian-tools.ts:26:  operation: Exclude<ObsidianOperation, "obsidian.writeNote">,
+src/lib/hermes-execution/tools/obsidian-tools.ts:27:  payload: ObsidianWorkerPayload,
+src/lib/hermes-execution/tools/obsidian-tools.ts:31:    title: `Obsidian: ${operation}`,
+src/lib/hermes-execution/tools/obsidian-tools.ts:39:    artifacts: [{ type: "task" as const, title: `Obsidian ${operation}`, id: task.id }],
+src/lib/hermes-execution/tools/obsidian-tools.ts:43:export function registerObsidianTools(): void {
+src/lib/hermes-execution/tools/obsidian-tools.ts:45:    name: "obsidian.listNotes",
+src/lib/hermes-execution/tools/obsidian-tools.ts:46:    description: "List Markdown notes in the local Obsidian vault.",
+src/lib/hermes-execution/tools/obsidian-tools.ts:49:    execute: async (input, ctx) => queueObsidianTask(ctx, "obsidian.listNotes", {
+src/lib/hermes-execution/tools/obsidian-tools.ts:50:      operation: "obsidian.listNotes",
+src/lib/hermes-execution/tools/obsidian-tools.ts:56:    name: "obsidian.readNote",
+src/lib/hermes-execution/tools/obsidian-tools.ts:57:    description: "Read one Markdown note from the local Obsidian vault.",
+src/lib/hermes-execution/tools/obsidian-tools.ts:60:    execute: async (input, ctx) => queueObsidianTask(ctx, "obsidian.readNote", {
+src/lib/hermes-execution/tools/obsidian-tools.ts:61:      operation: "obsidian.readNote",
+src/lib/hermes-execution/tools/obsidian-tools.ts:67:    name: "obsidian.searchNotes",
+src/lib/hermes-execution/tools/obsidian-tools.ts:68:    description: "Search the text of Markdown notes in the local Obsidian vault.",
+src/lib/hermes-execution/tools/obsidian-tools.ts:71:    execute: async (input, ctx) => queueObsidianTask(ctx, "obsidian.searchNotes", {
+src/lib/hermes-execution/tools/obsidian-tools.ts:72:      operation: "obsidian.searchNotes",
+src/lib/hermes-execution/tools/obsidian-tools.ts:79:    name: "obsidian.writeNote",
+src/lib/hermes-execution/tools/obsidian-tools.ts:80:    description: "Request an approved overwrite or append to a local Obsidian note.",
+src/lib/hermes-execution/tools/obsidian-tools.ts:86:      const approval = await createApproval(ctx.userId, "obsidian_write_note", {
+src/lib/hermes-execution/tools/obsidian-tools.ts:87:        operation: "obsidian.writeNote",
+src/lib/hermes-execution/tools/obsidian-tools.ts:93:        answer: `Obsidian write queued for approval (id: ${approval.id.slice(0, 8)}).`,
+src/lib/hermes-execution/tools/obsidian-tools.ts:94:        artifacts: [{ type: "task" as const, title: "Obsidian write pending approval", id: approval.id }],
+src/lib/obsidian-worker-task.ts:1:export const OBSIDIAN_WORKER_EXECUTOR = "obsidian_worker";
+src/lib/obsidian-worker-task.ts:4:  "obsidian.listNotes",
+src/lib/obsidian-worker-task.ts:5:  "obsidian.readNote",
+src/lib/obsidian-worker-task.ts:6:  "obsidian.searchNotes",
+src/lib/obsidian-worker-task.ts:7:  "obsidian.writeNote",
+src/lib/obsidian-worker-task.ts:10:export type ObsidianOperation = (typeof OBSIDIAN_OPERATIONS)[number];
+src/lib/obsidian-worker-task.ts:12:export type ObsidianWorkerPayload = {
+src/lib/obsidian-worker-task.ts:13:  operation: ObsidianOperation;
+src/lib/obsidian-worker-task.ts:20:export function isObsidianOperation(value: unknown): value is ObsidianOperation {
