@@ -60,5 +60,5 @@ bash skills/creative/p5js/scripts/setup.sh
     ├── setup.sh                 # Dependency verification
     ├── serve.sh                 # Local dev server (for loading local assets)
     ├── render.sh                # Headless render pipeline (HTML → frames → MP4)
-    └── export-frames.js         # Puppeteer frame capture (Node.js)
+    └── export-frames.mjs        # Puppeteer frame capture (Node.js)
 ```

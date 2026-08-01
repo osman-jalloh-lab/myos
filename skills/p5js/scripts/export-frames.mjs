@@ -14,7 +14,7 @@
  * a timed capture mode (less precise, may drop/duplicate frames).
  *
  * Usage:
- *   node export-frames.js sketch.html [options]
+ *   node export-frames.mjs sketch.html [options]
  *
  * Options:
  *   --output <dir>    Output directory (default: ./frames)
@@ -26,9 +26,9 @@
  *   --selector <sel>  Canvas CSS selector (default: canvas)
  *
  * Examples:
- *   node export-frames.js sketch.html --frames 1                     # single PNG
- *   node export-frames.js sketch.html --frames 300 --fps 30          # 10s at 30fps
- *   node export-frames.js sketch.html --width 3840 --height 2160     # 4K still
+ *   node export-frames.mjs sketch.html --frames 1                     # single PNG
+ *   node export-frames.mjs sketch.html --frames 300 --fps 30          # 10s at 30fps
+ *   node export-frames.mjs sketch.html --width 3840 --height 2160     # 4K still
  *
  * Sketch template for deterministic capture:
  *   function setup() {
@@ -40,9 +40,9 @@
  *   function draw() { ... }
  */
 
-const puppeteer = require('puppeteer');
-const path = require('path');
-const fs = require('fs');
+import puppeteer from "puppeteer";
+import path from "node:path";
+import fs from "node:fs";
 
 // Parse CLI arguments
 function parseArgs() {
@@ -72,7 +72,7 @@ function parseArgs() {
   }
 
   if (!opts.input) {
-    console.error('Usage: node export-frames.js <sketch.html> [options]');
+    console.error('Usage: node export-frames.mjs <sketch.html> [options]');
     process.exit(1);
   }
 

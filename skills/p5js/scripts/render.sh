@@ -67,7 +67,7 @@ fi
 
 # Step 1: Capture frames via Puppeteer
 echo "Step 1/2: Capturing ${TOTAL_FRAMES} frames..."
-node "$SCRIPT_DIR/export-frames.js" \
+node "$SCRIPT_DIR/export-frames.mjs" \
   "$INPUT" \
   --output "$FRAME_DIR" \
   --width "$WIDTH" \

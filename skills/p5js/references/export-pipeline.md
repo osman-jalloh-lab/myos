@@ -155,7 +155,7 @@ function draw() {
 }
 ```
 
-The bundled `scripts/export-frames.js` detects `window._p5Ready` and switches to deterministic mode automatically. Without it, falls back to timed capture (less precise).
+The bundled `scripts/export-frames.mjs` detects `window._p5Ready` and switches to deterministic mode automatically. Without it, falls back to timed capture (less precise).
 
 ### ffmpeg: Frames to MP4
 
@@ -272,9 +272,9 @@ ffmpeg -i frame-%04d.png -i palette.png \
 
 For automated, server-side, or CI rendering. Uses a headless Chrome browser to run the sketch.
 
-### export-frames.js (Node.js Script)
+### export-frames.mjs (Node.js Script)
 
-See `scripts/export-frames.js` for the full implementation. Basic pattern:
+See `scripts/export-frames.mjs` for the full implementation. Basic pattern:
 
 ```javascript
 const puppeteer = require('puppeteer');
