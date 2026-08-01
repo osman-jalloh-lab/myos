@@ -1,5 +1,19 @@
 # Decisions log
 
+## 2026-08-01 — Establish one Hermes OS integration baseline
+
+Decision: Treat the local `hermes-os` repository as the candidate integration baseline while
+reconciling it with `osman-jalloh-lab/myos`. Freeze all other Hermes variants as read-only
+sources. Port variant features one at a time with tests and provenance. Do not bulk-copy trees,
+delete variants, or force-push GitHub main.
+
+Why: The workspace contains divergent repositories with identical dependencies. The larger local
+tree contains capabilities absent from smaller variants, while GitHub main shares the smaller
+lineage. A controlled consolidation branch is safer than selecting a repository by folder name
+or file count alone.
+
+Owner: Osman Jalloh.
+
 ## 2026-06-07 — Phases 4-7 complete: approval queue, Plutus, Athena, Mnemosyne, scheduled automation — all verified live
 Built and verified end-to-end, all gated by the approval queue per CLAUDE.md rule 3
 ("nothing writes silently"):
