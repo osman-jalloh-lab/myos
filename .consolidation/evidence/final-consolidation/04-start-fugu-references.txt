@@ -1,0 +1,407 @@
+.env.example:58:SAKANA_API_KEY=
+.env.example:59:FUGU_DESIGN_PASS_SCORE=7
+.env.example:60:FUGU_DESIGN_GATE_MODE=required
+.env.example:61:# Retry timing in milliseconds for Fugu design-gate requests.
+.env.example:62:FUGU_RETRY_BASE_MS=750
+FEATURE_PROVENANCE.md:19:| Fugu/Sakana gate | Canonical tree and Fugu variant | Present in canonical tree | POLICY CONFLICT | Do not import from variants; plan a separate, approved removal review |
+FEATURE_PROVENANCE.md:89:## Fugu/Sakana policy conflict
+FEATURE_PROVENANCE.md:91:The required zero-reference check does **not** pass. Canonical runtime code, schema fields, migrations, UI, configuration, and local-worker logic currently reference Fugu/Sakana. The complete result is in `.consolidation/evidence/obsidian/08-fugu-zero-reference-check.txt`.
+FEATURE_PROVENANCE.md:93:No Fugu/Sakana code was imported during this review. Its removal is intentionally deferred: it is a behavior-changing, cross-cutting migration and requires its own approved plan and validation.
+PROJECT_STATE.md:48:| Fugu/Sakana gate | Policy conflict | Canonical code still contains active Fugu/Sakana references; no variant code was imported | Plan a separate approved removal review |
+PROJECT_STATE.md:63:| Fugu gate/retry | `hermes-os-fugu-gate` | `0ddaf0f` | TBD | Variant tests | Review |
+PROJECT_STATE.md:71:3. Review Fugu, DeepSeek direct, DeepSeek council, and skill upgrades one capability at a time.
+prisma/schema.prisma:364:  fuguGateStatus         String?
+prisma/schema.prisma:365:  fuguGateScore          Int?
+prisma/schema.prisma:366:  fuguGateReview         String?
+prisma/schema.prisma:367:  fuguGateReviewedAt     String?
+prisma/schema.prisma:368:  fuguGateOverrideReason String?
+prisma/schema.prisma:369:  fuguPolishStatus       String?
+scripts/hermes-local-worker.ts:29:  | "queued" | "claimed" | "initializing" | "planning" | "fugu_design_gate"
+scripts/hermes-local-worker.ts:32:  | "building" | "starting_preview" | "browser_qa" | "fugu_polish_review"
+scripts/hermes-local-worker.ts:35:type ExecutionSource = "web" | "local_worker" | "hermes_nous" | "codex" | "fugu" | "qa";
+scripts/hermes-local-worker.ts:219:    .replace(/(TURSO_AUTH_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|SAKANA_API_KEY|FIRECRAWL_API_KEY|SERPAPI_API_KEY|AMADEUS_CLIENT_SECRET)=\S+/gi, "$1=[redacted]")
+scripts/hermes-local-worker.ts:939:  await traceEvent(db, task, { phase: "fugu_design_gate", source: "fugu", message: "Fugu design gate context prepared for Hermes Nous." });
+scripts/migrate-fugu-design-gate.ts:2: * Adds Fugu Design Gate metadata columns to existing Hermes Project rows.
+scripts/migrate-fugu-design-gate.ts:4: * Usage: npx tsx scripts/migrate-fugu-design-gate.ts
+scripts/migrate-fugu-design-gate.ts:17:  `ALTER TABLE Project ADD COLUMN fuguGateStatus TEXT`,
+scripts/migrate-fugu-design-gate.ts:18:  `ALTER TABLE Project ADD COLUMN fuguGateScore INTEGER`,
+scripts/migrate-fugu-design-gate.ts:19:  `ALTER TABLE Project ADD COLUMN fuguGateReview TEXT`,
+scripts/migrate-fugu-design-gate.ts:20:  `ALTER TABLE Project ADD COLUMN fuguGateReviewedAt TEXT`,
+scripts/migrate-fugu-design-gate.ts:21:  `ALTER TABLE Project ADD COLUMN fuguGateOverrideReason TEXT`,
+scripts/migrate-fugu-design-gate.ts:22:  `ALTER TABLE Project ADD COLUMN fuguPolishStatus TEXT`,
+scripts/migrate-fugu-design-gate.ts:26:  console.log("Applying Fugu Design Gate migration...");
+scripts/migrate-fugu-design-gate.ts:30:  console.log("Fugu Design Gate migration complete.");
+scripts/migrate-memory-system.ts:50:      fuguGateStatus    TEXT,
+scripts/migrate-memory-system.ts:51:      fuguGateScore     INTEGER,
+scripts/migrate-memory-system.ts:52:      fuguGateReview    TEXT,
+scripts/migrate-memory-system.ts:53:      fuguGateReviewedAt TEXT,
+scripts/migrate-memory-system.ts:54:      fuguGateOverrideReason TEXT,
+scripts/migrate-memory-system.ts:55:      fuguPolishStatus  TEXT,
+scripts/migrate-memory-system.ts:72:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateStatus TEXT`).catch(() => undefined);
+scripts/migrate-memory-system.ts:73:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateScore INTEGER`).catch(() => undefined);
+scripts/migrate-memory-system.ts:74:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateReview TEXT`).catch(() => undefined);
+scripts/migrate-memory-system.ts:75:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateReviewedAt TEXT`).catch(() => undefined);
+scripts/migrate-memory-system.ts:76:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateOverrideReason TEXT`).catch(() => undefined);
+scripts/migrate-memory-system.ts:77:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguPolishStatus TEXT`).catch(() => undefined);
+skills/build-orchestrator.json:10:    "fugu"
+skills/research-paper-writing/SKILL.md:873:When drafting with an AI agent, use a **two-pass** approach (proven effective in SakanaAI's AI-Scientist pipeline):
+skills/research-paper-writing/SKILL.md:1541:Generate reviews from multiple perspectives. The key insight from automated research pipelines (notably SakanaAI's AI-Scientist): **ensemble reviewing with a meta-reviewer produces far more calibrated feedback than a single review pass.**
+src/agents/souls/prometheus.ts:12:  When the idea has a UI, shape the design direction clearly enough for Athena, Fugu,
+src/agents/souls/prometheus.ts:16:- For Hermes OS local builds, Fugu is a read-only design gate before normal build.
+src/agents/souls/prometheus.ts:17:  Treat Fugu feedback as design direction and constraints; never describe it as code
+src/app/api/command-center/live-build/route.ts:126:    step("fugu", "Fugu Review", text(selected.localDesignReview) ? "complete" : active ? "pending" : "skipped", text(selected.localDesignReview) ? updatedAt : null),
+src/app/api/command-center/live-build/route.ts:165:    const source = /Browser QA/i.test(line) ? "Browser QA" : /Fugu/i.test(line) ? "Fugu" : /Installing|npm install/i.test(line) ? "npm install" : /Building|npm run build|Rebuild/i.test(line) ? "npm run build" : "Builder";
+src/app/api/command-center/local-builds/route.ts:10:  overrideFuguDesignGate,
+src/app/api/command-center/local-builds/route.ts:15:  runLocalFuguDesignGate,
+src/app/api/command-center/local-builds/route.ts:16:  runLocalFuguDesignReview,
+src/app/api/command-center/local-builds/route.ts:45:    project.designReview ? `Fugu design review: ready${project.designScore ? ` (${project.designScore}/10)` : ""}` : null,
+src/app/api/command-center/local-builds/route.ts:46:    project.fuguGateStatus ? `Fugu gate: ${project.fuguGateStatus}${project.fuguGateScore ? ` (${project.fuguGateScore}/10)` : ""}` : null,
+src/app/api/command-center/local-builds/route.ts:47:    project.polishReview ? "Fugu polish review: ready" : null,
+src/app/api/command-center/local-builds/route.ts:173:        project.designReview ? "Fugu design review used: yes" : "Fugu design review used: no",
+src/app/api/command-center/local-builds/route.ts:174:        project.polishReview ? "Fugu polish review: ready" : "Fugu polish review: pending",
+src/app/api/command-center/local-builds/route.ts:209:  if (action === "fuguDesignReview") {
+src/app/api/command-center/local-builds/route.ts:210:    const project = await runLocalFuguDesignReview(session.user.id, projectId!);
+src/app/api/command-center/local-builds/route.ts:211:    return responseFor(projectView(project), "fuguDesignReview");
+src/app/api/command-center/local-builds/route.ts:214:  if (action === "fuguGate") {
+src/app/api/command-center/local-builds/route.ts:215:    const project = await runLocalFuguDesignGate(session.user.id, projectId!);
+src/app/api/command-center/local-builds/route.ts:216:    return responseFor(projectView(project), "fuguGate", project.fuguGateStatus === "error");
+src/app/api/command-center/local-builds/route.ts:219:  if (action === "fuguGateOverride") {
+src/app/api/command-center/local-builds/route.ts:220:    const project = await overrideFuguDesignGate(session.user.id, projectId!, message ?? "");
+src/app/api/command-center/local-builds/route.ts:221:    return responseFor(projectView(project), "fuguGateOverride");
+src/app/api/command-center/local-builds/route.ts:265:      project.fuguGateStatus === "pass"
+src/app/api/command-center/local-builds/route.ts:266:        ? "Fugu Design Gate passed. Ready for build."
+src/app/api/command-center/local-builds/route.ts:267:        : "Fugu Design Gate must pass or be explicitly overridden before a required-mode build.",
+src/app/api/command-center/local-builds/route.ts:269:      project.fuguGateStatus === "pass" ? "Ready for Generate app." : "Review Fugu feedback before Generate app.",
+src/app/api/command-center/local-builds/route.ts:293:        title: `Fugu design review for ${project.projectName}`,
+src/app/api/command-center/projects/route.ts:87:        fuguGateStatus: (p.fuguGateStatus as string | null) ?? null,
+src/app/api/command-center/projects/route.ts:88:        fuguGateScore: (p.fuguGateScore as number | null) ?? null,
+src/app/api/command-center/projects/route.ts:89:        fuguGateReview: parseJsonObject(p.fuguGateReview),
+src/app/api/command-center/projects/route.ts:90:        fuguGateReviewedAt: (p.fuguGateReviewedAt as string | null) ?? null,
+src/app/api/command-center/projects/route.ts:91:        fuguGateOverrideReason: (p.fuguGateOverrideReason as string | null) ?? null,
+src/app/api/command-center/projects/route.ts:92:        fuguPolishStatus: (p.fuguPolishStatus as string | null) ?? null,
+src/app/command-center/BuilderOffice.tsx:10:type FuguGateReview = {
+src/app/command-center/BuilderOffice.tsx:34:  fuguGateStatus?: "pass" | "revise" | "unavailable" | "error" | null;
+src/app/command-center/BuilderOffice.tsx:35:  fuguGateScore?: number | null;
+src/app/command-center/BuilderOffice.tsx:36:  fuguGateReview?: FuguGateReview | null;
+src/app/command-center/BuilderOffice.tsx:37:  fuguGateReviewedAt?: string | null;
+src/app/command-center/BuilderOffice.tsx:38:  fuguGateOverrideReason?: string | null;
+src/app/command-center/BuilderOffice.tsx:39:  fuguPolishStatus?: string | null;
+src/app/command-center/BuilderOffice.tsx:122:function fuguGateLabel(project?: Project | null): string {
+src/app/command-center/BuilderOffice.tsx:124:  if (project.fuguGateOverrideReason) return "override recorded";
+src/app/command-center/BuilderOffice.tsx:125:  if (project.fuguGateStatus === "pass") return "passed";
+src/app/command-center/BuilderOffice.tsx:126:  if (project.fuguGateStatus === "revise") return "revision needed";
+src/app/command-center/BuilderOffice.tsx:127:  if (project.fuguGateStatus === "unavailable") return "unavailable";
+src/app/command-center/BuilderOffice.tsx:128:  if (project.fuguGateStatus === "error") return "error";
+src/app/command-center/BuilderOffice.tsx:132:function canBuildAfterFugu(project?: Project | null): boolean {
+src/app/command-center/BuilderOffice.tsx:133:  return Boolean(project && (project.fuguGateStatus === "pass" || project.fuguGateOverrideReason));
+src/app/command-center/BuilderOffice.tsx:387:  const runFuguDesignReview = async () => {
+src/app/command-center/BuilderOffice.tsx:396:        body: JSON.stringify({ action: "fuguDesignReview", projectId: targetProject.id, message: prompt.trim() || targetProject.projectName }),
+src/app/command-center/BuilderOffice.tsx:400:        throw new Error(payload && "error" in payload && payload.error ? payload.error : `Fugu design review returned ${response.status}`);
+src/app/command-center/BuilderOffice.tsx:411:  const runFuguGate = async () => {
+src/app/command-center/BuilderOffice.tsx:420:        body: JSON.stringify({ action: "fuguGate", projectId: targetProject.id, message: prompt.trim() || targetProject.projectName }),
+src/app/command-center/BuilderOffice.tsx:423:      if (!response.ok) throw new Error(payload && "error" in payload && payload.error ? payload.error : `Fugu gate returned ${response.status}`);
+src/app/command-center/BuilderOffice.tsx:433:  const overrideFuguGate = async () => {
+src/app/command-center/BuilderOffice.tsx:436:    if (!window.confirm("Build without a passing Fugu gate? This records an override reason and keeps Fugu read-only.")) return;
+src/app/command-center/BuilderOffice.tsx:437:    const reason = window.prompt("Why is it acceptable to continue without Fugu passing this design gate?");
+src/app/command-center/BuilderOffice.tsx:439:    setManaging("fuguGateOverride");
+src/app/command-center/BuilderOffice.tsx:445:        body: JSON.stringify({ action: "fuguGateOverride", projectId: targetProject.id, message: reason }),
+src/app/command-center/BuilderOffice.tsx:448:      if (!response.ok) throw new Error(payload && "error" in payload && payload.error ? payload.error : `Fugu override returned ${response.status}`);
+src/app/command-center/BuilderOffice.tsx:466:  const fuguBuildAllowed = canBuildAfterFugu(project);
+src/app/command-center/BuilderOffice.tsx:469:  const fuguProvider = health?.apiProviders.find((provider) => provider.provider === "Sakana / Fugu");
+src/app/command-center/BuilderOffice.tsx:479:            <p style={{ color: "#94A3B8", fontSize: 13, margin: 0 }}>Athena researches, Builder generates, QA validates, and Fugu can critique when the app feels too basic.</p>
+src/app/command-center/BuilderOffice.tsx:505:          <button onClick={() => void runFuguGate()} disabled={!project || busy} style={{ color: "#E879F9", background: "rgba(232,121,249,.12)", border: "1px solid rgba(232,121,249,.4)", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: !project || busy ? "not-allowed" : "pointer", opacity: !project || busy ? .5 : 1 }}>
+src/app/command-center/BuilderOffice.tsx:506:            {reviewing ? "Reviewing..." : "Run Fugu Gate"}
+src/app/command-center/BuilderOffice.tsx:508:          <button onClick={() => void generate()} disabled={!prompt.trim() || !result?.project || busy || !fuguBuildAllowed} style={{ color: "#34D399", background: "rgba(52,211,153,.12)", border: "1px solid rgba(52,211,153,.4)", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: !prompt.trim() || !result?.project || busy || !fuguBuildAllowed ? "not-allowed" : "pointer", opacity: !prompt.trim() || !result?.project || busy || !fuguBuildAllowed ? .5 : 1 }}>
+src/app/command-center/BuilderOffice.tsx:511:          <button onClick={() => void runFuguDesignReview()} disabled={!project || busy} style={{ color: "#E879F9", background: "rgba(232,121,249,.12)", border: "1px solid rgba(232,121,249,.4)", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, cursor: !project || busy ? "not-allowed" : "pointer", opacity: !project || busy ? .5 : 1 }}>
+src/app/command-center/BuilderOffice.tsx:512:            {reviewing ? "Reviewing..." : "Run Fugu Design Review"}
+src/app/command-center/BuilderOffice.tsx:521:          {reviewing && <div style={{ color: "#A78BFA", border: "1px solid rgba(167,139,250,.3)", borderRadius: 12, padding: 18, fontSize: 13 }}>Fugu is reviewing the current project as read-only design guidance.</div>}
+src/app/command-center/BuilderOffice.tsx:553:            <div style={{ color: "#E879F9", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase" }}>Fugu design gate</div>
+src/app/command-center/BuilderOffice.tsx:554:            <span style={badge(fuguGateLabel(project))}>{fuguGateLabel(project)}</span>
+src/app/command-center/BuilderOffice.tsx:558:              <span>Threshold: <strong style={{ color: "#D8DEEB" }}>{project.fuguGateReview?.threshold ?? 7}/10</strong></span>
+src/app/command-center/BuilderOffice.tsx:559:              {typeof project.fuguGateScore === "number" && <span>Score: <strong style={{ color: project.fuguGateStatus === "pass" ? "#34D399" : "#FBBF24" }}>{project.fuguGateScore}/10</strong></span>}
+src/app/command-center/BuilderOffice.tsx:560:              {project.fuguGateReview?.summary && <span style={{ color: "#D8DEEB", lineHeight: 1.5 }}>{project.fuguGateReview.summary}</span>}
+src/app/command-center/BuilderOffice.tsx:561:              {project.fuguGateReview?.mustFixBeforeBuild?.length ? (
+src/app/command-center/BuilderOffice.tsx:563:                  {project.fuguGateReview.mustFixBeforeBuild.slice(0, 4).map((item) => <li key={item}>{item}</li>)}
+src/app/command-center/BuilderOffice.tsx:566:              {project.fuguGateOverrideReason && <span style={{ color: "#FBBF24" }}>Override: {project.fuguGateOverrideReason}</span>}
+src/app/command-center/BuilderOffice.tsx:567:              {project.fuguGateReviewedAt && <span>Reviewed: {formatDate(project.fuguGateReviewedAt)}</span>}
+src/app/command-center/BuilderOffice.tsx:569:                <button onClick={() => void runFuguGate()} disabled={busy} style={{ ...previewAction, color: "#E879F9", border: "1px solid rgba(232,121,249,.35)" }}>{reviewing ? "Reviewing..." : "Run Gate"}</button>
+src/app/command-center/BuilderOffice.tsx:570:                {project.fuguGateStatus !== "pass" && <button onClick={() => void overrideFuguGate()} disabled={busy} style={{ ...previewAction, color: "#FBBF24", border: "1px solid rgba(251,191,36,.35)" }}>Continue Without Fugu</button>}
+src/app/command-center/BuilderOffice.tsx:578:          <div style={{ color: "#E879F9", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Athena / Fugu Brief Panel</div>
+src/app/command-center/BuilderOffice.tsx:601:            <div style={{ color: "#38BDF8", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase" }}>Fugu design review</div>
+src/app/command-center/BuilderOffice.tsx:607:            <div style={{ color: fuguProvider?.configured ? "#60A5FA" : "#4B5563", fontSize: 12 }}>
+src/app/command-center/BuilderOffice.tsx:608:              {fuguProvider?.configured ? `Fugu connected (${fuguProvider.status.replace(/_/g, " ")}). No design review saved yet.` : (fuguProvider?.safeError ?? "Fugu not connected - add SAKANA_API_KEY to environment.")}
+src/app/command-center/BuilderOffice.tsx:613:          <div style={{ color: "#34D399", fontSize: 11, letterSpacing: ".1em", textTransform: "uppercase", marginBottom: 12 }}>Fugu polish review</div>
+src/app/command-center/BuilderOffice.tsx:660:              <button key={action} onClick={() => void manageProject(action as "open" | "startDev" | "stopDev" | "rebuild" | "runQa" | "runCodex")} disabled={!project || busy || (["rebuild", "runCodex"].includes(action) && !fuguBuildAllowed) || (action === "runCodex" && codexStatus?.available === false)} style={{ color: action === "runQa" ? "#FBBF24" : action === "runCodex" ? "#38BDF8" : "#D8DEEB", background: action === "runQa" ? "rgba(251,191,36,.12)" : action === "runCodex" ? "rgba(56,189,248,.12)" : "rgba(40,50,74,.46)", border: action === "runQa" ? "1px solid rgba(251,191,36,.35)" : action === "runCodex" ? "1px solid rgba(56,189,248,.35)" : "1px solid #28324A", borderRadius: 8, padding: "9px 10px", fontSize: 12, fontWeight: 700, cursor: !project || busy || (["rebuild", "runCodex"].includes(action) && !fuguBuildAllowed) || (action === "runCodex" && codexStatus?.available === false) ? "not-allowed" : "pointer", opacity: !project || busy || (["rebuild", "runCodex"].includes(action) && !fuguBuildAllowed) || (action === "runCodex" && codexStatus?.available === false) ? .5 : 1 }}>
+src/app/command-center/CommandCenterClient.tsx:360:type AgentOffice = "hermes" | "athena" | "builder" | "iris" | "fugu";
+src/app/command-center/CommandCenterClient.tsx:983:  const agentKeys = ["Hermes", "Builder", "Athena", "Iris", "Mercury", "Fugu", "Kairos"];
+src/app/command-center/CommandCenterClient.tsx:1000:      office: ({ Hermes: "hermes", Athena: "athena", Builder: "builder", Iris: "iris", Fugu: "fugu" } as Partial<Record<string, AgentOffice>>)[name],
+src/app/command-center/CommandCenterClient.tsx:1001:      tab: ({ Hermes: true, Athena: true, Builder: true, Iris: true, Fugu: true } as Record<string, boolean>)[name] ? "agents" as Tab : "logs" as Tab,
+src/app/command-center/CommandCenterClient.tsx:1103:  const fuguStatus = events.slice().reverse().find((event) => event.phase.includes("fugu"))?.message
+src/app/command-center/CommandCenterClient.tsx:1104:    ?? "No Fugu event recorded yet.";
+src/app/command-center/CommandCenterClient.tsx:1163:                ["Fugu", fuguStatus],
+src/app/command-center/CommandCenterClient.tsx:1356:    { key: "fugu", label: "Fugu Office", detail: "design reviews, scores, recommendations", color: "#60A5FA" },
+src/app/command-center/CommandCenterClient.tsx:1434:      {selectedOffice === "fugu" && (
+src/app/command-center/CommandCenterClient.tsx:1436:          <MemoryList title="Design Reviews" empty="No Fugu reviews yet" items={designProjects.map((project) => ({ key: project.id, head: project.projectName, body: project.designReview ?? project.polishReview ?? undefined, meta: typeof project.designScore === "number" ? `${project.designScore}/10` : statusLabel(project.qaStatus ?? project.status) }))} />
+src/app/command-center/CommandCenterClient.tsx:1438:          <MemoryList title="Recommendations" empty="No recommendations yet" items={designProjects.map((project) => ({ key: `${project.id}-rec`, head: project.projectName, body: project.designReview?.slice(0, 520) ?? project.polishReview?.slice(0, 520) ?? "Run Fugu Design Review from Builder Office.", meta: "Builder guidance only" }))} />
+src/app/command-center/CommandCenterClient.tsx:1542:                  Fugu design review
+src/app/command-center/CommandCenterClient.tsx:1553:                Fugu polish review
+src/lib/__tests__/fugu-design-critic.test.ts:3:  FUGU_NOT_CONNECTED_MESSAGE,
+src/lib/__tests__/fugu-design-critic.test.ts:4:  runFuguDesignCritique,
+src/lib/__tests__/fugu-design-critic.test.ts:5:  runFuguDesignGate,
+src/lib/__tests__/fugu-design-critic.test.ts:6:  validateFuguDesignGatePayload,
+src/lib/__tests__/fugu-design-critic.test.ts:7:} from "../fugu-design-critic";
+src/lib/__tests__/fugu-design-critic.test.ts:8:import { canStartBuildWithFuguGate } from "../local-builder";
+src/lib/__tests__/fugu-design-critic.test.ts:10:const originalKey = process.env.SAKANA_API_KEY;
+src/lib/__tests__/fugu-design-critic.test.ts:11:const originalPassScore = process.env.FUGU_DESIGN_PASS_SCORE;
+src/lib/__tests__/fugu-design-critic.test.ts:12:const originalGateMode = process.env.FUGU_DESIGN_GATE_MODE;
+src/lib/__tests__/fugu-design-critic.test.ts:13:const originalRetryBase = process.env.FUGU_RETRY_BASE_MS;
+src/lib/__tests__/fugu-design-critic.test.ts:16:  process.env.SAKANA_API_KEY = originalKey;
+src/lib/__tests__/fugu-design-critic.test.ts:17:  process.env.FUGU_DESIGN_PASS_SCORE = originalPassScore;
+src/lib/__tests__/fugu-design-critic.test.ts:18:  process.env.FUGU_DESIGN_GATE_MODE = originalGateMode;
+src/lib/__tests__/fugu-design-critic.test.ts:19:  process.env.FUGU_RETRY_BASE_MS = originalRetryBase;
+src/lib/__tests__/fugu-design-critic.test.ts:23:describe("runFuguDesignCritique", () => {
+src/lib/__tests__/fugu-design-critic.test.ts:24:  it("returns a graceful not-connected message without SAKANA_API_KEY", async () => {
+src/lib/__tests__/fugu-design-critic.test.ts:25:    delete process.env.SAKANA_API_KEY;
+src/lib/__tests__/fugu-design-critic.test.ts:27:    const result = await runFuguDesignCritique({
+src/lib/__tests__/fugu-design-critic.test.ts:36:      review: FUGU_NOT_CONNECTED_MESSAGE,
+src/lib/__tests__/fugu-design-critic.test.ts:41:describe("Fugu design gate", () => {
+src/lib/__tests__/fugu-design-critic.test.ts:54:    process.env.FUGU_DESIGN_PASS_SCORE = "8";
+src/lib/__tests__/fugu-design-critic.test.ts:56:    expect(validateFuguDesignGatePayload({ score: 8, summary: "Ready" }).verdict).toBe("pass");
+src/lib/__tests__/fugu-design-critic.test.ts:57:    const revise = validateFuguDesignGatePayload({ score: 7, summary: "Needs work" });
+src/lib/__tests__/fugu-design-critic.test.ts:63:  it("returns unavailable without exposing or requiring SAKANA_API_KEY", async () => {
+src/lib/__tests__/fugu-design-critic.test.ts:64:    delete process.env.SAKANA_API_KEY;
+src/lib/__tests__/fugu-design-critic.test.ts:66:    const gate = await runFuguDesignGate(gateInput);
+src/lib/__tests__/fugu-design-critic.test.ts:70:    expect(gate.summary).toBe(FUGU_NOT_CONNECTED_MESSAGE);
+src/lib/__tests__/fugu-design-critic.test.ts:73:  it("fails safely when Fugu returns malformed gate JSON", async () => {
+src/lib/__tests__/fugu-design-critic.test.ts:74:    process.env.SAKANA_API_KEY = "test-key";
+src/lib/__tests__/fugu-design-critic.test.ts:80:    const gate = await runFuguDesignGate(gateInput);
+src/lib/__tests__/fugu-design-critic.test.ts:83:    expect(gate.mustFixBeforeBuild.join(" ")).toMatch(/Retry Fugu|override/i);
+src/lib/__tests__/fugu-design-critic.test.ts:86:  it("retries transient Fugu throttles and degrades to unavailable", async () => {
+src/lib/__tests__/fugu-design-critic.test.ts:87:    process.env.SAKANA_API_KEY = "test-key";
+src/lib/__tests__/fugu-design-critic.test.ts:88:    process.env.FUGU_RETRY_BASE_MS = "0";
+src/lib/__tests__/fugu-design-critic.test.ts:96:    const gate = await runFuguDesignGate(gateInput);
+src/lib/__tests__/fugu-design-critic.test.ts:104:  it("uses a successful Fugu retry instead of failing the gate", async () => {
+src/lib/__tests__/fugu-design-critic.test.ts:105:    process.env.SAKANA_API_KEY = "test-key";
+src/lib/__tests__/fugu-design-critic.test.ts:106:    process.env.FUGU_RETRY_BASE_MS = "0";
+src/lib/__tests__/fugu-design-critic.test.ts:115:    const gate = await runFuguDesignGate(gateInput);
+src/lib/__tests__/fugu-design-critic.test.ts:122:  it("blocks required-mode builds until Fugu passes or an override is recorded", () => {
+src/lib/__tests__/fugu-design-critic.test.ts:123:    expect(canStartBuildWithFuguGate({ fuguGateStatus: "revise" }, "required")).toMatchObject({ allowed: false });
+src/lib/__tests__/fugu-design-critic.test.ts:124:    expect(canStartBuildWithFuguGate({ fuguGateStatus: "pass" }, "required")).toMatchObject({ allowed: true });
+src/lib/__tests__/fugu-design-critic.test.ts:125:    expect(canStartBuildWithFuguGate({ fuguGateStatus: "error", fuguGateOverrideReason: "Owner accepted visual risk for prototype." }, "required")).toMatchObject({ allowed: true });
+src/lib/__tests__/fugu-design-critic.test.ts:126:    expect(canStartBuildWithFuguGate({ fuguGateStatus: "revise" }, "recommended")).toMatchObject({ allowed: true });
+src/lib/__tests__/health-center.test.ts:10:    expect(apiProviderSeverity({ provider: "Sakana / Fugu", status: "configured_untested" })).toBe("healthy");
+src/lib/auto-memory.ts:29:  if (/\bSAKANA_API_KEY\b|\bsakana\b/i.test(text) && /\b(vercel|local\.?env|\.env\.local|environment|env)\b/i.test(text)) {
+src/lib/auto-memory.ts:32:    facts.add(`Sakana API key is configured${hasLocal ? " in local environment" : ""}${hasLocal && hasVercel ? " and" : ""}${hasVercel ? " in Vercel" : ""}`);
+src/lib/context-persistence.ts:286:      tool: "Fugu Design Critic",
+src/lib/context-persistence.ts:287:      status: hasAny("SAKANA_API_KEY") ? "available" : "unavailable",
+src/lib/context-persistence.ts:288:      reason: hasAny("SAKANA_API_KEY") ? null : "Missing SAKANA_API_KEY.",
+src/lib/execution-runs.ts:6:  "queued", "claimed", "initializing", "planning", "fugu_design_gate",
+src/lib/execution-runs.ts:9:  "building", "starting_preview", "browser_qa", "fugu_polish_review",
+src/lib/execution-runs.ts:15:export type ExecutionSource = "web" | "local_worker" | "hermes_nous" | "codex" | "fugu" | "qa";
+src/lib/fugu-design-critic.ts:1:export const FUGU_NOT_CONNECTED_MESSAGE = "Fugu not connected — add SAKANA_API_KEY to environment.";
+src/lib/fugu-design-critic.ts:3:export type FuguDesignCritiqueInput = {
+src/lib/fugu-design-critic.ts:9:export type FuguDesignCritiqueResult = {
+src/lib/fugu-design-critic.ts:15:export type FuguGateVerdict = "pass" | "revise" | "unavailable" | "error";
+src/lib/fugu-design-critic.ts:16:export type FuguGateMode = "off" | "recommended" | "required";
+src/lib/fugu-design-critic.ts:18:export type FuguDesignGate = {
+src/lib/fugu-design-critic.ts:19:  verdict: FuguGateVerdict;
+src/lib/fugu-design-critic.ts:37:export type FuguDesignGateInput = {
+src/lib/fugu-design-critic.ts:50:const FUGU_TRANSIENT_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
+src/lib/fugu-design-critic.ts:51:const FUGU_GATE_MAX_ATTEMPTS = 3;
+src/lib/fugu-design-critic.ts:85:export function getFuguDesignPassScore(): number {
+src/lib/fugu-design-critic.ts:86:  const configured = Number(process.env.FUGU_DESIGN_PASS_SCORE ?? 7);
+src/lib/fugu-design-critic.ts:91:export function getFuguDesignGateMode(): FuguGateMode {
+src/lib/fugu-design-critic.ts:92:  const value = process.env.FUGU_DESIGN_GATE_MODE?.trim().toLowerCase();
+src/lib/fugu-design-critic.ts:96:export function validateFuguDesignGatePayload(payload: unknown, threshold = getFuguDesignPassScore()): FuguDesignGate {
+src/lib/fugu-design-critic.ts:98:    throw new Error("Fugu returned malformed design-gate JSON.");
+src/lib/fugu-design-critic.ts:102:  if (score === null) throw new Error("Fugu design-gate JSON did not include a numeric score.");
+src/lib/fugu-design-critic.ts:106:  const gate: FuguDesignGate = {
+src/lib/fugu-design-critic.ts:110:    summary: str(data.summary) || (score >= threshold ? "Fugu approved the design direction." : "Fugu requested design revisions before build."),
+src/lib/fugu-design-critic.ts:130:export function unavailableFuguDesignGate(threshold = getFuguDesignPassScore()): FuguDesignGate {
+src/lib/fugu-design-critic.ts:135:    summary: FUGU_NOT_CONNECTED_MESSAGE,
+src/lib/fugu-design-critic.ts:137:    mustFixBeforeBuild: ["Connect SAKANA_API_KEY or use an explicit Fugu override before building in required mode."],
+src/lib/fugu-design-critic.ts:138:    recommendedChanges: ["Add SAKANA_API_KEY to the server environment and retry the Fugu design gate."],
+src/lib/fugu-design-critic.ts:151:export function errorFuguDesignGate(summary: string, threshold = getFuguDesignPassScore()): FuguDesignGate {
+src/lib/fugu-design-critic.ts:153:    ...unavailableFuguDesignGate(threshold),
+src/lib/fugu-design-critic.ts:156:    mustFixBeforeBuild: ["Retry Fugu or record an explicit override reason before building in required mode."],
+src/lib/fugu-design-critic.ts:157:    recommendedChanges: ["Check Fugu connectivity and response format, then run the design gate again."],
+src/lib/fugu-design-critic.ts:161:export function transientUnavailableFuguDesignGate(summary: string, threshold = getFuguDesignPassScore()): FuguDesignGate {
+src/lib/fugu-design-critic.ts:163:    ...unavailableFuguDesignGate(threshold),
+src/lib/fugu-design-critic.ts:165:    mustFixBeforeBuild: ["Fugu is temporarily unavailable; retry later or record an explicit override reason before building in required mode."],
+src/lib/fugu-design-critic.ts:166:    recommendedChanges: ["Retry the Fugu design gate after the provider recovers or rate limits reset."],
+src/lib/fugu-design-critic.ts:170:function fuguRetryDelayMs(attempt: number): number {
+src/lib/fugu-design-critic.ts:171:  const configured = Number(process.env.FUGU_RETRY_BASE_MS ?? 750);
+src/lib/fugu-design-critic.ts:176:async function waitForFuguRetry(attempt: number): Promise<void> {
+src/lib/fugu-design-critic.ts:177:  const delay = fuguRetryDelayMs(attempt);
+src/lib/fugu-design-critic.ts:187:export function formatFuguDesignGate(gate: FuguDesignGate): string {
+src/lib/fugu-design-critic.ts:189:    `Fugu Design Gate: ${gate.verdict === "pass" ? "Passed" : gate.verdict === "revise" ? "Needs Revision" : gate.verdict === "unavailable" ? "Unavailable" : "Error"}`,
+src/lib/fugu-design-critic.ts:238:export async function runFuguDesignCritique(input: FuguDesignCritiqueInput): Promise<FuguDesignCritiqueResult> {
+src/lib/fugu-design-critic.ts:239:  const apiKey = process.env.SAKANA_API_KEY?.trim();
+src/lib/fugu-design-critic.ts:244:      review: FUGU_NOT_CONNECTED_MESSAGE,
+src/lib/fugu-design-critic.ts:249:    "You are Sakana Fugu acting only as a UX/design critic for Hermes Builder.",
+src/lib/fugu-design-critic.ts:270:  const response = await fetch("https://api.sakana.ai/v1/chat/completions", {
+src/lib/fugu-design-critic.ts:278:      model: "fugu",
+src/lib/fugu-design-critic.ts:290:    throw new Error(`Fugu design review failed${safeDetail}`);
+src/lib/fugu-design-critic.ts:304:export async function runFuguDesignGate(input: FuguDesignGateInput): Promise<FuguDesignGate> {
+src/lib/fugu-design-critic.ts:305:  const threshold = getFuguDesignPassScore();
+src/lib/fugu-design-critic.ts:306:  const apiKey = process.env.SAKANA_API_KEY?.trim();
+src/lib/fugu-design-critic.ts:307:  if (!apiKey) return unavailableFuguDesignGate(threshold);
+src/lib/fugu-design-critic.ts:310:    "You are Sakana Fugu acting only as a read-only UX/design gate for Hermes Builder.",
+src/lib/fugu-design-critic.ts:350:  for (let attempt = 0; attempt < FUGU_GATE_MAX_ATTEMPTS; attempt++) {
+src/lib/fugu-design-critic.ts:355:      response = await fetch("https://api.sakana.ai/v1/chat/completions", {
+src/lib/fugu-design-critic.ts:363:          model: "fugu",
+src/lib/fugu-design-critic.ts:373:        return errorFuguDesignGate("Fugu design gate returned an unsafe or unavailable response.", threshold);
+src/lib/fugu-design-critic.ts:376:        ? "Fugu design gate timed out after retries."
+src/lib/fugu-design-critic.ts:377:        : "Fugu design gate provider connection failed after retries.";
+src/lib/fugu-design-critic.ts:378:      if (attempt < FUGU_GATE_MAX_ATTEMPTS - 1) {
+src/lib/fugu-design-critic.ts:379:        await waitForFuguRetry(attempt);
+src/lib/fugu-design-critic.ts:382:      return transientUnavailableFuguDesignGate(transientSummary, threshold);
+src/lib/fugu-design-critic.ts:388:      if (FUGU_TRANSIENT_STATUSES.has(response.status)) {
+src/lib/fugu-design-critic.ts:389:        transientSummary = `Fugu design gate temporarily unavailable (${response.status}) after retries.`;
+src/lib/fugu-design-critic.ts:390:        if (attempt < FUGU_GATE_MAX_ATTEMPTS - 1) {
+src/lib/fugu-design-critic.ts:391:          await waitForFuguRetry(attempt);
+src/lib/fugu-design-critic.ts:394:        return transientUnavailableFuguDesignGate(transientSummary, threshold);
+src/lib/fugu-design-critic.ts:396:      return errorFuguDesignGate(`Fugu design gate failed safely (${response.status}).`, threshold);
+src/lib/fugu-design-critic.ts:403:      return validateFuguDesignGatePayload(payload, threshold);
+src/lib/fugu-design-critic.ts:405:      return errorFuguDesignGate("Fugu design gate returned an unsafe or unavailable response.", threshold);
+src/lib/fugu-design-critic.ts:409:  return transientUnavailableFuguDesignGate(transientSummary ?? "Fugu design gate temporarily unavailable after retries.", threshold);
+src/lib/health-center.ts:381:  "SAKANA_API_KEY", "TELEGRAM_BOT_TOKEN", "AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET",
+src/lib/health-center.ts:506:    providerRow({ provider: "Sakana / Fugu", env: ["SAKANA_API_KEY"], runs, component: providerComponent("Sakana / Fugu") }),
+src/lib/health-center.ts:772:    { name: "Fugu Critic", status: executorStatus(latestRun(runs, ["fugu"]), false, hasEnv("SAKANA_API_KEY")), lastRun: iso(latestRun(runs, ["fugu"])?.createdAt), lastError: hasEnv("SAKANA_API_KEY") ? null : "SAKANA_API_KEY is not configured" },
+src/lib/local-builder.ts:8:  formatFuguDesignGate,
+src/lib/local-builder.ts:9:  getFuguDesignGateMode,
+src/lib/local-builder.ts:10:  getFuguDesignPassScore,
+src/lib/local-builder.ts:11:  runFuguDesignCritique,
+src/lib/local-builder.ts:12:  runFuguDesignGate,
+src/lib/local-builder.ts:13:  type FuguDesignGate,
+src/lib/local-builder.ts:14:  type FuguDesignGateInput,
+src/lib/local-builder.ts:15:  type FuguGateMode,
+src/lib/local-builder.ts:16:  type FuguGateVerdict,
+src/lib/local-builder.ts:17:} from "@/lib/fugu-design-critic";
+src/lib/local-builder.ts:49:  fuguGateStatus?: FuguGateVerdict | null;
+src/lib/local-builder.ts:50:  fuguGateScore?: number | null;
+src/lib/local-builder.ts:51:  fuguGateReview?: FuguDesignGate | null;
+src/lib/local-builder.ts:52:  fuguGateReviewedAt?: string | null;
+src/lib/local-builder.ts:53:  fuguGateOverrideReason?: string | null;
+src/lib/local-builder.ts:54:  fuguPolishStatus?: string | null;
+src/lib/local-builder.ts:92:const FUGU_DESIGN_AGENT = "fugu";
+src/lib/local-builder.ts:226:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateStatus TEXT`).catch(() => undefined);
+src/lib/local-builder.ts:227:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateScore INTEGER`).catch(() => undefined);
+src/lib/local-builder.ts:228:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateReview TEXT`).catch(() => undefined);
+src/lib/local-builder.ts:229:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateReviewedAt TEXT`).catch(() => undefined);
+src/lib/local-builder.ts:230:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateOverrideReason TEXT`).catch(() => undefined);
+src/lib/local-builder.ts:231:  await db.execute(`ALTER TABLE Project ADD COLUMN fuguPolishStatus TEXT`).catch(() => undefined);
+src/lib/local-builder.ts:257:    case "fuguDesignReview": return "Run Fugu design review";
+src/lib/local-builder.ts:286:function parseFuguGateReview(value: unknown): FuguDesignGate | null {
+src/lib/local-builder.ts:289:    const parsed = JSON.parse(value) as FuguDesignGate;
+src/lib/local-builder.ts:298:function fuguGateStatus(value: unknown): FuguGateVerdict | null {
+src/lib/local-builder.ts:303:export function canStartBuildWithFuguGate(
+src/lib/local-builder.ts:304:  project: { fuguGateStatus?: unknown; fuguGateOverrideReason?: unknown },
+src/lib/local-builder.ts:305:  mode: FuguGateMode = getFuguDesignGateMode()
+src/lib/local-builder.ts:307:  if (mode === "off" || mode === "recommended") return { allowed: true, reason: `Fugu gate mode is ${mode}.` };
+src/lib/local-builder.ts:308:  const status = fuguGateStatus(project.fuguGateStatus);
+src/lib/local-builder.ts:309:  if (status === "pass") return { allowed: true, reason: "Fugu approved the design direction." };
+src/lib/local-builder.ts:310:  if (rowString(project.fuguGateOverrideReason).trim()) return { allowed: true, reason: "Fugu gate override reason is recorded." };
+src/lib/local-builder.ts:314:      ? `Fugu design gate is ${status}; required mode blocks normal build until pass or override.`
+src/lib/local-builder.ts:315:      : "Fugu design gate has not passed; required mode blocks normal build until pass or override.",
+src/lib/local-builder.ts:321:    fuguGateStatus: fuguGateStatus(project.fuguGateStatus),
+src/lib/local-builder.ts:322:    fuguGateScore: rowNumber(project.fuguGateScore),
+src/lib/local-builder.ts:323:    fuguGateReview: parseFuguGateReview(project.fuguGateReview),
+src/lib/local-builder.ts:324:    fuguGateReviewedAt: rowString(project.fuguGateReviewedAt) || null,
+src/lib/local-builder.ts:325:    fuguGateOverrideReason: rowString(project.fuguGateOverrideReason) || null,
+src/lib/local-builder.ts:326:    fuguPolishStatus: rowString(project.fuguPolishStatus) || null,
+src/lib/local-builder.ts:330:function fuguGateInputFromProject(
+src/lib/local-builder.ts:335:): FuguDesignGateInput {
+src/lib/local-builder.ts:354:async function persistFuguDesignGate(
+src/lib/local-builder.ts:358:  gate: FuguDesignGate,
+src/lib/local-builder.ts:361:  const review = formatFuguDesignGate(gate);
+src/lib/local-builder.ts:364:    `Fugu Design Gate: ${gate.verdict}${typeof gate.score === "number" ? ` (${gate.score}/10)` : ""}.`,
+src/lib/local-builder.ts:368:    sql: `UPDATE Project SET ${status ? "status = ?, " : ""}localDesignReview = ?, designScore = ?, fuguGateStatus = ?, fuguGateScore = ?, fuguGateReview = ?, fuguGateReviewedAt = ?, fuguGateOverrideReason = NULL, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
+src/lib/local-builder.ts:384:function fuguGateProjectResult(
+src/lib/local-builder.ts:728:  const reviewText = designReview?.trim() || "No Fugu design review was attached.";
+src/lib/local-builder.ts:759:    "README.md": `# ${safeName}\n\nGenerated by Hermes Local Builder using an internal Athena research brief, Builder knowledge cards, and Fugu design review.\n\n## Athena Research Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Fugu Design Review\n\n${reviewText}\n\n## Commands\n\n\`\`\`bash\nnpm install\nnpm run build\nnpm run dev\n\`\`\`\n`,
+src/lib/local-builder.ts:760:    "BUILDER_PLAN.md": `# ${safeName} Builder Plan\n\n## Product Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Fugu Design Review\n\n${reviewText}\n\n## Design Brief\n\nOriginal visual direction only. Do not copy brand layouts, product photography, or copyrighted assets.\n\n## Feature Plan\n\nInclude real sections, clickable controls, stateful interactions, empty states, and responsive behavior appropriate to the prompt.\n\n## Build Plan\n\nGenerate a working Next.js app with visible product structure and local demo behavior before running install and build.\n\n## QA Checklist\n\n- npm run build passes\n- Main buttons work\n- Navigation works\n- Filters or core controls work\n- Saved/compare or equivalent state works when relevant\n- Mobile layout works\n- App feels like a real product\n- No copied assets\n`,
+src/lib/local-builder.ts:998:async function logFuguRun(db: Db, projectName: string, phase: "design" | "polish", review: string): Promise<void> {
+src/lib/local-builder.ts:1000:    sql: `INSERT INTO AgentRun (id, agentName, inputSummary, outputSummary, modelProvider, status, createdAt) VALUES (?, ?, ?, ?, 'sakana', 'completed', datetime('now'))`,
+src/lib/local-builder.ts:1001:    args: [crypto.randomUUID(), FUGU_DESIGN_AGENT, `${phase}_review project=${projectName}`, review.slice(0, 2000)],
+src/lib/local-builder.ts:1159:    "Fugu design review:",
+src/lib/local-builder.ts:1160:    params.designReview || "No Fugu design review recorded.",
+src/lib/local-builder.ts:1162:    "Fugu polish review:",
+src/lib/local-builder.ts:1163:    params.polishReview || "No Fugu polish review recorded.",
+src/lib/local-builder.ts:1247:      "Fugu review:",
+src/lib/local-builder.ts:1248:      rowString(project.localDesignReview) || "No Fugu review recorded.",
+src/lib/local-builder.ts:1249:      rowString(project.localPolishReview) || "No Fugu polish review recorded.",
+src/lib/local-builder.ts:1454:      ? qaItem("design_review_score_recorded", "design review score recorded if Fugu is available", typeof designScore === "number", typeof designScore === "number" ? `Design review score recorded: ${designScore}/10.` : "Design review exists but no numeric score was recorded.")
+src/lib/local-builder.ts:1455:      : skippedQaItem("design_review_score_recorded", "design review score recorded if Fugu is available", "No Fugu design review is attached."),
+src/lib/local-builder.ts:1456:    qaItem("polish_review_completed", "polish review completed", Boolean(polishReview), polishReview ? "Post-build polish review is attached." : "Run Fugu Design Review after generation to record polish guidance."),
+src/lib/local-builder.ts:1491:export async function runLocalFuguDesignReview(userId: string, projectId: string): Promise<LocalBuildProject> {
+src/lib/local-builder.ts:1500:  const result = await runFuguDesignCritique({
+src/lib/local-builder.ts:1514:  const nextLog = `${currentLog}\nFugu Design Review: ${result.connected ? "completed" : "not connected"}${result.score ? ` (${result.score}/10)` : ""}.\n${review}`.trim();
+src/lib/local-builder.ts:1517:    const polishStatus = typeof result.score === "number" && result.score >= getFuguDesignPassScore() ? "pass" : result.connected ? "revise" : "unavailable";
+src/lib/local-builder.ts:1519:      sql: `UPDATE Project SET localPolishReview = ?, designScore = ?, fuguPolishStatus = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
+src/lib/local-builder.ts:1523:    const gate = await runFuguDesignGate(fuguGateInputFromProject(projectName, rowString(project.latestInstruction), rowString(project.localResearchBrief), project));
+src/lib/local-builder.ts:1524:    await persistFuguDesignGate(
+src/lib/local-builder.ts:1529:      gate.verdict === "pass" ? "Design Ready" : gate.verdict === "revise" ? "Design Revision Needed" : gate.verdict === "unavailable" ? "Fugu Unavailable" : "Fugu Error"
+src/lib/local-builder.ts:1533:  await logFuguRun(db, projectName, target, review);
+src/lib/local-builder.ts:1538:    `${target === "polish" ? "Visual polish review" : "Fugu design critique"} for ${projectName}`,
+src/lib/local-builder.ts:1539:    "Read-only Fugu critique for Builder guidance. Fugu does not modify code.",
+src/lib/local-builder.ts:1541:    result.connected ? "Review saved for Builder guidance" : "Add SAKANA_API_KEY to environment"
+src/lib/local-builder.ts:1550:    currentTask: `Run Fugu Design Review for ${projectName}`,
+src/lib/local-builder.ts:1561:    fuguPolishStatus: target === "polish"
+src/lib/local-builder.ts:1562:      ? (typeof result.score === "number" && result.score >= getFuguDesignPassScore() ? "pass" : result.connected ? "revise" : "unavailable")
+src/lib/local-builder.ts:1563:      : rowString(project.fuguPolishStatus) || null,
+src/lib/local-builder.ts:1569:export async function runLocalFuguDesignGate(userId: string, projectId: string): Promise<LocalBuildProject> {
+src/lib/local-builder.ts:1581:  const gate = await runFuguDesignGate(fuguGateInputFromProject(projectName, rowString(project.latestInstruction), researchBrief, project));
+src/lib/local-builder.ts:1587:        ? "Fugu Unavailable"
+src/lib/local-builder.ts:1588:        : "Fugu Error";
+src/lib/local-builder.ts:1589:  const nextLog = await persistFuguDesignGate(db, projectId, rowString(project.localBuildLog), gate, status);
+src/lib/local-builder.ts:1595:    `Fugu design gate for ${projectName}`,
+src/lib/local-builder.ts:1596:    "Read-only pre-build Fugu gate for design direction, UX completeness, and Builder constraints.",
+src/lib/local-builder.ts:1598:    gate.verdict === "pass" ? "Design gate passed; normal build is allowed" : "Review Fugu feedback or record an explicit override"
+src/lib/local-builder.ts:1600:  await logFuguRun(db, projectName, "design", formatFuguDesignGate(gate));
+src/lib/local-builder.ts:1606:    localDesignReview: formatFuguDesignGate(gate),
+src/lib/local-builder.ts:1608:    fuguGateStatus: gate.verdict,
+src/lib/local-builder.ts:1609:    fuguGateScore: gate.score,
+src/lib/local-builder.ts:1610:    fuguGateReview: JSON.stringify(gate),
+src/lib/local-builder.ts:1611:    fuguGateReviewedAt: gate.reviewedAt,
+src/lib/local-builder.ts:1615:  return fuguGateProjectResult(
+src/lib/local-builder.ts:1621:    `Run Fugu Design Gate for ${projectName}`,
+src/lib/local-builder.ts:1626:export async function overrideFuguDesignGate(userId: string, projectId: string, reason: string): Promise<LocalBuildProject> {
+src/lib/local-builder.ts:1628:  if (trimmed.length < 12) throw new Error("Fugu override requires a specific reason.");
+src/lib/local-builder.ts:1633:  const nextLog = `${rowString(project.localBuildLog)}\nFugu Gate Override: ${trimmed}`.trim().slice(-12000);
+src/lib/local-builder.ts:1635:    sql: `UPDATE Project SET status = 'Design Ready', fuguGateOverrideReason = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
+src/lib/local-builder.ts:1638:  const updated = { ...project, status: "Design Ready", fuguGateOverrideReason: trimmed, localBuildLog: nextLog };
+src/lib/local-builder.ts:1639:  return fuguGateProjectResult(updated, projectId, projectName, folder, createdAt, `Override Fugu gate for ${projectName}`, crypto.randomUUID());
+src/lib/local-builder.ts:1679:      sql: `UPDATE Project SET projectName = ?, status = 'Researching', latestInstruction = ?, assignedAgent = ?, localFolderPath = ?, localBuildLog = ?, localBuildError = NULL, localDesignReview = NULL, localPolishReview = NULL, designScore = NULL, fuguGateStatus = NULL, fuguGateScore = NULL, fuguGateReview = NULL, fuguGateReviewedAt = NULL, fuguGateOverrideReason = NULL, fuguPolishStatus = NULL, updatedAt = datetime('now') WHERE id = ?`,
+src/lib/local-builder.ts:1709:    sql: `UPDATE Project SET status = 'Brief Ready', assignedAgent = ?, localResearchBrief = ?, localDesignReview = NULL, designScore = NULL, fuguGateStatus = NULL, fuguGateScore = NULL, fuguGateReview = NULL, fuguGateReviewedAt = NULL, fuguGateOverrideReason = NULL, fuguPolishStatus = NULL, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
+src/lib/local-builder.ts:1710:    args: [LOCAL_BUILDER_AGENT, researchBrief, `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief. Fugu Design Gate runs before normal build.\n\n${researchBrief}`, projectId],
+src/lib/local-builder.ts:1720:    ["Fugu design gate", "Read-only pre-build review for UX structure, visual direction, missing interactions, realism, and required improvements."],
+src/lib/local-builder.ts:1761:  let preparedLog = `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief. Fugu Design Gate runs before normal build.\n\n${researchBrief}`;
+src/lib/local-builder.ts:1762:  let preparedGateFields: Pick<LocalBuildProject, "fuguGateStatus" | "fuguGateScore" | "fuguGateReview" | "fuguGateReviewedAt" | "fuguGateOverrideReason" | "fuguPolishStatus"> = {
+src/lib/local-builder.ts:1763:    fuguGateStatus: null,
+src/lib/local-builder.ts:1764:    fuguGateScore: null,
+src/lib/local-builder.ts:1765:    fuguGateReview: null,
+src/lib/local-builder.ts:1766:    fuguGateReviewedAt: null,
+src/lib/local-builder.ts:1767:    fuguGateOverrideReason: null,
+src/lib/local-builder.ts:1768:    fuguPolishStatus: null,
+src/lib/local-builder.ts:1773:  if (getFuguDesignGateMode() !== "off") {
+src/lib/local-builder.ts:1774:    const gate = await runFuguDesignGate(fuguGateInputFromProject(parsed.projectName, message, researchBrief));
+src/lib/local-builder.ts:1780:          ? "Fugu Unavailable"
+src/lib/local-builder.ts:1781:          : "Fugu Error";
+src/lib/local-builder.ts:1782:    preparedLog = await persistFuguDesignGate(db, projectId, preparedLog, gate, preparedStatus);
+src/lib/local-builder.ts:1783:    preparedDesignReview = formatFuguDesignGate(gate);
+src/lib/local-builder.ts:1786:      fuguGateStatus: gate.verdict,
+src/lib/local-builder.ts:1787:      fuguGateScore: gate.score,
+src/lib/local-builder.ts:1788:      fuguGateReview: gate,
+src/lib/local-builder.ts:1789:      fuguGateReviewedAt: gate.reviewedAt,
+src/lib/local-builder.ts:1790:      fuguGateOverrideReason: null,
+src/lib/local-builder.ts:1791:      fuguPolishStatus: null,
+src/lib/local-builder.ts:1877:    const gate = canStartBuildWithFuguGate(project);
+src/lib/local-builder.ts:1953:  const gate = canStartBuildWithFuguGate(project);
+src/lib/local-builder.ts:1986:    ? `Builder: using saved Fugu design review${rowNumber(project.designScore) ? ` with score ${rowNumber(project.designScore)}/10` : ""}.\n`
+src/lib/local-builder.ts:1987:    : "Builder: no Fugu design review attached; generating from the Athena brief.\n";
+src/lib/local-builder.ts:2026:    await upsertSkillTask(db, projectId, userId, `Visual polish review for ${projectName}`, "Confirm the app feels like a real product before completion.", "pending", "Run Fugu Design Review if the generated app feels too basic");
+src/lib/local-builder.ts:2149:  const gate = canStartBuildWithFuguGate(project);
+src/lib/local-builder.ts:2331:  const gate = canStartBuildWithFuguGate(project);
+src/lib/skill-scout/github.ts:8:  | "add_fugu_review_rule"
+src/lib/skill-scout/github.ts:352:  return "Partial overlap with Builder/Fugu guidance; adapt as a narrow rule or card.";
