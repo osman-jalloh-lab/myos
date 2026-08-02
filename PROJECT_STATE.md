@@ -45,7 +45,7 @@ GitHub `main` is the destination, not proof of local completeness. Do not force-
 | Dirty work | Preserved | Binary patches for `hermes-os`, `hermes-os-deepseek-council`, and `paul` are in the workspace parent | Review independently; do not overwrite |
 | Obsidian execution | Characterized but incomplete | The two baseline-only files exist, but tools are unregistered and `obsidian_worker` has no worker implementation | Preserve as evidence; require an approved secure reimplementation |
 | DeepSeek council/direct | Fragmented | Dedicated variant branches and source/tests exist | Establish feature provenance matrix |
-| Fugu/Sakana gate | Policy conflict | Canonical code still contains active Fugu/Sakana references; no variant code was imported | Plan a separate approved removal review |
+| Fugu/Sakana gate | Removed from active implementation | Source, runtime configuration, UI, health, prompts, tests, and current schema are retired; historical migrations/evidence remain | Apply tested forward migration only through production preflight |
 | Skill upgrades | Highly divergent | The skill-upgrade variant has broad source drift | Review by subsystem, never bulk copy |
 | Cron buckets | Working by design | Dynamic `src/app/api/cron/[bucket]/route.ts` serves daily/weekly/monthly buckets | No action |
 | Environment docs | Verified complete for static reads | Runtime/local-worker settings documented in `.env.example`; no non-platform static reads remain undocumented | Recheck when environment reads change |
@@ -60,7 +60,7 @@ GitHub `main` is the destination, not proof of local completeness. Do not force-
 | Obsidian execution | local `hermes-os` | TBD | `obsidian-worker-task.ts`, `obsidian-tools.ts` | TBD | Preserve in baseline |
 | DeepSeek council | `hermes-os-deepseek-council` | `ce093db` | TBD | Variant tests | Review |
 | DeepSeek direct | `hermes-os-deepseek-direct` | `611fd56` | TBD | Variant tests | Review |
-| Fugu gate/retry | `hermes-os-fugu-gate` | `0ddaf0f` | TBD | Variant tests | Review |
+| Fugu gate/retry | historical variant evidence | `0ddaf0f` | Removed from canonical runtime and schema | Historical only | Do not import |
 | Skill upgrades | `hermes-os-skill-upgrade` | `b4bd6ae` | TBD | Variant tests | Extract by subsystem |
 | p5js exporter | local `hermes-os` | working branch | `skills/p5js/scripts/export-frames.mjs` | lint | Preserve and validate |
 
@@ -68,7 +68,7 @@ GitHub `main` is the destination, not proof of local completeness. Do not force-
 
 1. Finish the low-risk lint and environment-documentation commits without touching protected user edits.
 2. Create a feature provenance record for Obsidian execution, then validate it independently.
-3. Review Fugu, DeepSeek direct, DeepSeek council, and skill upgrades one capability at a time.
+3. Review DeepSeek direct, DeepSeek council, and skill upgrades one capability at a time.
 4. Reconcile architecture, roster, and deployment documentation only after code consolidation.
 
 ## Definition of done

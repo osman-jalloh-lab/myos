@@ -16,7 +16,7 @@ Variants are read-only evidence sources. Never merge a variant or its branch who
 | DeepSeek council | `hermes-os-deepseek-council` | Not verified | UNREVIEWED | TBD |
 | DeepSeek direct | `hermes-os-deepseek-direct` | Not verified | UNREVIEWED | TBD |
 | Skill upgrades | `hermes-os-skill-upgrade` | Not verified | UNREVIEWED | Review one subsystem at a time |
-| Fugu/Sakana gate | Canonical tree and Fugu variant | Present in canonical tree | POLICY CONFLICT | Do not import from variants; plan a separate, approved removal review |
+| Fugu/Sakana gate | Canonical tree and historical variant | Removed from active source and current schema | RETIRED | Preserve historical migration/evidence only; do not import from variants |
 | Dynamic cron buckets | Canonical tree | Operational by design | CANONICAL | Preserve |
 | p5js ESM exporter | Canonical branch | Validated at `15be539` | CANONICAL | Preserve |
 
@@ -86,8 +86,6 @@ Mandatory future tests include a temporary vault, valid-path behavior, traversal
 
 **Provisional decision:** preserve the two files as evidence of an unfinished canonical integration. Do not expose, port, or expand them. A future, separately approved implementation must be a bounded local-worker capability with explicit vault configuration, containment controls, approval enforcement, and characterization tests.
 
-## Fugu/Sakana policy conflict
+## Fugu/Sakana retirement
 
-The required zero-reference check does **not** pass. Canonical runtime code, schema fields, migrations, UI, configuration, and local-worker logic currently reference Fugu/Sakana. The complete result is in `.consolidation/evidence/obsidian/08-fugu-zero-reference-check.txt`.
-
-No Fugu/Sakana code was imported during this review. Its removal is intentionally deferred: it is a behavior-changing, cross-cutting migration and requires its own approved plan and validation.
+Fugu/Sakana has been removed from canonical active source, runtime, configuration, worker execution, API, UI, health reporting, prompts, templates, tests, and the current Prisma schema. Historical migrations and consolidation evidence remain for provenance only. See `docs/FUGU_SCHEMA_REMOVAL.md` for the tested forward migration and production preflight.

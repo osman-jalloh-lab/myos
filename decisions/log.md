@@ -13,6 +13,10 @@ must enforce a configured vault boundary, approval policy, and worker-level test
 
 Owner: Osman Jalloh.
 
+## 2026-08-02 — Fugu/Sakana removal completed in active source and current schema
+
+Removed the unreachable provider implementation, compatibility writes, provider-specific prompts, generated project text, registry ownership, and direct provider tests. Rebuilt the current `Project` schema through a forward-only Prisma migration that preserves project identity, lifecycle, build, preview, research, QA, and timestamp data while dropping retired review columns. The migration was validated against disposable libSQL databases only; production application requires the backup, preflight, deploy, and restore procedure in `docs/FUGU_SCHEMA_REMOVAL.md`. Historical migration artifacts and consolidation evidence remain for provenance. Owner: Osman Jalloh.
+
 ## 2026-08-01 — Establish one Hermes OS integration baseline
 
 Decision: Treat the local `hermes-os` repository as the candidate integration baseline while
