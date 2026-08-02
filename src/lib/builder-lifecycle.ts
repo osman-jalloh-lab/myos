@@ -2,8 +2,8 @@
  * Canonical Builder lifecycle.
  *
  * This is intentionally independent of provider, UI, and persistence details so
- * Fugu-era project rows can be rendered and scheduled without preserving their
- * historical review stages in new code.
+ * Historical project rows can be rendered and scheduled without preserving
+ * retired review stages in new code.
  */
 export const CANONICAL_BUILDER_STAGES = [
   "queued",
@@ -43,16 +43,7 @@ const LEGACY_STAGE_MAP: Record<string, CanonicalBuilderStage> = {
   "dev server running": "building",
   qa_pending: "qa_pending",
   "build passed": "qa_pending",
-  waiting_for_fugu_design: "building",
-  fugu_design_complete: "building",
-  fugu_design_gate: "building",
-  "fugu design gate": "building",
-  "fugu unavailable": "building",
-  "fugu error": "failed",
   "design revision needed": "building",
-  fugu_polish_review: "qa_pending",
-  waiting_for_fugu_polish: "qa_pending",
-  fugu_polish_complete: "completed",
   qa_running: "qa_running",
   browser_qa: "qa_running",
   qa_passed: "completed",
@@ -75,7 +66,11 @@ function keyFor(value: unknown): string {
 
 /** Unknown legacy states fail safely by remaining queued for explicit handling. */
 export function normalizeBuilderLifecycle(value: unknown): CanonicalBuilderStage {
-  return LEGACY_STAGE_MAP[keyFor(value)] ?? "queued";
+  const key = keyFor(value);
+  const legacyKey = key.replace(/_/g, " ");
+  if (legacyKey.includes("design gate")) return "building";
+  if (legacyKey.includes("polish")) return "qa_pending";
+  return LEGACY_STAGE_MAP[key] ?? "queued";
 }
 
 /** Prefer a QA-specific state when a persisted project row supplies one. */

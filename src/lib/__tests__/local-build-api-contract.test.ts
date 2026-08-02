@@ -3,11 +3,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { serializeLocalBuildProject, type LocalBuildProject } from "../local-builder";
 
-const legacyProject: LocalBuildProject = {
+const project: LocalBuildProject = {
   id: "project-1",
   projectName: "Legacy project",
   localFolderPath: "C:/projects/legacy-project",
-  status: "fugu_design_complete",
+  status: "Building",
   createdAt: "2026-08-01T00:00:00.000Z",
   currentTask: "Build app",
   taskId: "task-1",
@@ -16,26 +16,16 @@ const legacyProject: LocalBuildProject = {
   localDevUrl: null,
   localDevPid: null,
   researchBrief: "brief",
-  designReview: "old review",
-  polishReview: "old polish review",
-  designScore: 9,
-  fuguGateStatus: "pass",
-  fuguGateScore: 9,
-  fuguGateReview: null,
-  fuguGateReviewedAt: "2026-08-01T00:00:00.000Z",
-  fuguGateOverrideReason: "legacy override",
-  fuguPolishStatus: "completed",
   qaStatus: null,
   qaChecklist: null,
 };
 
 describe("local Builder API contract", () => {
-  it("serializes old records with a canonical stage without leaking or mutating legacy fields", () => {
-    const before = JSON.stringify(legacyProject);
-    const serialized = serializeLocalBuildProject(legacyProject) as Record<string, unknown>;
+  it("serializes current records with a canonical stage without mutation", () => {
+    const before = JSON.stringify(project);
+    const serialized = serializeLocalBuildProject(project) as Record<string, unknown>;
     expect(serialized.canonicalStage).toBe("building");
-    for (const field of ["designReview", "polishReview", "designScore", "fuguGateStatus", "fuguGateScore", "fuguGateReview", "fuguGateReviewedAt", "fuguGateOverrideReason", "fuguPolishStatus"]) expect(serialized).not.toHaveProperty(field);
-    expect(JSON.stringify(legacyProject)).toBe(before);
+    expect(JSON.stringify(project)).toBe(before);
   });
 
   it("keeps only provider-neutral local-build actions and rejects obsolete actions", () => {

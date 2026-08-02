@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -10,8 +10,9 @@ describe("Fugu provider configuration retirement", () => {
     expect(environmentExample).not.toMatch(/SAKANA_API_KEY|FUGU_DESIGN_/);
   });
 
-  it("keeps Builder startup free of a runtime Fugu provider import", () => {
+  it("deletes the provider implementation and keeps Builder free of its imports", () => {
     const builder = repositoryFile("src", "lib", "local-builder.ts");
+    expect(existsSync(path.join(process.cwd(), "src", "lib", "fugu-design-critic.ts"))).toBe(false);
     expect(builder).not.toMatch(/import\s*\{[^;]*?from\s*["']@\/lib\/fugu-design-critic["']/);
   });
 

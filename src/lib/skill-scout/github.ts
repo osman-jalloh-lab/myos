@@ -5,7 +5,7 @@ import { sanitizeGitHubHeaderValue, sanitizeGitHubRepoInput } from "@/lib/hermes
 export type SkillScoutAction =
   | "convert_to_knowledge_card"
   | "add_builder_skill"
-  | "add_fugu_review_rule"
+  | "add_builder_review_rule"
   | "add_qa_check"
   | "add_tool_registry_entry"
   | "ignore"
@@ -349,7 +349,7 @@ function overlapFor(category: string): string {
   if (category === "Browser Automation") return "Overlaps with existing QA/build verification; add only guarded checks.";
   if (category === "Accessibility") return "Complements existing design accessibility cards and frontend QA.";
   if (category === "Design Systems") return "Complements catalog/design and Builder standards.";
-  return "Partial overlap with Builder/Fugu guidance; adapt as a narrow rule or card.";
+  return "Partial overlap with Builder guidance; adapt as a narrow rule or card.";
 }
 
 function scoreValue(candidate: SkillScoutCandidate): number {

@@ -870,7 +870,7 @@ Paper Writing Checklist:
 
 ### Two-Pass Refinement Pattern
 
-When drafting with an AI agent, use a **two-pass** approach (proven effective in SakanaAI's AI-Scientist pipeline):
+When drafting with an AI agent, use a **two-pass** approach proven effective in automated scientific-writing pipelines:
 
 **Pass 1 — Write + immediate refine per section:**
 For each section, write a complete draft, then immediately refine it in the same context. This catches local issues (clarity, flow, completeness) while the section is fresh.
@@ -1538,7 +1538,7 @@ with plt.style.context(['science', 'no-latex']):
 
 ### Step 6.1: Simulate Reviews (Ensemble Pattern)
 
-Generate reviews from multiple perspectives. The key insight from automated research pipelines (notably SakanaAI's AI-Scientist): **ensemble reviewing with a meta-reviewer produces far more calibrated feedback than a single review pass.**
+Generate reviews from multiple perspectives. A useful automated-research insight is that **ensemble reviewing with a meta-reviewer produces far more calibrated feedback than a single review pass.**
 
 **Step 1: Generate N independent reviews** (N=3-5)
 

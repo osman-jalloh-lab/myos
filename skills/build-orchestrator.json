@@ -6,8 +6,7 @@
   "ownerAgents": [
     "hermes",
     "prometheus",
-    "argus",
-    "fugu"
+    "argus"
   ],
   "tags": [
     "build",

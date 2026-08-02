@@ -5,10 +5,6 @@ import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
 import { normalizeBuilderLifecycle, withCanonicalBuilderStage, type CanonicalBuilderStage, type CanonicalBuilderStageResponse } from "@/lib/builder-lifecycle";
-import type {
-  FuguDesignGate,
-  FuguGateVerdict,
-} from "@/lib/fugu-design-critic";
 import { createExecutionQueueTask, updateExecutionQueueTask } from "@/lib/execution-queue";
 import { loadAgentKnowledgeContext, type KnowledgeCard } from "@/lib/knowledge-cards";
 import { runBrowserQa } from "@/lib/browser-qa";
@@ -38,29 +34,15 @@ export type LocalBuildProject = {
   localDevPid: number | null;
   previewStatus?: "online" | "offline" | "stale" | null;
   researchBrief: string | null;
-  designReview: string | null;
-  polishReview: string | null;
-  designScore: number | null;
-  fuguGateStatus?: FuguGateVerdict | null;
-  fuguGateScore?: number | null;
-  fuguGateReview?: FuguDesignGate | null;
-  fuguGateReviewedAt?: string | null;
-  fuguGateOverrideReason?: string | null;
-  fuguPolishStatus?: string | null;
   qaStatus: string | null;
   qaChecklist: LocalBuilderQaItem[] | null;
   files?: string[];
 };
 
-type LegacyFuguProjectFields = "designReview" | "polishReview" | "designScore" | "fuguGateStatus" | "fuguGateScore" | "fuguGateReview" | "fuguGateReviewedAt" | "fuguGateOverrideReason" | "fuguPolishStatus";
-
-/** Provider-neutral Local Builder API contract; deprecated persistence remains internal. */
-export type LocalBuildProjectResponse = Omit<LocalBuildProject, LegacyFuguProjectFields> & CanonicalBuilderStageResponse;
+export type LocalBuildProjectResponse = LocalBuildProject & CanonicalBuilderStageResponse;
 
 export function serializeLocalBuildProject(project: LocalBuildProject): LocalBuildProjectResponse {
-  const legacyFields = new Set<LegacyFuguProjectFields>(["designReview", "polishReview", "designScore", "fuguGateStatus", "fuguGateScore", "fuguGateReview", "fuguGateReviewedAt", "fuguGateOverrideReason", "fuguPolishStatus"]);
-  const providerNeutralProject = Object.fromEntries(Object.entries(project).filter(([field]) => !legacyFields.has(field as LegacyFuguProjectFields))) as Omit<LocalBuildProject, LegacyFuguProjectFields>;
-  return withCanonicalBuilderStage(providerNeutralProject);
+  return withCanonicalBuilderStage(project);
 }
 
 export type LocalBuilderQaItem = {
@@ -225,15 +207,6 @@ async function ensureLocalBuilderColumns(db: Db): Promise<void> {
   await db.execute(`ALTER TABLE Project ADD COLUMN localPreviewStatus TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localPreviewCheckedAt TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localResearchBrief TEXT`).catch(() => undefined);
-  await db.execute(`ALTER TABLE Project ADD COLUMN localDesignReview TEXT`).catch(() => undefined);
-  await db.execute(`ALTER TABLE Project ADD COLUMN localPolishReview TEXT`).catch(() => undefined);
-  await db.execute(`ALTER TABLE Project ADD COLUMN designScore INTEGER`).catch(() => undefined);
-  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateStatus TEXT`).catch(() => undefined);
-  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateScore INTEGER`).catch(() => undefined);
-  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateReview TEXT`).catch(() => undefined);
-  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateReviewedAt TEXT`).catch(() => undefined);
-  await db.execute(`ALTER TABLE Project ADD COLUMN fuguGateOverrideReason TEXT`).catch(() => undefined);
-  await db.execute(`ALTER TABLE Project ADD COLUMN fuguPolishStatus TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localQaStatus TEXT`).catch(() => undefined);
   await db.execute(`ALTER TABLE Project ADD COLUMN localQaChecklist TEXT`).catch(() => undefined);
 }
@@ -265,10 +238,6 @@ function queuedActionLabel(action: string): string {
   }
 }
 
-function rowNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
 function parseQaChecklist(value: unknown): LocalBuilderQaItem[] | null {
   if (typeof value !== "string" || !value.trim()) return null;
   try {
@@ -285,45 +254,6 @@ function parseQaChecklist(value: unknown): LocalBuilderQaItem[] | null {
   } catch {
     return null;
   }
-}
-
-function parseFuguGateReview(value: unknown): FuguDesignGate | null {
-  if (typeof value !== "string" || !value.trim()) return null;
-  try {
-    const parsed = JSON.parse(value) as FuguDesignGate;
-    if (!parsed || typeof parsed !== "object") return null;
-    if (!["pass", "revise", "unavailable", "error"].includes(String(parsed.verdict))) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function fuguGateStatus(value: unknown): FuguGateVerdict | null {
-  const status = rowString(value);
-  return status === "pass" || status === "revise" || status === "unavailable" || status === "error" ? status : null;
-}
-
-export function canStartBuildWithFuguGate(
-  project: { fuguGateStatus?: unknown; fuguGateOverrideReason?: unknown },
-  mode?: unknown
-): { allowed: boolean; reason: string } {
-  void project;
-  void mode;
-  // Compatibility-only: legacy Fugu fields remain readable until their schema
-  // migration, but no longer control canonical Builder progression.
-  return { allowed: true, reason: "Canonical Builder lifecycle proceeds directly to build and QA." };
-}
-
-function projectGateFields(project: Record<string, unknown>) {
-  return {
-    fuguGateStatus: fuguGateStatus(project.fuguGateStatus),
-    fuguGateScore: rowNumber(project.fuguGateScore),
-    fuguGateReview: parseFuguGateReview(project.fuguGateReview),
-    fuguGateReviewedAt: rowString(project.fuguGateReviewedAt) || null,
-    fuguGateOverrideReason: rowString(project.fuguGateOverrideReason) || null,
-    fuguPolishStatus: rowString(project.fuguPolishStatus) || null,
-  };
 }
 
 function packageName(projectName: string): string {
@@ -624,7 +554,7 @@ dd { margin: 0; color: #fff8e8; text-align: right; }
 `;
 }
 
-async function appFiles(projectName: string, message: string, researchBrief?: string | null, designReview?: string | null, knowledgeContext?: string | null): Promise<Record<string, string>> {
+async function appFiles(projectName: string, message: string, researchBrief?: string | null, knowledgeContext?: string | null): Promise<Record<string, string>> {
   const heading = cleanDisplayText(
     quotedAfter(message, "heading(?:\\s+(?:that\\s+)?(?:says|reads))?") ??
     quotedAfter(message, "landing page(?:\\s+that\\s+says)?") ??
@@ -637,10 +567,9 @@ async function appFiles(projectName: string, message: string, researchBrief?: st
   );
   const safeName = cleanDisplayText(projectName);
   const briefText = researchBrief?.trim() || "No Athena research brief was attached.";
-  const reviewText = designReview?.trim() || "No Fugu design review was attached.";
   const knowledgeText = knowledgeContext?.trim() || "No Builder knowledge cards were loaded.";
-  const isLuxuryWatch = /\b(watch|watches|chrono|timepiece|horology)\b/i.test(`${projectName} ${message} ${briefText} ${reviewText} ${knowledgeText}`);
-  const isJobTracker = /\b(job|application|applicant|interview|resume|tracker|jobflow)\b/i.test(`${projectName} ${message} ${briefText} ${reviewText}`);
+  const isLuxuryWatch = /\b(watch|watches|chrono|timepiece|horology)\b/i.test(`${projectName} ${message} ${briefText} ${knowledgeText}`);
+  const isJobTracker = /\b(job|application|applicant|interview|resume|tracker|jobflow)\b/i.test(`${projectName} ${message} ${briefText}`);
 
   if (isJobTracker) {
     const template = await jobTrackerTemplateFiles(projectName);
@@ -668,8 +597,8 @@ async function appFiles(projectName: string, message: string, researchBrief?: st
         typescript: "^5.6.0",
       },
     }, null, 2)}\n`,
-    "README.md": `# ${safeName}\n\nGenerated by Hermes Local Builder using an internal Athena research brief, Builder knowledge cards, and Fugu design review.\n\n## Athena Research Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Fugu Design Review\n\n${reviewText}\n\n## Commands\n\n\`\`\`bash\nnpm install\nnpm run build\nnpm run dev\n\`\`\`\n`,
-    "BUILDER_PLAN.md": `# ${safeName} Builder Plan\n\n## Product Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Fugu Design Review\n\n${reviewText}\n\n## Design Brief\n\nOriginal visual direction only. Do not copy brand layouts, product photography, or copyrighted assets.\n\n## Feature Plan\n\nInclude real sections, clickable controls, stateful interactions, empty states, and responsive behavior appropriate to the prompt.\n\n## Build Plan\n\nGenerate a working Next.js app with visible product structure and local demo behavior before running install and build.\n\n## QA Checklist\n\n- npm run build passes\n- Main buttons work\n- Navigation works\n- Filters or core controls work\n- Saved/compare or equivalent state works when relevant\n- Mobile layout works\n- App feels like a real product\n- No copied assets\n`,
+    "README.md": `# ${safeName}\n\nGenerated by Hermes Local Builder using an internal Athena research brief and Builder knowledge cards.\n\n## Athena Research Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Commands\n\n\`\`\`bash\nnpm install\nnpm run build\nnpm run dev\n\`\`\`\n`,
+    "BUILDER_PLAN.md": `# ${safeName} Builder Plan\n\n## Product Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Design Brief\n\nOriginal visual direction only. Do not copy brand layouts, product photography, or copyrighted assets.\n\n## Feature Plan\n\nInclude real sections, clickable controls, stateful interactions, empty states, and responsive behavior appropriate to the prompt.\n\n## Build Plan\n\nGenerate a working Next.js app with visible product structure and local demo behavior before running install and build.\n\n## QA Checklist\n\n- npm run build passes\n- Main buttons work\n- Navigation works\n- Filters or core controls work\n- Saved/compare or equivalent state works when relevant\n- Mobile layout works\n- App feels like a real product\n- No copied assets\n`,
     "next.config.mjs": `const nextConfig = {};\n\nexport default nextConfig;\n`,
     "tsconfig.json": `${JSON.stringify({
       compilerOptions: {
@@ -1035,8 +964,6 @@ function buildCodexImprovementPrompt(params: {
   userRequest: string;
   researchBrief: string;
   knowledgeContext: string;
-  designReview: string;
-  polishReview: string;
   qaFailures: string;
   pageSummary: string;
   improvementGoal: string;
@@ -1060,12 +987,6 @@ function buildCodexImprovementPrompt(params: {
     "",
     "Builder knowledge cards:",
     params.knowledgeContext || "No Builder knowledge cards loaded.",
-    "",
-    "Fugu design review:",
-    params.designReview || "No Fugu design review recorded.",
-    "",
-    "Fugu polish review:",
-    params.polishReview || "No Fugu polish review recorded.",
     "",
     "QA checklist failure reasons:",
     params.qaFailures || "No QA failures recorded.",
@@ -1148,10 +1069,6 @@ export async function buildHermesAgentExecutionPrompt(userId: string, projectId:
       "",
       "Knowledge Cards:",
       knowledgeContext || "No relevant Knowledge Cards loaded.",
-      "",
-      "Fugu review:",
-      rowString(project.localDesignReview) || "No Fugu review recorded.",
-      rowString(project.localPolishReview) || "No Fugu polish review recorded.",
       "",
       "QA checklist:",
       qaChecklist,
@@ -1323,9 +1240,6 @@ async function evaluateLocalBuilderQa(project: Record<string, unknown>, folder: 
     /TODO|coming soon|placeholder|lorem ipsum/i,
   ];
   const noDeadSections = !deadHints.some((pattern) => pattern.test(`${page}\n${css}`));
-  const designReview = rowString(project.localDesignReview);
-  const polishReview = rowString(project.localPolishReview);
-  const designScore = rowNumber(project.designScore);
   const semantic = hasSemanticStructure(page);
   const buttonLabels = hasAccessibleButtonLabels(page);
   const formLabels = hasFormLabels(page);
@@ -1355,16 +1269,12 @@ async function evaluateLocalBuilderQa(project: Record<string, unknown>, folder: 
       : skippedQaItem("local_storage_works", "localStorage works if used", "localStorage is not used."),
     qaItem("mobile_layout_reviewed", "mobile layout reviewed", mobileReviewed, mobileReviewed ? "Responsive CSS cues were found." : "No obvious responsive/mobile CSS was found."),
     qaItem("no_empty_dead_sections", "no obvious empty/dead sections", noDeadSections, noDeadSections ? "No obvious placeholders, dead hrefs, or empty handlers detected." : "Potential placeholder/dead-section hints were found."),
-    designReview
-      ? qaItem("design_review_score_recorded", "design review score recorded if Fugu is available", typeof designScore === "number", typeof designScore === "number" ? `Design review score recorded: ${designScore}/10.` : "Design review exists but no numeric score was recorded.")
-      : skippedQaItem("design_review_score_recorded", "design review score recorded if Fugu is available", "No Fugu design review is attached."),
-    qaItem("polish_review_completed", "polish review completed", Boolean(polishReview), polishReview ? "Post-build polish review is attached." : "Run Fugu Design Review after generation to record polish guidance."),
   ];
 
   const failed = checklist.filter((item) => item.status === "failed");
   const summary = failed.length
     ? `QA review pending: ${failed.map((item) => item.label).join(", ")}.`
-    : "QA passed: build, interaction, responsive, and polish gates are satisfied.";
+    : "QA passed: build, interaction, accessibility, and responsive checks are satisfied.";
 
   return {
     status: failed.length ? "qa_failed" : "qa_passed",
@@ -1525,15 +1435,6 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     localDevUrl: null,
     localDevPid: null,
     researchBrief,
-    designReview: null,
-    polishReview: null,
-    designScore: null,
-    fuguGateStatus: null,
-    fuguGateScore: null,
-    fuguGateReview: null,
-    fuguGateReviewedAt: null,
-    fuguGateOverrideReason: null,
-    fuguPolishStatus: null,
     qaStatus: null,
     qaChecklist: null,
   };
@@ -1598,11 +1499,6 @@ export async function queueLocalBuilderWorkerTask(
     }
   }
 
-  if (project && ["generate", "rebuild", "build", "npmBuild", "runCodex"].includes(action)) {
-    const gate = canStartBuildWithFuguGate(project);
-    if (!gate.allowed) throw new Error(gate.reason);
-  }
-
   const task = await createExecutionQueueTask({
     userId,
     title: `${queuedActionLabel(action)} for ${projectName}`,
@@ -1663,10 +1559,6 @@ export async function queueLocalBuilderWorkerTask(
     localDevUrl: rowString(project?.localDevUrl) || null,
     localDevPid: typeof project?.localDevPid === "number" ? project.localDevPid : null,
     researchBrief: rowString(project?.localResearchBrief) || null,
-    designReview: rowString(project?.localDesignReview) || null,
-    polishReview: rowString(project?.localPolishReview) || null,
-    designScore: rowNumber(project?.designScore),
-    ...(project ? projectGateFields(project) : {}),
     qaStatus: rowString(project?.localQaStatus) || null,
     qaChecklist: parseQaChecklist(project?.localQaChecklist),
   };
@@ -1675,12 +1567,9 @@ export async function queueLocalBuilderWorkerTask(
 export async function generateLocalStarterApp(userId: string, projectId: string, message: string): Promise<LocalBuildProject> {
   const db = getDb();
   const project = await findLocalBuildProject(db, userId, projectId);
-  const gate = canStartBuildWithFuguGate(project);
-  if (!gate.allowed) throw new Error(gate.reason);
   const { projectName, folder: resolvedFolder, createdAt } = await resolveProjectFolder(project);
   const researchBrief = rowString(project.localResearchBrief) || await createAthenaResearchBrief(projectName, message);
   const builderKnowledge = await loadBuilderKnowledgeContext(projectName, message);
-  const designReview = rowString(project.localDesignReview);
   if (!rowString(project.localResearchBrief)) {
     await db.execute({
       sql: `UPDATE Project SET localResearchBrief = ?, updatedAt = datetime('now') WHERE id = ?`,
@@ -1707,11 +1596,9 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
   }
 
   let log = `${rowString(project.localBuildLog) || "Ready to Build"}\n`;
-  log += designReview
-    ? `Builder: using saved Fugu design review${rowNumber(project.designScore) ? ` with score ${rowNumber(project.designScore)}/10` : ""}.\n`
-    : "Builder: no Fugu design review attached; generating from the Athena brief.\n";
+  log += "Builder: generating from the Athena research brief.\n";
   log += `Builder: loaded knowledge cards.\n${builderKnowledge}\n`;
-  const files = await appFiles(projectName, message, researchBrief, designReview, builderKnowledge);
+  const files = await appFiles(projectName, message, researchBrief, builderKnowledge);
   const changedFiles = Object.keys(files);
 
   try {
@@ -1764,9 +1651,6 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
       localDevUrl: rowString(project.localDevUrl) || null,
       localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
       researchBrief,
-      designReview: designReview || null,
-      polishReview: rowString(project.localPolishReview) || null,
-      designScore: rowNumber(project.designScore),
       qaStatus: "qa_pending",
       qaChecklist: null,
       files: changedFiles,
@@ -1796,9 +1680,6 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
       localDevUrl: rowString(project.localDevUrl) || null,
       localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
       researchBrief,
-      designReview: designReview || null,
-      polishReview: rowString(project.localPolishReview) || null,
-      designScore: rowNumber(project.designScore),
       qaStatus: "qa_failed",
       qaChecklist: parseQaChecklist(project.localQaChecklist),
       files: changedFiles,
@@ -1841,7 +1722,7 @@ export async function runLocalBuilderQa(userId: string, projectId: string): Prom
     projectId,
     userId,
     `QA checklist for ${projectName}`,
-    "Verify build, homepage, navigation, buttons, keyboard access, labels, contrast, focus states, interactions, mobile layout, dead sections, and polish review.",
+    "Verify build, homepage, navigation, buttons, keyboard access, labels, contrast, focus states, interactions, mobile layout, and dead sections.",
     passed ? "done" : "pending",
     passed ? "Local builder QA passed" : qa.summary
   );
@@ -1860,9 +1741,6 @@ export async function runLocalBuilderQa(userId: string, projectId: string): Prom
     localDevUrl: rowString(project.localDevUrl) || null,
     localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
     researchBrief: rowString(project.localResearchBrief) || null,
-    designReview: rowString(project.localDesignReview) || null,
-    polishReview: rowString(project.localPolishReview) || null,
-    designScore: rowNumber(project.designScore),
     qaStatus: displayedQaStatus,
     qaChecklist: qa.checklist,
   };
@@ -1871,8 +1749,6 @@ export async function runLocalBuilderQa(userId: string, projectId: string): Prom
 export async function runLocalCodexExecutor(userId: string, projectId: string, improvementPrompt: string): Promise<LocalBuildProject> {
   const db = getDb();
   const project = await findLocalBuildProject(db, userId, projectId);
-  const gate = canStartBuildWithFuguGate(project);
-  if (!gate.allowed) throw new Error(gate.reason);
   const { projectName, folder, createdAt } = await resolveProjectFolder(project);
   const root = path.resolve(await getLocalProjectsRoot());
   const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
@@ -1915,8 +1791,6 @@ export async function runLocalCodexExecutor(userId: string, projectId: string, i
     userRequest: rowString(project.latestInstruction),
     researchBrief: rowString(project.localResearchBrief),
     knowledgeContext: builderKnowledge,
-    designReview: rowString(project.localDesignReview),
-    polishReview: rowString(project.localPolishReview),
     qaFailures: qaFailureSummary(project),
     pageSummary,
     improvementGoal: improvementPrompt,
@@ -1977,9 +1851,6 @@ export async function runLocalCodexExecutor(userId: string, projectId: string, i
       localDevUrl: rowString(project.localDevUrl) || null,
       localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
       researchBrief: rowString(project.localResearchBrief) || null,
-      designReview: rowString(project.localDesignReview) || null,
-      polishReview: rowString(project.localPolishReview) || null,
-      designScore: rowNumber(project.designScore),
       qaStatus: rowString(project.localQaStatus) || null,
       qaChecklist: parseQaChecklist(project.localQaChecklist),
       files: changedFiles,
@@ -2013,9 +1884,6 @@ export async function runLocalCodexExecutor(userId: string, projectId: string, i
       localDevUrl: rowString(project.localDevUrl) || null,
       localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
       researchBrief: rowString(project.localResearchBrief) || null,
-      designReview: rowString(project.localDesignReview) || null,
-      polishReview: rowString(project.localPolishReview) || null,
-      designScore: rowNumber(project.designScore),
       qaStatus: "qa_failed",
       qaChecklist: parseQaChecklist(project.localQaChecklist),
       files: changedFiles,
@@ -2053,8 +1921,6 @@ export async function runLocalCodexExecutor(userId: string, projectId: string, i
 export async function rebuildLocalStarterApp(userId: string, projectId: string): Promise<LocalBuildProject> {
   const db = getDb();
   const project = await findLocalBuildProject(db, userId, projectId);
-  const gate = canStartBuildWithFuguGate(project);
-  if (!gate.allowed) throw new Error(gate.reason);
   const { projectName, folder, createdAt } = await resolveProjectFolder(project);
   const taskId = crypto.randomUUID();
   let log = `${rowString(project.localBuildLog)}\nRebuild requested\n`.trim();
@@ -2084,9 +1950,6 @@ export async function rebuildLocalStarterApp(userId: string, projectId: string):
       localDevUrl: rowString(project.localDevUrl) || null,
       localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
       researchBrief: rowString(project.localResearchBrief) || null,
-      designReview: rowString(project.localDesignReview) || null,
-      polishReview: rowString(project.localPolishReview) || null,
-      designScore: rowNumber(project.designScore),
       qaStatus: "qa_pending",
       qaChecklist: null,
     };
@@ -2111,9 +1974,6 @@ export async function rebuildLocalStarterApp(userId: string, projectId: string):
       localDevUrl: rowString(project.localDevUrl) || null,
       localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
       researchBrief: rowString(project.localResearchBrief) || null,
-      designReview: rowString(project.localDesignReview) || null,
-      polishReview: rowString(project.localPolishReview) || null,
-      designScore: rowNumber(project.designScore),
       qaStatus: "qa_failed",
       qaChecklist: parseQaChecklist(project.localQaChecklist),
     };
@@ -2147,9 +2007,6 @@ export async function openLocalProjectFolder(userId: string, projectId: string):
     localDevUrl: rowString(project.localDevUrl) || null,
     localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
     researchBrief: rowString(project.localResearchBrief) || null,
-    designReview: rowString(project.localDesignReview) || null,
-    polishReview: rowString(project.localPolishReview) || null,
-    designScore: rowNumber(project.designScore),
     qaStatus: rowString(project.localQaStatus) || null,
     qaChecklist: parseQaChecklist(project.localQaChecklist),
   };
@@ -2175,9 +2032,6 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
       localDevPid: existing.pid,
       previewStatus: "online",
       researchBrief: rowString(project.localResearchBrief) || null,
-      designReview: rowString(project.localDesignReview) || null,
-      polishReview: rowString(project.localPolishReview) || null,
-      designScore: rowNumber(project.designScore),
       qaStatus: rowString(project.localQaStatus) || null,
       qaChecklist: parseQaChecklist(project.localQaChecklist),
     };
@@ -2230,9 +2084,6 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
     localDevPid: child.pid ?? null,
     previewStatus: "online",
     researchBrief: rowString(project.localResearchBrief) || null,
-    designReview: rowString(project.localDesignReview) || null,
-    polishReview: rowString(project.localPolishReview) || null,
-    designScore: rowNumber(project.designScore),
     qaStatus: rowString(project.localQaStatus) || null,
     qaChecklist: parseQaChecklist(project.localQaChecklist),
   };
@@ -2263,9 +2114,6 @@ export async function stopLocalDevServer(userId: string, projectId: string): Pro
     localDevPid: null,
     previewStatus: "offline",
     researchBrief: rowString(project.localResearchBrief) || null,
-    designReview: rowString(project.localDesignReview) || null,
-    polishReview: rowString(project.localPolishReview) || null,
-    designScore: rowNumber(project.designScore),
     qaStatus: rowString(project.localQaStatus) || null,
     qaChecklist: parseQaChecklist(project.localQaChecklist),
   };
@@ -2311,9 +2159,6 @@ export async function runBrowserQaForProject(userId: string, projectId: string):
     localDevPid: typeof updated.localDevPid === "number" ? updated.localDevPid : null,
     previewStatus: "online",
     researchBrief: rowString(updated.localResearchBrief) || null,
-    designReview: rowString(updated.localDesignReview) || null,
-    polishReview: rowString(updated.localPolishReview) || null,
-    designScore: rowNumber(updated.designScore),
     qaStatus,
     qaChecklist: checklist,
   };

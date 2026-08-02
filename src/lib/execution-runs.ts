@@ -3,16 +3,16 @@ import { prisma } from "@/lib/db";
 import { createExecutionQueueTask, getExecutionQueueTask } from "@/lib/execution-queue";
 
 export const EXECUTION_PHASES = [
-  "queued", "claimed", "initializing", "planning", "fugu_design_gate",
+  "queued", "claimed", "initializing", "planning",
   "waiting_for_worker", "waiting_for_approval", "preparing_workspace",
   "hermes_nous_running", "codex_fallback_running", "installing_dependencies",
-  "building", "starting_preview", "browser_qa", "fugu_polish_review",
+  "building", "starting_preview", "browser_qa",
   "completed", "failed", "cancelled", "stalled",
 ] as const;
 
 export type ExecutionPhase = typeof EXECUTION_PHASES[number];
 export type ExecutionSeverity = "info" | "warning" | "error";
-export type ExecutionSource = "web" | "local_worker" | "hermes_nous" | "codex" | "fugu" | "qa";
+export type ExecutionSource = "web" | "local_worker" | "hermes_nous" | "codex" | "qa";
 export type ExecutionRunStatus = "queued" | "running" | "waiting_approval" | "completed" | "failed" | "cancelled" | "stalled";
 export type ExecutionRunExecutor = "hermes_agent" | "codex_cli" | "local_worker" | "internal";
 
