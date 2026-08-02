@@ -15,7 +15,7 @@ The `Project` model retains these historical fields:
 - `fuguGateOverrideReason`
 - `fuguPolishStatus`
 
-These fields may exist in deployed Turso/libSQL databases and old project rows. They must not control routing, build eligibility, health reporting, or UI after the runtime-removal refactor.
+These fields may exist in deployed Turso/libSQL databases and old project rows. They must not control routing, build eligibility, health reporting, UI, or active API responses. Current Command Center and Builder API serializers ignore them, and ordinary prepare/build/QA API paths do not reset or write them.
 
 ## Why they remain temporarily
 

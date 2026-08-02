@@ -9,14 +9,12 @@ import {
   type LocalBuildProject,
   type LocalBuildProjectResponse,
   openLocalProjectFolder,
-  overrideFuguDesignGate,
   prepareLocalBuildProject,
   queueLocalBuilderWorkerTask,
   rebuildLocalStarterApp,
   runLocalCodexExecutor,
-  runLocalFuguDesignGate,
-  runLocalFuguDesignReview,
   runLocalBuilderQa,
+  serializeLocalBuildProject,
   startLocalDevServer,
   stopLocalDevServer,
 } from "@/lib/local-builder";
@@ -28,10 +26,11 @@ import { getHermesAgentReadiness, getLocalWorkerLiveness, workerOfflineNotice } 
 // local_worker is the fallback. Non-build actions (prepare, dev servers,
 // QA-only) stay on the local_worker path — hermes_agent tasks need a project.
 const HERMES_PRIMARY_ACTIONS = new Set(["generate", "rebuild", "build", "npmBuild", "runCodex"]);
+const SUPPORTED_LOCAL_BUILD_ACTIONS = new Set(["prepare", "generate", "rebuild", "build", "npmBuild", "runCodex", "open", "startDev", "stopDev", "runQa"]);
 
 function projectView(project: LocalBuildProject): LocalBuildProjectResponse & { route: null; taskCounts: { done: number; total: number } } {
   return {
-    ...withCanonicalBuilderStage(project),
+    ...withCanonicalBuilderStage(serializeLocalBuildProject(project)),
     route: null,
     taskCounts: { done: project.status === "completed" ? 1 : 0, total: 1 },
   };
@@ -44,9 +43,6 @@ function responseFor(project: ReturnType<typeof projectView>, action: string, fa
     project.localDevUrl ? `URL: ${project.localDevUrl}` : null,
     `Status: ${project.status}`,
     project.researchBrief ? "Athena brief: ready" : null,
-    project.designReview ? `Fugu design review: ready${project.designScore ? ` (${project.designScore}/10)` : ""}` : null,
-    project.fuguGateStatus ? `Fugu gate: ${project.fuguGateStatus}${project.fuguGateScore ? ` (${project.fuguGateScore}/10)` : ""}` : null,
-    project.polishReview ? "Fugu polish review: ready" : null,
     project.qaStatus ? `QA: ${project.qaStatus}` : null,
     project.buildError ? `First error: ${project.buildError}` : null,
   ].filter(Boolean).join("\n");
@@ -111,6 +107,7 @@ export async function POST(req: Request) {
   const action = body?.action ?? "prepare";
   const projectId = body?.projectId;
 
+  if (!SUPPORTED_LOCAL_BUILD_ACTIONS.has(action)) return NextResponse.json({ error: "Unsupported local builder action." }, { status: 400 });
   if (action !== "prepare" && !projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
 
   // Hermes Nous is the primary executor; Codex CLI (local_worker) is the
@@ -172,8 +169,6 @@ export async function POST(req: Request) {
         `Status: ${project.status}`,
         `Current task: ${project.currentTask}`,
         project.researchBrief ? "Athena brief used: yes" : "Athena brief used: no",
-        project.designReview ? "Fugu design review used: yes" : "Fugu design review used: no",
-        project.polishReview ? "Fugu polish review: ready" : "Fugu polish review: pending",
         project.qaStatus ? `QA status: ${project.qaStatus}` : "QA status: pending",
         project.buildError ? `First error: ${project.buildError}` : "npm install and npm run build passed. QA checklist is required before completion.",
       ].join("\n")),
@@ -206,21 +201,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: redactInternalDetails(error instanceof Error ? error.message : String(error)) }, { status: 409 });
     }
     return responseFor(projectView(project), "rebuild", project.status === "Build Failed");
-  }
-
-  if (action === "fuguDesignReview") {
-    const project = await runLocalFuguDesignReview(session.user.id, projectId!);
-    return responseFor(projectView(project), "fuguDesignReview");
-  }
-
-  if (action === "fuguGate") {
-    const project = await runLocalFuguDesignGate(session.user.id, projectId!);
-    return responseFor(projectView(project), "fuguGate", project.fuguGateStatus === "error");
-  }
-
-  if (action === "fuguGateOverride") {
-    const project = await overrideFuguDesignGate(session.user.id, projectId!, message ?? "");
-    return responseFor(projectView(project), "fuguGateOverride");
   }
 
   if (action === "runQa") {
@@ -264,11 +244,7 @@ export async function POST(req: Request) {
       `Current task: ${project.currentTask}`,
       "",
       "Athena research brief is ready.",
-      project.fuguGateStatus === "pass"
-        ? "Fugu Design Gate passed. Ready for build."
-        : "Fugu Design Gate must pass or be explicitly overridden before a required-mode build.",
-      "",
-      project.fuguGateStatus === "pass" ? "Ready for Generate app." : "Review Fugu feedback before Generate app.",
+      "Ready for Generate app and QA.",
     ].join("\n")),
     project: view,
     toolCalls: [
@@ -288,16 +264,6 @@ export async function POST(req: Request) {
         metadata: {
           projectId: project.id,
           status: project.status,
-        },
-      },
-      {
-        type: "design_review",
-        title: `Fugu design review for ${project.projectName}`,
-        content: project.designReview ?? undefined,
-        metadata: {
-          projectId: project.id,
-          status: project.status,
-          designScore: project.designScore,
         },
       },
       {

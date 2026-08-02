@@ -4,7 +4,7 @@ import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promi
 import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
-import { deriveCanonicalBuilderStage, normalizeBuilderLifecycle, type CanonicalBuilderStage, type CanonicalBuilderStageResponse } from "@/lib/builder-lifecycle";
+import { deriveCanonicalBuilderStage, normalizeBuilderLifecycle, withCanonicalBuilderStage, type CanonicalBuilderStage, type CanonicalBuilderStageResponse } from "@/lib/builder-lifecycle";
 import {
   formatFuguDesignGate,
   getFuguDesignGateMode,
@@ -60,8 +60,16 @@ export type LocalBuildProject = {
   files?: string[];
 };
 
-/** Local Builder's additive API project contract. */
-export type LocalBuildProjectResponse = LocalBuildProject & CanonicalBuilderStageResponse;
+type LegacyFuguProjectFields = "designReview" | "polishReview" | "designScore" | "fuguGateStatus" | "fuguGateScore" | "fuguGateReview" | "fuguGateReviewedAt" | "fuguGateOverrideReason" | "fuguPolishStatus";
+
+/** Provider-neutral Local Builder API contract; deprecated persistence remains internal. */
+export type LocalBuildProjectResponse = Omit<LocalBuildProject, LegacyFuguProjectFields> & CanonicalBuilderStageResponse;
+
+export function serializeLocalBuildProject(project: LocalBuildProject): LocalBuildProjectResponse {
+  const legacyFields = new Set<LegacyFuguProjectFields>(["designReview", "polishReview", "designScore", "fuguGateStatus", "fuguGateScore", "fuguGateReview", "fuguGateReviewedAt", "fuguGateOverrideReason", "fuguPolishStatus"]);
+  const providerNeutralProject = Object.fromEntries(Object.entries(project).filter(([field]) => !legacyFields.has(field as LegacyFuguProjectFields))) as Omit<LocalBuildProject, LegacyFuguProjectFields>;
+  return withCanonicalBuilderStage(providerNeutralProject);
+}
 
 export type LocalBuilderQaItem = {
   key: string;
@@ -1690,7 +1698,7 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     projectId = rowString(row.id);
     createdAt = rowString(row.createdAt) || now;
     await db.execute({
-      sql: `UPDATE Project SET projectName = ?, status = 'Researching', latestInstruction = ?, assignedAgent = ?, localFolderPath = ?, localBuildLog = ?, localBuildError = NULL, localDesignReview = NULL, localPolishReview = NULL, designScore = NULL, fuguGateStatus = NULL, fuguGateScore = NULL, fuguGateReview = NULL, fuguGateReviewedAt = NULL, fuguGateOverrideReason = NULL, fuguPolishStatus = NULL, updatedAt = datetime('now') WHERE id = ?`,
+      sql: `UPDATE Project SET projectName = ?, status = 'Researching', latestInstruction = ?, assignedAgent = ?, localFolderPath = ?, localBuildLog = ?, localBuildError = NULL, updatedAt = datetime('now') WHERE id = ?`,
       args: [parsed.projectName, message.slice(0, 500), ATHENA_RESEARCH_AGENT, localFolderPath, "Researching: Athena is creating a build brief.\n", projectId],
     });
   } else {
@@ -1720,8 +1728,8 @@ export async function prepareLocalBuildProject(userId: string, message: string):
   }
 
   await db.execute({
-    sql: `UPDATE Project SET status = 'Brief Ready', assignedAgent = ?, localResearchBrief = ?, localDesignReview = NULL, designScore = NULL, fuguGateStatus = NULL, fuguGateScore = NULL, fuguGateReview = NULL, fuguGateReviewedAt = NULL, fuguGateOverrideReason = NULL, fuguPolishStatus = NULL, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
-    args: [LOCAL_BUILDER_AGENT, researchBrief, `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief. Fugu Design Gate runs before normal build.\n\n${researchBrief}`, projectId],
+    sql: `UPDATE Project SET status = 'Brief Ready', assignedAgent = ?, localResearchBrief = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
+    args: [LOCAL_BUILDER_AGENT, researchBrief, `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief and proceed directly to QA.\n\n${researchBrief}`, projectId],
   });
 
   await logAthenaResearchRun(db, parsed.projectName, researchBrief);
@@ -1731,13 +1739,11 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     ["Design brief", "Define visual direction, typography, spacing, layout, motion, and asset rules."],
     ["Feature plan", "Define catalog, cards, filters, detail views, saved/compare, and checkout or concierge flow."],
     ["Build plan", "Define implementation steps for responsive, stateful, testable UI."],
-    ["Fugu design gate", "Read-only pre-build review for UX structure, visual direction, missing interactions, realism, and required improvements."],
     ["QA checklist", "Verify build, navigation, buttons, filters, localStorage, responsive layout, and no copied assets."],
-    ["Visual polish review", "Confirm the app feels like a real product before completion."],
   ] as const;
 
   for (const [title, description] of skillTasks) {
-    await upsertSkillTask(db, projectId, userId, `${title} for ${parsed.projectName}`, description, title === "Visual polish review" ? "pending" : "done", title === "Visual polish review" ? "Review after generation and QA" : "Ready for Builder generation");
+    await upsertSkillTask(db, projectId, userId, `${title} for ${parsed.projectName}`, description, "done", "Ready for Builder generation");
   }
 
   const currentTask = `Generate app from Athena brief for ${parsed.projectName}`;
@@ -1771,40 +1777,8 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     ],
   }).catch(() => undefined);
 
-  let preparedStatus = "Brief Ready";
-  let preparedLog = `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief. Fugu Design Gate runs before normal build.\n\n${researchBrief}`;
-  let preparedGateFields: Pick<LocalBuildProject, "fuguGateStatus" | "fuguGateScore" | "fuguGateReview" | "fuguGateReviewedAt" | "fuguGateOverrideReason" | "fuguPolishStatus"> = {
-    fuguGateStatus: null,
-    fuguGateScore: null,
-    fuguGateReview: null,
-    fuguGateReviewedAt: null,
-    fuguGateOverrideReason: null,
-    fuguPolishStatus: null,
-  };
-  let preparedDesignReview: string | null = null;
-  let preparedDesignScore: number | null = null;
-
-  if (getFuguDesignGateMode() !== "off") {
-    const gate = await runFuguDesignGate(fuguGateInputFromProject(parsed.projectName, message, researchBrief));
-    preparedStatus = gate.verdict === "pass"
-      ? "Design Ready"
-      : gate.verdict === "revise"
-        ? "Design Revision Needed"
-        : gate.verdict === "unavailable"
-          ? "Fugu Unavailable"
-          : "Fugu Error";
-    preparedLog = await persistFuguDesignGate(db, projectId, preparedLog, gate, preparedStatus);
-    preparedDesignReview = formatFuguDesignGate(gate);
-    preparedDesignScore = gate.score;
-    preparedGateFields = {
-      fuguGateStatus: gate.verdict,
-      fuguGateScore: gate.score,
-      fuguGateReview: gate,
-      fuguGateReviewedAt: gate.reviewedAt,
-      fuguGateOverrideReason: null,
-      fuguPolishStatus: null,
-    };
-  }
+  const preparedStatus = "Brief Ready";
+  const preparedLog = `Researching: Athena created an internal build brief.\nBrief Ready: Builder can generate from the research brief and proceed directly to QA.\n\n${researchBrief}`;
 
   return {
     id: projectId,
@@ -1819,10 +1793,15 @@ export async function prepareLocalBuildProject(userId: string, message: string):
     localDevUrl: null,
     localDevPid: null,
     researchBrief,
-    designReview: preparedDesignReview,
+    designReview: null,
     polishReview: null,
-    designScore: preparedDesignScore,
-    ...preparedGateFields,
+    designScore: null,
+    fuguGateStatus: null,
+    fuguGateScore: null,
+    fuguGateReview: null,
+    fuguGateReviewedAt: null,
+    fuguGateOverrideReason: null,
+    fuguPolishStatus: null,
     qaStatus: null,
     qaChecklist: null,
   };
