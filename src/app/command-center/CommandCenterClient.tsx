@@ -7,6 +7,8 @@ import AgentRoster from "@/components/AgentRoster";
 import CouncilChatPanel from "@/components/CouncilChatPanel";
 import HermesNousChatPanel from "@/components/HermesNousChatPanel";
 import { agentColor, CHAT_ROSTER_AGENTS, COMMAND_CENTER_AGENTS, COUNCIL_REVIEWER_AGENTS } from "@/lib/agent-roster";
+import type { CanonicalBuilderStage } from "@/lib/builder-lifecycle";
+import { BUILDER_STAGE_FILTERS, canonicalBuilderStageColor, canonicalBuilderStageGroup, canonicalBuilderStageLabel, canonicalBuilderStageMatchesFilter, canonicalBuilderStageOrder, type BuilderStageFilter } from "@/lib/builder-stage-display";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -37,6 +39,8 @@ interface Project {
   localDevPid: number | null;
   previewStatus: "online" | "offline" | "stale" | null;
   researchBrief: string | null;
+  canonicalStage: CanonicalBuilderStage;
+  /** Legacy fields retained for the deferred Fugu Office only. */
   designReview: string | null;
   polishReview: string | null;
   designScore: number | null;
@@ -511,8 +515,7 @@ function LocalPreviewDetails({ project, compact = false }: { project: Project; c
       </div>
       <div style={{ display: "grid", gap: 6, color: "#94A3B8", fontSize: 12 }}>
         <span>Project: <strong style={{ color: "#F1F4FB" }}>{project.projectName}</strong></span>
-        <span>Build status: <strong style={{ color: statusColor(project.status) }}>{statusLabel(project.status)}</strong></span>
-        <span>QA status: <strong style={{ color: statusColor(project.qaStatus ?? "qa_pending") }}>{statusLabel(project.qaStatus ?? "qa_pending")}</strong></span>
+        <span>Lifecycle: <strong style={{ color: canonicalBuilderStageColor(project.canonicalStage) }}>{canonicalBuilderStageLabel(project.canonicalStage)}</strong></span>
         {project.localFolderPath && <span style={{ overflowWrap: "anywhere" }}>Folder: <code>{project.localFolderPath}</code></span>}
         {port && <span>Local port: <code>{port}</code></span>}
         {project.localDevUrl ? (
@@ -651,12 +654,12 @@ function buildLiveActivityFeed({
       message: build.resultSummary ?? build.implementationSummary ?? build.title,
       status: build.status,
     })),
-    ...projects.filter((project) => project.qaStatus || project.polishReview || project.designReview).slice(0, 10).map((project) => ({
+    ...projects.slice(0, 10).map((project) => ({
       id: `project-${project.id}`,
       timestamp: project.updatedAt,
-      source: project.qaStatus?.startsWith("qa_") ? "QA" : "Builder",
-      message: `${project.projectName}: ${statusLabel(project.qaStatus ?? project.status)}`,
-      status: project.qaStatus ?? project.status,
+      source: project.canonicalStage === "qa_pending" || project.canonicalStage === "qa_running" ? "QA" : "Builder",
+      message: `${project.projectName}: ${canonicalBuilderStageLabel(project.canonicalStage)}`,
+      status: project.canonicalStage,
     })),
     ...approvals.filter((approval) => approval.status === "pending").slice(0, 10).map((approval) => ({
       id: `approval-${approval.id}`,
@@ -784,12 +787,15 @@ function OverviewPanel({
   todayStart.setHours(0, 0, 0, 0);
   const todayRuns = runs.filter((r) => new Date(r.createdAt) >= todayStart);
   const pendingApprovals = approvals.filter((a) => a.status === "pending");
-  const activeTasks = (queue?.tasks ?? []).filter((t) => ["queued", "planning", "executing", "waiting_approval", "qa_pending"].includes(t.status));
   const jobRunsToday = todayRuns.filter((r) => /job|athena/i.test(`${r.agentName} ${r.inputSummary ?? ""}`));
   const emailRunsToday = todayRuns.filter((r) => /email|iris|gmail|inbox/i.test(`${r.agentName} ${r.inputSummary ?? ""}`));
   const skillRunsToday = todayRuns.filter((r) => /skill|sophos/i.test(`${r.agentName} ${r.inputSummary ?? ""}`));
-  const buildPassed = projects.filter((p) => ["qa_passed", "completed", "Dev Server Running"].includes(p.qaStatus ?? p.status)).length + builds.filter((b) => ["completed", "deployed"].includes(b.status)).length;
-  const buildFailed = projects.filter((p) => ["qa_failed", "Build Failed", "failed"].includes(p.qaStatus ?? p.status)).length + builds.filter((b) => ["failed"].includes(b.status)).length;
+  const projectCounts = projects.reduce((counts, project) => {
+    counts[canonicalBuilderStageGroup(project.canonicalStage)]++;
+    return counts;
+  }, { queued: 0, active: 0, completed: 0, failed: 0 });
+  const buildPassed = projectCounts.completed + builds.filter((b) => ["completed", "deployed"].includes(b.status)).length;
+  const buildFailed = projectCounts.failed + builds.filter((b) => ["failed"].includes(b.status)).length;
   const accountIssues = health?.accounts.filter((a) => !a.connected || a.reconnectRequired || a.lastError).length ?? 0;
   const schedulerIssues = health?.scheduledJobs.filter((j) => ["Delayed", "Failed", "Never Ran"].includes(j.status)).length ?? 0;
   const emailHealthy = health?.executors.find((e) => e.name === "Email Intelligence")?.status !== "Offline";
@@ -798,10 +804,10 @@ function OverviewPanel({
   const liveActivity = buildLiveActivityFeed({ runs, builds, projects, approvals, memoryDebug, health });
 
   const metrics = [
-    { label: "Active tasks", value: activeTasks.length, tone: "#A78BFA", tab: "overview" as Tab },
-    { label: "Queued tasks", value: queue?.counts?.queued ?? 0, tone: "#60A5FA", tab: "overview" as Tab },
-    { label: "Failed tasks", value: queue?.counts?.failed ?? 0, tone: "#F87171", tab: "overview" as Tab },
-    { label: "Completed tasks", value: queue?.counts?.completed ?? 0, tone: "#34D399", tab: "overview" as Tab },
+    { label: "Active projects", value: projectCounts.active, tone: "#A78BFA", tab: "projects" as Tab },
+    { label: "Queued projects", value: projectCounts.queued, tone: "#60A5FA", tab: "projects" as Tab },
+    { label: "Failed projects", value: projectCounts.failed, tone: "#F87171", tab: "projects" as Tab },
+    { label: "Completed projects", value: projectCounts.completed, tone: "#34D399", tab: "projects" as Tab },
     { label: "Jobs found today", value: jobRunsToday.length, tone: "#E879F9", tab: "logs" as Tab },
     { label: "Important emails", value: emailRunsToday.length, tone: "#F472B6", tab: "logs" as Tab },
     { label: "Skills scouted", value: skillRunsToday.length || skills.length, tone: "#38BDF8", tab: "skills" as Tab },
@@ -981,7 +987,7 @@ function LiveActivityFeed({ items }: { items: Array<{ id: string; timestamp: str
 
 function AgentCommandPanel({ runs, health, projects, memoryDebug, onTabSwitch, onOfficeSelect }: { runs: AgentRun[]; health: HealthCenterData | null; projects: Project[]; memoryDebug: MemoryContextDebugData | null; onTabSwitch: (tab: Tab) => void; onOfficeSelect: (office: AgentOffice) => void }) {
   const agentKeys = ["Hermes", "Builder", "Athena", "Iris", "Mercury", "Fugu", "Kairos"];
-  const activeBuild = projects.find((p) => ["building", "active", "qa_pending", "qa_running"].includes(p.status) || ["qa_pending", "qa_running"].includes(p.qaStatus ?? ""));
+  const activeBuild = projects.find((p) => canonicalBuilderStageGroup(p.canonicalStage) === "active");
 
   const agentInfo = agentKeys.map((name) => {
     const run = runs.find((r) => new RegExp(name === "Builder" ? "builder|prometheus|local" : name, "i").test(`${r.agentName} ${r.inputSummary ?? ""}`));
@@ -1207,7 +1213,7 @@ function RunInspectorPanel({
 function ActivitySection({ runs, builds, projects, skills }: { runs: AgentRun[]; builds: Build[]; projects: Project[]; skills: SkillView[] }) {
   const completedRuns = runs.filter((r) => r.status === "completed").length;
   const failedRuns = runs.filter((r) => r.status === "failed").length;
-  const buildSuccess = builds.length + projects.length > 0 ? Math.round((projects.filter((p) => !/failed/i.test(p.status) && !/failed/i.test(p.qaStatus ?? "")).length + builds.filter((b) => b.status !== "failed").length) / Math.max(1, projects.length + builds.length) * 100) : 0;
+  const buildSuccess = builds.length + projects.length > 0 ? Math.round((projects.filter((p) => p.canonicalStage !== "failed").length + builds.filter((b) => b.status !== "failed").length) / Math.max(1, projects.length + builds.length) * 100) : 0;
   const blocks = [
     { label: "Task completion trend", value: `${completedRuns}/${completedRuns + failedRuns}`, detail: "recent agent runs", color: "#34D399" },
     { label: "Job scout activity", value: runs.filter((r) => /job|athena/i.test(`${r.agentName} ${r.inputSummary ?? ""}`)).length, detail: "tracked signals", color: "#E879F9" },
@@ -1444,6 +1450,7 @@ function AgentOfficesPanel({
 
 function ProjectsPanel({ projects }: { projects: Project[] }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState<BuilderStageFilter>("all");
   const toggle = (id: string) => setExpanded((s) => {
     const n = new Set(s);
     if (n.has(id)) n.delete(id);
@@ -1459,9 +1466,18 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
     );
   }
 
+  const visibleProjects = projects
+    .filter((project) => canonicalBuilderStageMatchesFilter(project.canonicalStage, filter))
+    .slice()
+    .sort((left, right) => canonicalBuilderStageOrder(left.canonicalStage) - canonicalBuilderStageOrder(right.canonicalStage) || new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {projects.map((p) => (
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {BUILDER_STAGE_FILTERS.map((item) => <button key={item} type="button" onClick={() => setFilter(item)} style={pillStyle(filter === item)}>{item === "all" ? "All" : item === "qa" ? "QA" : item[0].toUpperCase() + item.slice(1)}</button>)}
+      </div>
+      {visibleProjects.length === 0 && <div style={{ ...cardStyle, textAlign: "center", color: "#647089", padding: 32 }}>No {filter === "all" ? "projects" : `${filter} projects`} to display.</div>}
+      {visibleProjects.map((p) => (
         <div key={p.id} style={cardStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
             <div>
@@ -1475,7 +1491,7 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
                 <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 2, fontFamily: "JetBrains Mono, monospace", overflowWrap: "anywhere" }}>{p.localFolderPath}</div>
               )}
             </div>
-            <span style={badgeStyle(statusColor(p.status))}>{statusLabel(p.status)}</span>
+            <span style={badgeStyle(canonicalBuilderStageColor(p.canonicalStage))}>{canonicalBuilderStageLabel(p.canonicalStage)}</span>
           </div>
 
           {p.taskCounts.total > 0 && (
@@ -1503,13 +1519,13 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
 
           {(p.localFolderPath || p.localDevUrl) && <LocalPreviewDetails project={p} />}
 
-          {(p.qaStatus || p.qaChecklist?.length) && (
+          {p.qaChecklist?.length && (
             <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(251,191,36,0.07)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 8 }}>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 8 }}>
                 <div style={{ fontSize: 11, color: "#FBBF24", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
                   Local builder QA
                 </div>
-                {p.qaStatus && <span style={badgeStyle(statusColor(p.qaStatus))}>{statusLabel(p.qaStatus)}</span>}
+                <span style={badgeStyle(canonicalBuilderStageColor(p.canonicalStage))}>{canonicalBuilderStageLabel(p.canonicalStage)}</span>
               </div>
               {p.qaChecklist?.length ? (
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: 8 }}>
@@ -1535,26 +1551,6 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
             </div>
           )}
 
-          {p.designReview && (
-            <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(56,189,248,0.08)", border: "1px solid rgba(56,189,248,0.22)", borderRadius: 8 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 8 }}>
-                <div style={{ fontSize: 11, color: "#38BDF8", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                  Fugu design review
-                </div>
-                {typeof p.designScore === "number" && <span style={badgeStyle("#38BDF8")}>{p.designScore}/10</span>}
-              </div>
-              <pre style={{ margin: 0, maxHeight: 180, overflow: "auto", font: "11px/1.5 JetBrains Mono,monospace", color: "#D8DEEB", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{p.designReview}</pre>
-            </div>
-          )}
-
-          {p.polishReview && (
-            <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(52,211,153,0.08)", border: "1px solid rgba(52,211,153,0.22)", borderRadius: 8 }}>
-              <div style={{ fontSize: 11, color: "#34D399", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
-                Fugu polish review
-              </div>
-              <pre style={{ margin: 0, maxHeight: 160, overflow: "auto", font: "11px/1.5 JetBrains Mono,monospace", color: "#D8DEEB", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{p.polishReview}</pre>
-            </div>
-          )}
 
           {(p.buildLog || p.buildError) && (
             <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(40,50,74,0.3)", borderRadius: 8 }}>
