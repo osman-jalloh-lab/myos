@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { readSessionContextState } from "@/lib/memory-context";
 import { updateExecutionQueueTask } from "@/lib/execution-queue";
 import { diagnoseBuildFailure } from "@/lib/build-failure-diagnostics";
+import { withCanonicalBuilderStage } from "@/lib/builder-lifecycle";
 import {
   buildStatusMeaning,
   extractBuildFiles,
@@ -71,7 +72,7 @@ export async function GET(request: Request) {
   if (collecting || !selected) {
     const empty: LiveBuildConsoleData = {
       active: Boolean(collecting),
-      project: collecting ? {
+      project: collecting ? withCanonicalBuilderStage({
         id: "intake",
         name: context?.rememberedEntities.buildProject?.projectName ?? "New project",
         appType: inferAppType(intake?.originalRequest ?? "website"),
@@ -84,7 +85,7 @@ export async function GET(request: Request) {
         elapsedMs: 0,
         stuck: false,
         minutesSinceUpdate: 0,
-      } : null,
+      }) : null,
       timeline: collecting ? [step("intake", "Intake", "complete", null), step("clarifying", "Clarifying Questions", "running", null)] : [],
       logs: [], files: [], preview: null,
       worker: { status: workerStatus, lastHeartbeat: heartbeatAt || null }, inspector: null,
@@ -173,7 +174,7 @@ export async function GET(request: Request) {
 
   const result: LiveBuildConsoleData = {
     active,
-    project: {
+    project: withCanonicalBuilderStage({
       id: projectId,
       name: text(selected.projectName),
       appType: inferAppType(`${text(selected.latestInstruction)} ${text(selected.description)} ${text(selected.projectName)}`),
@@ -186,7 +187,7 @@ export async function GET(request: Request) {
       elapsedMs: Math.max(0, Date.now() - new Date(createdAt).getTime()),
       stuck: active && minutesSinceUpdate >= 5,
       minutesSinceUpdate,
-    },
+    }),
     timeline,
     logs: logs.slice(-160),
     files,

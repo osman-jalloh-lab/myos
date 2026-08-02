@@ -17,6 +17,18 @@ export const CANONICAL_BUILDER_STAGES = [
 
 export type CanonicalBuilderStage = (typeof CANONICAL_BUILDER_STAGES)[number];
 
+/** The persisted fields needed to derive the API-facing Builder stage. */
+export type BuilderLifecycleRecord = {
+  status?: unknown;
+  qaStatus?: unknown;
+  localQaStatus?: unknown;
+};
+
+/** Additive response contract shared by Builder and local-build APIs. */
+export type CanonicalBuilderStageResponse = {
+  canonicalStage: CanonicalBuilderStage;
+};
+
 const LEGACY_STAGE_MAP: Record<string, CanonicalBuilderStage> = {
   queued: "queued",
   planned: "queued",
@@ -67,12 +79,16 @@ export function normalizeBuilderLifecycle(value: unknown): CanonicalBuilderStage
 }
 
 /** Prefer a QA-specific state when a persisted project row supplies one. */
-export function deriveCanonicalBuilderStage(record: {
-  status?: unknown;
-  qaStatus?: unknown;
-  localQaStatus?: unknown;
-}): CanonicalBuilderStage {
+export function deriveCanonicalBuilderStage(record: BuilderLifecycleRecord): CanonicalBuilderStage {
   return normalizeBuilderLifecycle(record.qaStatus ?? record.localQaStatus ?? record.status);
+}
+
+/**
+ * Decorate a serialized response without changing the original persistence
+ * record. API routes use this instead of reproducing legacy-state mappings.
+ */
+export function withCanonicalBuilderStage<T extends BuilderLifecycleRecord>(record: T): T & CanonicalBuilderStageResponse {
+  return { ...record, canonicalStage: deriveCanonicalBuilderStage(record) };
 }
 
 export function isTerminalBuilderStage(stage: CanonicalBuilderStage): boolean {

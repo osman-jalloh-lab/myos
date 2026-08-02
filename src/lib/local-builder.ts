@@ -4,7 +4,7 @@ import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promi
 import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
-import { normalizeBuilderLifecycle } from "@/lib/builder-lifecycle";
+import { deriveCanonicalBuilderStage, normalizeBuilderLifecycle, type CanonicalBuilderStage, type CanonicalBuilderStageResponse } from "@/lib/builder-lifecycle";
 import {
   formatFuguDesignGate,
   getFuguDesignGateMode,
@@ -35,6 +35,8 @@ export type LocalBuildProject = {
   projectName: string;
   localFolderPath: string;
   status: string;
+  /** API serializers expose this authoritative, provider-neutral stage. */
+  canonicalStage?: CanonicalBuilderStage;
   createdAt: string;
   currentTask: string;
   taskId: string;
@@ -57,6 +59,9 @@ export type LocalBuildProject = {
   qaChecklist: LocalBuilderQaItem[] | null;
   files?: string[];
 };
+
+/** Local Builder's additive API project contract. */
+export type LocalBuildProjectResponse = LocalBuildProject & CanonicalBuilderStageResponse;
 
 export type LocalBuilderQaItem = {
   key: string;
@@ -404,6 +409,7 @@ function fuguGateProjectResult(
     projectName,
     localFolderPath: folder,
     status: rowString(project.status) || "Brief Ready",
+    canonicalStage: deriveCanonicalBuilderStage({ status: project.status, localQaStatus: project.localQaStatus }),
     createdAt,
     currentTask,
     taskId,

@@ -1,3 +1,5 @@
+import type { CanonicalBuilderStage } from "@/lib/builder-lifecycle";
+
 export type BuildStepStatus = "pending" | "running" | "complete" | "failed" | "skipped";
 
 export type BuildTimelineStep = {
@@ -24,6 +26,7 @@ export type LiveBuildConsoleData = {
     folderPath: string | null;
     executor: string;
     status: string;
+    canonicalStage: CanonicalBuilderStage;
     statusMeaning: string;
     startedAt: string | null;
     updatedAt: string;

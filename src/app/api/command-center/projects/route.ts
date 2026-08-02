@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { createClient } from "@libsql/client";
+import { withCanonicalBuilderStage } from "@/lib/builder-lifecycle";
 
 function getDb() {
   return createClient({
@@ -69,7 +70,7 @@ export async function GET() {
 
       const latestTask = tasks[0];
 
-      return {
+      return withCanonicalBuilderStage({
         id: p.id as string,
         projectName: p.projectName as string,
         description: (p.description as string | null) ?? null,
@@ -100,7 +101,7 @@ export async function GET() {
         updatedAt: p.updatedAt as string,
         taskCounts,
         tasks,
-      };
+      });
     })
   );
 

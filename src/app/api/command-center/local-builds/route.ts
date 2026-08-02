@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { withCanonicalBuilderStage } from "@/lib/builder-lifecycle";
 import {
   generateLocalStarterApp,
   getCodexCliStatus,
   getLocalBuilderRootInfo,
   isServerlessRuntime,
   type LocalBuildProject,
+  type LocalBuildProjectResponse,
   openLocalProjectFolder,
   overrideFuguDesignGate,
   prepareLocalBuildProject,
@@ -27,9 +29,9 @@ import { getHermesAgentReadiness, getLocalWorkerLiveness, workerOfflineNotice } 
 // QA-only) stay on the local_worker path — hermes_agent tasks need a project.
 const HERMES_PRIMARY_ACTIONS = new Set(["generate", "rebuild", "build", "npmBuild", "runCodex"]);
 
-function projectView(project: LocalBuildProject) {
+function projectView(project: LocalBuildProject): LocalBuildProjectResponse & { route: null; taskCounts: { done: number; total: number } } {
   return {
-    ...project,
+    ...withCanonicalBuilderStage(project),
     route: null,
     taskCounts: { done: project.status === "completed" ? 1 : 0, total: 1 },
   };

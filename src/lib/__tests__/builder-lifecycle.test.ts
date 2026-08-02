@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import {
   BUILDER_LIFECYCLE_COMPATIBILITY,
   CANONICAL_BUILDER_STAGES,
   isTerminalBuilderStage,
   deriveCanonicalBuilderStage,
   normalizeBuilderLifecycle,
+  withCanonicalBuilderStage,
 } from "../builder-lifecycle";
 
 describe("builder lifecycle compatibility", () => {
@@ -35,5 +38,37 @@ describe("builder lifecycle compatibility", () => {
 
   it("prioritizes persisted QA state over an older project status", () => {
     expect(deriveCanonicalBuilderStage({ status: "Fugu Design Gate", localQaStatus: "qa_running" })).toBe("qa_running");
+  });
+
+  it("adds the same canonicalStage to API-shaped records without changing legacy fields", () => {
+    const cases = [
+      [{ status: "queued" }, "queued"],
+      [{ status: "Researching" }, "researching"],
+      [{ status: "Building" }, "building"],
+      [{ status: "Fugu Design Gate" }, "building"],
+      [{ status: "waiting_for_fugu_polish" }, "qa_pending"],
+      [{ status: "Build Passed", localQaStatus: "qa_running" }, "qa_running"],
+      [{ status: "Build Passed", localQaStatus: "qa_passed" }, "completed"],
+      [{ status: "Building", localQaStatus: "qa_failed" }, "failed"],
+      [{ status: "unrecognized legacy state" }, "queued"],
+    ] as const;
+
+    for (const [record, canonicalStage] of cases) {
+      const serialized = withCanonicalBuilderStage(record);
+      expect(serialized).toMatchObject({ ...record, canonicalStage });
+      expect(record).not.toHaveProperty("canonicalStage");
+    }
+  });
+
+  it("keeps every Builder API serializer on the shared canonical-stage decorator", () => {
+    const routes = [
+      "src/app/api/command-center/local-builds/route.ts",
+      "src/app/api/command-center/projects/route.ts",
+      "src/app/api/command-center/live-build/route.ts",
+    ];
+
+    for (const route of routes) {
+      expect(readFileSync(path.join(process.cwd(), route), "utf8"), route).toContain("withCanonicalBuilderStage");
+    }
   });
 });
