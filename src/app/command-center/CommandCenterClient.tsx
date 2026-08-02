@@ -9,6 +9,7 @@ import HermesNousChatPanel from "@/components/HermesNousChatPanel";
 import { agentColor, CHAT_ROSTER_AGENTS, COMMAND_CENTER_AGENTS, COUNCIL_REVIEWER_AGENTS } from "@/lib/agent-roster";
 import type { CanonicalBuilderStage } from "@/lib/builder-lifecycle";
 import { BUILDER_STAGE_FILTERS, canonicalBuilderStageColor, canonicalBuilderStageGroup, canonicalBuilderStageLabel, canonicalBuilderStageMatchesFilter, canonicalBuilderStageOrder, type BuilderStageFilter } from "@/lib/builder-stage-display";
+import { normalizeAgentOfficeView, normalizeExecutionTraceForDisplay, type ActiveAgentOffice } from "@/lib/execution-inspector-display";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -40,10 +41,6 @@ interface Project {
   previewStatus: "online" | "offline" | "stale" | null;
   researchBrief: string | null;
   canonicalStage: CanonicalBuilderStage;
-  /** Legacy fields retained for the deferred Fugu Office only. */
-  designReview: string | null;
-  polishReview: string | null;
-  designScore: number | null;
   qaStatus: string | null;
   qaChecklist: QaItem[] | null;
   status: string;
@@ -165,6 +162,7 @@ interface ExecutionRun {
   parentRunId: string | null;
   executor: string;
   currentPhase: string;
+  canonicalStage: CanonicalBuilderStage;
   currentActivity: string | null;
   startedAt: string;
   lastHeartbeatAt: string;
@@ -361,7 +359,7 @@ interface SkillScoutResult {
 }
 
 type HealthSeverity = "healthy" | "warning" | "failure";
-type AgentOffice = "hermes" | "athena" | "builder" | "iris" | "fugu";
+type AgentOffice = ActiveAgentOffice;
 
 interface HealthCenterData {
   overall: { status: HealthSeverity; score: number; message: string; lastChecked: string };
@@ -986,7 +984,7 @@ function LiveActivityFeed({ items }: { items: Array<{ id: string; timestamp: str
 }
 
 function AgentCommandPanel({ runs, health, projects, memoryDebug, onTabSwitch, onOfficeSelect }: { runs: AgentRun[]; health: HealthCenterData | null; projects: Project[]; memoryDebug: MemoryContextDebugData | null; onTabSwitch: (tab: Tab) => void; onOfficeSelect: (office: AgentOffice) => void }) {
-  const agentKeys = ["Hermes", "Builder", "Athena", "Iris", "Mercury", "Fugu", "Kairos"];
+  const agentKeys = ["Hermes", "Builder", "Athena", "Iris", "Mercury", "Kairos"];
   const activeBuild = projects.find((p) => canonicalBuilderStageGroup(p.canonicalStage) === "active");
 
   const agentInfo = agentKeys.map((name) => {
@@ -1003,8 +1001,8 @@ function AgentCommandPanel({ runs, health, projects, memoryDebug, onTabSwitch, o
       currentTask,
       lastRun: executor?.lastRun ?? run?.createdAt ?? null,
       lastError,
-      office: ({ Hermes: "hermes", Athena: "athena", Builder: "builder", Iris: "iris", Fugu: "fugu" } as Partial<Record<string, AgentOffice>>)[name],
-      tab: ({ Hermes: true, Athena: true, Builder: true, Iris: true, Fugu: true } as Record<string, boolean>)[name] ? "agents" as Tab : "logs" as Tab,
+      office: ({ Hermes: "hermes", Athena: "athena", Builder: "builder", Iris: "iris" } as Partial<Record<string, AgentOffice>>)[name],
+      tab: ({ Hermes: true, Athena: true, Builder: true, Iris: true } as Record<string, boolean>)[name] ? "agents" as Tab : "logs" as Tab,
     };
   });
 
@@ -1105,9 +1103,8 @@ function RunInspectorPanel({
   onCopyDiagnostic: (run: ExecutionRun, events: ExecutionTraceEvent[]) => Promise<void>;
 }) {
   const selected = runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null;
-  const eventTail = events.slice(-8).reverse();
-  const fuguStatus = events.slice().reverse().find((event) => event.phase.includes("fugu"))?.message
-    ?? "No Fugu event recorded yet.";
+  const eventTail = events.slice(-8).reverse().map(normalizeExecutionTraceForDisplay);
+  const activityForDisplay = (phase: string, activity: string | null) => normalizeExecutionTraceForDisplay({ phase, severity: "info" as const, message: activity ?? phase, source: "run" }).message;
   return (
     <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 0.9fr) minmax(420px, 1.6fr)", gap: 12 }}>
       <div style={cardStyle}>
@@ -1123,12 +1120,12 @@ function RunInspectorPanel({
               style={{ textAlign: "left", borderRadius: 8, border: selected?.id === run.id ? "1px solid rgba(167,139,250,0.55)" : "1px solid rgba(93,111,143,0.22)", background: selected?.id === run.id ? "rgba(167,139,250,0.12)" : "rgba(8,13,24,0.36)", padding: 10, cursor: "pointer" }}
             >
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={badgeStyle(statusColor(run.status))}>{statusLabel(run.status)}</span>
-                <span style={{ color: "#F1F4FB", fontSize: 12, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{run.currentActivity ?? run.currentPhase}</span>
+                <span style={badgeStyle(canonicalBuilderStageColor(run.canonicalStage))}>{canonicalBuilderStageLabel(run.canonicalStage)}</span>
+                <span style={{ color: "#F1F4FB", fontSize: 12, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activityForDisplay(run.currentPhase, run.currentActivity)}</span>
               </div>
               <div style={{ display: "flex", gap: 8, marginTop: 7, color: "#647089", fontSize: 10 }}>
                 <span>{run.executor}</span>
-                <span>{statusLabel(run.currentPhase)}</span>
+                <span>{canonicalBuilderStageLabel(run.canonicalStage)}</span>
                 <span>{timeAgo(run.startedAt)}</span>
               </div>
             </button>
@@ -1144,14 +1141,13 @@ function RunInspectorPanel({
             <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
               <div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  <span style={badgeStyle(statusColor(selected.status))}>{statusLabel(selected.status)}</span>
-                  <span style={badgeStyle(statusColor(selected.currentPhase))}>{statusLabel(selected.currentPhase)}</span>
+                  <span style={badgeStyle(canonicalBuilderStageColor(selected.canonicalStage))}>{canonicalBuilderStageLabel(selected.canonicalStage)}</span>
                   <span style={badgeStyle("#A78BFA")}>{selected.executor}</span>
                 </div>
-                <div style={{ color: "#F1F4FB", fontSize: 18, fontWeight: 850, fontFamily: "Fraunces, serif", marginTop: 8 }}>{selected.currentActivity ?? "No activity yet"}</div>
+                <div style={{ color: "#F1F4FB", fontSize: 18, fontWeight: 850, fontFamily: "Fraunces, serif", marginTop: 8 }}>{activityForDisplay(selected.currentPhase, selected.currentActivity)}</div>
               </div>
               <div style={{ display: "flex", gap: 7, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <button onClick={() => onCancel(selected.id)} disabled={["completed", "failed", "cancelled"].includes(selected.status)} style={smallButtonStyle("#FBBF24")}>Cancel</button>
+                <button onClick={() => onCancel(selected.id)} disabled={["completed", "failed"].includes(selected.canonicalStage) || selected.status === "cancelled"} style={smallButtonStyle("#FBBF24")}>Cancel</button>
                 <button onClick={() => onRetry(selected.id)} style={smallButtonStyle("#60A5FA")}>Retry</button>
                 <button onClick={() => onFallback(selected.id)} style={smallButtonStyle("#A78BFA")}>Switch to Codex</button>
                 <button onClick={() => onCopyDiagnostic(selected, events)} style={smallButtonStyle("#34D399")}>Copy diagnostic</button>
@@ -1166,7 +1162,7 @@ function RunInspectorPanel({
                 ["Project", selected.projectId ?? "none"],
                 ["Task", selected.taskId ?? "none"],
                 ["Folder", selected.localFolderPath ?? "none"],
-                ["Fugu", fuguStatus],
+                ["Finished", selected.completedAt ? timeAgo(selected.completedAt) : "Not finished"],
               ].map(([label, value]) => (
                 <div key={label} style={{ borderRadius: 8, border: "1px solid rgba(93,111,143,0.2)", background: "rgba(8,13,24,0.34)", padding: 8 }}>
                   <div style={{ color: "#647089", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 800 }}>{label}</div>
@@ -1359,13 +1355,11 @@ function AgentOfficesPanel({
     { key: "athena", label: "Athena Office", detail: "research briefs, sources, reports", color: "#E879F9" },
     { key: "builder", label: "Builder Office", detail: "projects, builds, QA", color: "#38BDF8" },
     { key: "iris", label: "Iris Office", detail: "memory, facts, context", color: "#2DD4BF" },
-    { key: "fugu", label: "Fugu Office", detail: "design reviews, scores, recommendations", color: "#60A5FA" },
   ];
 
   const pendingApprovals = approvals.filter((approval) => approval.status === "pending");
   const activeTasks = (queue?.tasks ?? []).filter((task) => ["queued", "planning", "executing", "waiting_approval", "qa_pending"].includes(task.status));
   const researchProjects = projects.filter((project) => project.researchBrief);
-  const designProjects = projects.filter((project) => project.designReview || project.polishReview || typeof project.designScore === "number");
   const qaProjects = projects.filter((project) => project.qaStatus || project.qaChecklist?.length);
 
   return (
@@ -1437,13 +1431,6 @@ function AgentOfficesPanel({
         </div>
       )}
 
-      {selectedOffice === "fugu" && (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 14 }}>
-          <MemoryList title="Design Reviews" empty="No Fugu reviews yet" items={designProjects.map((project) => ({ key: project.id, head: project.projectName, body: project.designReview ?? project.polishReview ?? undefined, meta: typeof project.designScore === "number" ? `${project.designScore}/10` : statusLabel(project.qaStatus ?? project.status) }))} />
-          <MemoryList title="Scores" empty="No scores recorded" items={designProjects.filter((project) => typeof project.designScore === "number").map((project) => ({ key: project.id, head: `${project.projectName}: ${project.designScore}/10`, body: project.polishReview ?? undefined, meta: timeAgo(project.updatedAt) }))} />
-          <MemoryList title="Recommendations" empty="No recommendations yet" items={designProjects.map((project) => ({ key: `${project.id}-rec`, head: project.projectName, body: project.designReview?.slice(0, 520) ?? project.polishReview?.slice(0, 520) ?? "Run Fugu Design Review from Builder Office.", meta: "Builder guidance only" }))} />
-        </div>
-      )}
     </div>
   );
 }
@@ -2842,7 +2829,7 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
 
 export default function CommandCenterClient() {
   const [tab, setTab] = useState<Tab>("overview");
-  const [selectedOffice, setSelectedOffice] = useState<AgentOffice>("hermes");
+  const [selectedOffice, setSelectedOffice] = useState<AgentOffice>(() => normalizeAgentOfficeView(typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("office")));
   const [agentsView, setAgentsView] = useState<"talk" | "offices">("talk");
   const [projects, setProjects] = useState<Project[]>([]);
   const [builds, setBuilds] = useState<Build[]>([]);
