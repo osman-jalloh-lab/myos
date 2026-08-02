@@ -216,7 +216,7 @@ function appendLog(existing: string | null, message: string): string {
 function safeError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   return raw
-    .replace(/(TURSO_AUTH_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|SAKANA_API_KEY|FIRECRAWL_API_KEY|SERPAPI_API_KEY|AMADEUS_CLIENT_SECRET)=\S+/gi, "$1=[redacted]")
+    .replace(/(TURSO_AUTH_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|FIRECRAWL_API_KEY|SERPAPI_API_KEY|AMADEUS_CLIENT_SECRET)=\S+/gi, "$1=[redacted]")
     .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer [redacted]")
     .replace(/(postgres|mysql|libsql|mongodb|redis):\/\/[^\s"'<>]+/gi, "[redacted-connection-string]")
     .replace(/(?:^|\s)(?:sk|pk|ghp|gho|ghu|ghs|xoxb)-[A-Za-z0-9_-]{12,}/gi, " [redacted-token]")

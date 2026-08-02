@@ -26,12 +26,6 @@ export function extractUserMemoryFacts(message: string): string[] {
   const preference = text.match(/\b(?:i prefer|my preference is|from now on)\b.{4,220}/i)?.[0];
   if (preference) facts.add(cleanFact(preference));
 
-  if (/\bSAKANA_API_KEY\b|\bsakana\b/i.test(text) && /\b(vercel|local\.?env|\.env\.local|environment|env)\b/i.test(text)) {
-    const hasLocal = /\b(local\.?env|\.env\.local|local env|environment)\b/i.test(text);
-    const hasVercel = /\bvercel\b/i.test(text);
-    facts.add(`Sakana API key is configured${hasLocal ? " in local environment" : ""}${hasLocal && hasVercel ? " and" : ""}${hasVercel ? " in Vercel" : ""}`);
-  }
-
   for (const match of text.matchAll(/\b(?:i added|i configured|i connected|i installed|i updated)\s+(.{8,180})/gi)) {
     if (!/\bit\b/i.test(match[1])) facts.add(cleanFact(match[0]));
   }

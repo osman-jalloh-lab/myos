@@ -4,17 +4,10 @@ import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promi
 import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
-import { deriveCanonicalBuilderStage, normalizeBuilderLifecycle, withCanonicalBuilderStage, type CanonicalBuilderStage, type CanonicalBuilderStageResponse } from "@/lib/builder-lifecycle";
-import {
-  formatFuguDesignGate,
-  getFuguDesignGateMode,
-  getFuguDesignPassScore,
-  runFuguDesignCritique,
-  runFuguDesignGate,
-  type FuguDesignGate,
-  type FuguDesignGateInput,
-  type FuguGateMode,
-  type FuguGateVerdict,
+import { normalizeBuilderLifecycle, withCanonicalBuilderStage, type CanonicalBuilderStage, type CanonicalBuilderStageResponse } from "@/lib/builder-lifecycle";
+import type {
+  FuguDesignGate,
+  FuguGateVerdict,
 } from "@/lib/fugu-design-critic";
 import { createExecutionQueueTask, updateExecutionQueueTask } from "@/lib/execution-queue";
 import { loadAgentKnowledgeContext, type KnowledgeCard } from "@/lib/knowledge-cards";
@@ -22,7 +15,6 @@ import { runBrowserQa } from "@/lib/browser-qa";
 import {
   DEFAULT_LOCAL_PROJECTS_ROOT,
   isWindowsAbsolute,
-  resolveLocalPath,
   resolveLocalProjectsRoot,
 } from "@/lib/local-projects-root";
 
@@ -103,7 +95,6 @@ type CommandResult = {
 
 const LOCAL_BUILDER_AGENT = "hermes-local-builder";
 const ATHENA_RESEARCH_AGENT = "athena";
-const FUGU_DESIGN_AGENT = "fugu";
 const CODEX_CLI_EXECUTOR = "codex_cli";
 const DEFAULT_CODEX_CLI_MODEL = "gpt-5.4";
 const devServers = new Map<string, { child: ReturnType<typeof spawn>; url: string; pid: number | null }>();
@@ -268,7 +259,6 @@ function queuedActionLabel(action: string): string {
     case "startDev": return "Start dev server";
     case "stopDev": return "Stop dev server";
     case "rebuild": return "Rebuild";
-    case "fuguDesignReview": return "Run Fugu design review";
     case "runQa": return "Run QA checklist";
     case "runCodex": return "Run Codex improvement";
     default: return "Prepare local build";
@@ -316,25 +306,13 @@ function fuguGateStatus(value: unknown): FuguGateVerdict | null {
 
 export function canStartBuildWithFuguGate(
   project: { fuguGateStatus?: unknown; fuguGateOverrideReason?: unknown },
-  mode: FuguGateMode = getFuguDesignGateMode()
+  mode?: unknown
 ): { allowed: boolean; reason: string } {
   void project;
   void mode;
   // Compatibility-only: legacy Fugu fields remain readable until their schema
   // migration, but no longer control canonical Builder progression.
   return { allowed: true, reason: "Canonical Builder lifecycle proceeds directly to build and QA." };
-  /*
-  if (mode === "off" || mode === "recommended") return { allowed: true, reason: `Fugu gate mode is ${mode}.` };
-  const status = fuguGateStatus(project.fuguGateStatus);
-  if (status === "pass") return { allowed: true, reason: "Fugu approved the design direction." };
-  if (rowString(project.fuguGateOverrideReason).trim()) return { allowed: true, reason: "Fugu gate override reason is recorded." };
-  return {
-    allowed: false,
-    reason: status
-      ? `Fugu design gate is ${status}; required mode blocks normal build until pass or override.`
-      : "Fugu design gate has not passed; required mode blocks normal build until pass or override.",
-  };
-  */
 }
 
 function projectGateFields(project: Record<string, unknown>) {
@@ -345,94 +323,6 @@ function projectGateFields(project: Record<string, unknown>) {
     fuguGateReviewedAt: rowString(project.fuguGateReviewedAt) || null,
     fuguGateOverrideReason: rowString(project.fuguGateOverrideReason) || null,
     fuguPolishStatus: rowString(project.fuguPolishStatus) || null,
-  };
-}
-
-function fuguGateInputFromProject(
-  projectName: string,
-  message: string,
-  researchBrief: string,
-  project?: Record<string, unknown>
-): FuguDesignGateInput {
-  const latestInstruction = rowString(project?.latestInstruction) || message;
-  return {
-    originalIdea: latestInstruction || projectName,
-    buildBrief: message || latestInstruction || projectName,
-    intendedUsers: researchBrief.match(/audience[^\n]*\n([\s\S]{0,500})/i)?.[1]?.trim() || "Inferred from the Athena research brief.",
-    firstReleaseGoal: researchBrief.match(/goal[^\n]*\n([\s\S]{0,500})/i)?.[1]?.trim() || "Ship a polished first local web experience.",
-    featurePriorities: researchBrief.match(/feature[^\n]*\n([\s\S]{0,700})/i)?.[1]?.trim() || "Use the Athena feature plan and prioritize complete working flows.",
-    visualDirection: researchBrief.match(/visual[^\n]*\n([\s\S]{0,700})/i)?.[1]?.trim() || "Use the Athena design brief.",
-    pagesAndComponents: researchBrief.match(/page|component/i) ? researchBrief.slice(0, 2000) : "Use the pages and components implied by the build brief.",
-    athenaResearchBrief: researchBrief,
-    existingProjectContext: [
-      project ? `Status: ${rowString(project.status) || "unknown"}` : null,
-      project ? `Existing design review: ${rowString(project.localDesignReview) ? "yes" : "no"}` : null,
-      project ? `Existing polish review: ${rowString(project.localPolishReview) ? "yes" : "no"}` : null,
-    ].filter(Boolean).join("\n"),
-  };
-}
-
-async function persistFuguDesignGate(
-  db: Db,
-  projectId: string,
-  currentLog: string,
-  gate: FuguDesignGate,
-  status?: string
-): Promise<string> {
-  const review = formatFuguDesignGate(gate);
-  const nextLog = [
-    currentLog,
-    `Fugu Design Gate: ${gate.verdict}${typeof gate.score === "number" ? ` (${gate.score}/10)` : ""}.`,
-    gate.summary,
-  ].filter(Boolean).join("\n").trim().slice(-12000);
-  await db.execute({
-    sql: `UPDATE Project SET ${status ? "status = ?, " : ""}localDesignReview = ?, designScore = ?, fuguGateStatus = ?, fuguGateScore = ?, fuguGateReview = ?, fuguGateReviewedAt = ?, fuguGateOverrideReason = NULL, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
-    args: [
-      ...(status ? [status] : []),
-      review,
-      gate.score,
-      gate.verdict,
-      gate.score,
-      JSON.stringify(gate),
-      gate.reviewedAt,
-      nextLog,
-      projectId,
-    ],
-  });
-  return nextLog;
-}
-
-function fuguGateProjectResult(
-  project: Record<string, unknown>,
-  projectId: string,
-  projectName: string,
-  folder: string,
-  createdAt: string,
-  currentTask: string,
-  taskId: string,
-  overrides: Partial<LocalBuildProject> = {}
-): LocalBuildProject {
-  return {
-    id: projectId,
-    projectName,
-    localFolderPath: folder,
-    status: rowString(project.status) || "Brief Ready",
-    canonicalStage: deriveCanonicalBuilderStage({ status: project.status, localQaStatus: project.localQaStatus }),
-    createdAt,
-    currentTask,
-    taskId,
-    buildLog: rowString(project.localBuildLog) || null,
-    buildError: rowString(project.localBuildError) || null,
-    localDevUrl: rowString(project.localDevUrl) || null,
-    localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
-    researchBrief: rowString(project.localResearchBrief) || null,
-    designReview: rowString(project.localDesignReview) || null,
-    polishReview: rowString(project.localPolishReview) || null,
-    designScore: rowNumber(project.designScore),
-    ...projectGateFields(project),
-    qaStatus: rowString(project.localQaStatus) || null,
-    qaChecklist: parseQaChecklist(project.localQaChecklist),
-    ...overrides,
   };
 }
 
@@ -1017,13 +907,6 @@ async function waitForPreview(url: string, timeoutMs = 30_000): Promise<void> {
   throw new Error(`Preview did not become ready within ${Math.round(timeoutMs / 1000)} seconds: ${url}`);
 }
 
-async function logFuguRun(db: Db, projectName: string, phase: "design" | "polish", review: string): Promise<void> {
-  await db.execute({
-    sql: `INSERT INTO AgentRun (id, agentName, inputSummary, outputSummary, modelProvider, status, createdAt) VALUES (?, ?, ?, ?, 'sakana', 'completed', datetime('now'))`,
-    args: [crypto.randomUUID(), FUGU_DESIGN_AGENT, `${phase}_review project=${projectName}`, review.slice(0, 2000)],
-  }).catch(() => undefined);
-}
-
 async function summarizeGeneratedPage(folder: string): Promise<string> {
   const files = [
     "src/app/page.tsx",
@@ -1510,157 +1393,6 @@ async function upsertSkillTask(db: Db, projectId: string, userId: string, title:
   });
 }
 
-export async function runLocalFuguDesignReview(userId: string, projectId: string): Promise<LocalBuildProject> {
-  const db = getDb();
-  const project = await findLocalBuildProject(db, userId, projectId);
-  const { projectName, folder, createdAt } = await resolveProjectFolder(project);
-  const pageSummary = await summarizeGeneratedPage(folder);
-  const hasGeneratedPage = pageSummary.includes("## src/app/page.tsx");
-  const target: "design" | "polish" = hasGeneratedPage ? "polish" : "design";
-  const status = rowString(project.status) || "Brief Ready";
-  const currentLog = rowString(project.localBuildLog);
-  const result = await runFuguDesignCritique({
-    projectInfo: [
-      `Project: ${projectName}`,
-      `Status: ${status}`,
-      `Folder: ${folder}`,
-      `Created: ${createdAt}`,
-      `Research brief present: ${rowString(project.localResearchBrief) ? "yes" : "no"}`,
-      `Existing design review present: ${rowString(project.localDesignReview) ? "yes" : "no"}`,
-      `Existing polish review present: ${rowString(project.localPolishReview) ? "yes" : "no"}`,
-    ].join("\n"),
-    pageSummary,
-    buildNotes: currentLog || "No build notes yet.",
-  });
-  const review = result.review;
-  const nextLog = `${currentLog}\nFugu Design Review: ${result.connected ? "completed" : "not connected"}${result.score ? ` (${result.score}/10)` : ""}.\n${review}`.trim();
-
-  if (target === "polish") {
-    const polishStatus = typeof result.score === "number" && result.score >= getFuguDesignPassScore() ? "pass" : result.connected ? "revise" : "unavailable";
-    await db.execute({
-      sql: `UPDATE Project SET localPolishReview = ?, designScore = ?, fuguPolishStatus = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ?`,
-      args: [review, result.score, polishStatus, nextLog.slice(-12000), projectId],
-    });
-  } else {
-    const gate = await runFuguDesignGate(fuguGateInputFromProject(projectName, rowString(project.latestInstruction), rowString(project.localResearchBrief), project));
-    await persistFuguDesignGate(
-      db,
-      projectId,
-      currentLog,
-      gate,
-      gate.verdict === "pass" ? "Design Ready" : gate.verdict === "revise" ? "Design Revision Needed" : gate.verdict === "unavailable" ? "Fugu Unavailable" : "Fugu Error"
-    );
-  }
-
-  await logFuguRun(db, projectName, target, review);
-  await upsertSkillTask(
-    db,
-    projectId,
-    userId,
-    `${target === "polish" ? "Visual polish review" : "Fugu design critique"} for ${projectName}`,
-    "Read-only Fugu critique for Builder guidance. Fugu does not modify code.",
-    result.connected ? "done" : "pending",
-    result.connected ? "Review saved for Builder guidance" : "Add SAKANA_API_KEY to environment"
-  );
-
-  return {
-    id: projectId,
-    projectName,
-    localFolderPath: folder,
-    status,
-    createdAt,
-    currentTask: `Run Fugu Design Review for ${projectName}`,
-    taskId: crypto.randomUUID(),
-    buildLog: nextLog.slice(-12000),
-    buildError: rowString(project.localBuildError) || null,
-    localDevUrl: rowString(project.localDevUrl) || null,
-    localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
-    researchBrief: rowString(project.localResearchBrief) || null,
-    designReview: target === "design" ? review : rowString(project.localDesignReview) || null,
-    polishReview: target === "polish" ? review : rowString(project.localPolishReview) || null,
-    designScore: result.score,
-    ...projectGateFields(project),
-    fuguPolishStatus: target === "polish"
-      ? (typeof result.score === "number" && result.score >= getFuguDesignPassScore() ? "pass" : result.connected ? "revise" : "unavailable")
-      : rowString(project.fuguPolishStatus) || null,
-    qaStatus: rowString(project.localQaStatus) || null,
-    qaChecklist: parseQaChecklist(project.localQaChecklist),
-  };
-}
-
-export async function runLocalFuguDesignGate(userId: string, projectId: string): Promise<LocalBuildProject> {
-  const db = getDb();
-  await ensureLocalBuilderColumns(db);
-  const project = await findLocalBuildProject(db, userId, projectId);
-  const { projectName, folder, createdAt } = await resolveProjectFolder(project);
-  const researchBrief = rowString(project.localResearchBrief) || await createAthenaResearchBrief(projectName, rowString(project.latestInstruction) || projectName);
-  if (!rowString(project.localResearchBrief)) {
-    await db.execute({
-      sql: `UPDATE Project SET localResearchBrief = ?, updatedAt = datetime('now') WHERE id = ?`,
-      args: [researchBrief, projectId],
-    });
-  }
-  const gate = await runFuguDesignGate(fuguGateInputFromProject(projectName, rowString(project.latestInstruction), researchBrief, project));
-  const status = gate.verdict === "pass"
-    ? "Design Ready"
-    : gate.verdict === "revise"
-      ? "Design Revision Needed"
-      : gate.verdict === "unavailable"
-        ? "Fugu Unavailable"
-        : "Fugu Error";
-  const nextLog = await persistFuguDesignGate(db, projectId, rowString(project.localBuildLog), gate, status);
-
-  await upsertSkillTask(
-    db,
-    projectId,
-    userId,
-    `Fugu design gate for ${projectName}`,
-    "Read-only pre-build Fugu gate for design direction, UX completeness, and Builder constraints.",
-    gate.verdict === "pass" ? "done" : "pending",
-    gate.verdict === "pass" ? "Design gate passed; normal build is allowed" : "Review Fugu feedback or record an explicit override"
-  );
-  await logFuguRun(db, projectName, "design", formatFuguDesignGate(gate));
-
-  const updated = {
-    ...project,
-    status,
-    localResearchBrief: researchBrief,
-    localDesignReview: formatFuguDesignGate(gate),
-    designScore: gate.score,
-    fuguGateStatus: gate.verdict,
-    fuguGateScore: gate.score,
-    fuguGateReview: JSON.stringify(gate),
-    fuguGateReviewedAt: gate.reviewedAt,
-    localBuildLog: nextLog,
-  };
-
-  return fuguGateProjectResult(
-    updated,
-    projectId,
-    projectName,
-    folder,
-    createdAt,
-    `Run Fugu Design Gate for ${projectName}`,
-    crypto.randomUUID()
-  );
-}
-
-export async function overrideFuguDesignGate(userId: string, projectId: string, reason: string): Promise<LocalBuildProject> {
-  const trimmed = reason.trim();
-  if (trimmed.length < 12) throw new Error("Fugu override requires a specific reason.");
-  const db = getDb();
-  await ensureLocalBuilderColumns(db);
-  const project = await findLocalBuildProject(db, userId, projectId);
-  const { projectName, folder, createdAt } = await resolveProjectFolder(project);
-  const nextLog = `${rowString(project.localBuildLog)}\nFugu Gate Override: ${trimmed}`.trim().slice(-12000);
-  await db.execute({
-    sql: `UPDATE Project SET status = 'Design Ready', fuguGateOverrideReason = ?, localBuildLog = ?, updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
-    args: [trimmed.slice(0, 1000), nextLog, projectId, userId],
-  });
-  const updated = { ...project, status: "Design Ready", fuguGateOverrideReason: trimmed, localBuildLog: nextLog };
-  return fuguGateProjectResult(updated, projectId, projectName, folder, createdAt, `Override Fugu gate for ${projectName}`, crypto.randomUUID());
-}
-
 export async function prepareLocalBuildProject(userId: string, message: string): Promise<LocalBuildProject | null> {
   const parsed = parseLocalBuildRequest(message);
   if (!parsed) return null;
@@ -2016,7 +1748,7 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
       sql: `UPDATE ProjectTask SET status = 'in_progress', nextStep = 'Run QA checklist before completion', updatedAt = datetime('now') WHERE id = ?`,
       args: [taskId],
     });
-    await upsertSkillTask(db, projectId, userId, `Visual polish review for ${projectName}`, "Confirm the app feels like a real product before completion.", "pending", "Run Fugu Design Review if the generated app feels too basic");
+    await upsertSkillTask(db, projectId, userId, `Automated QA review for ${projectName}`, "Confirm the app feels like a real product before completion.", "pending", "Run automated QA and resolve any reported failures");
     await logLocalBuilderRun(db, "completed", `local_build_generate project=${projectName}`, `Build passed; QA pending: ${resolvedFolder}`);
 
     return {

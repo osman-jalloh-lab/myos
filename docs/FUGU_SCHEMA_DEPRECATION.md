@@ -2,7 +2,7 @@
 
 ## Status
 
-Fugu/Sakana application behavior is being removed. Physical schema removal is deliberately deferred; no destructive database migration is part of this change.
+Fugu/Sakana application behavior is being removed. The deprecated fields remain stored for compatibility, but Fugu is no longer an active, configured, or selectable provider. Physical schema removal is deliberately deferred; no destructive database migration is part of this change.
 
 ## Retained compatibility fields
 

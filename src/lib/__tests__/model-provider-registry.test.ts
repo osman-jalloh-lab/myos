@@ -7,6 +7,11 @@ describe("model provider registry", () => {
     expect(new Set(families).size).toBe(families.length);
   });
 
+  it("does not advertise retired Fugu or Sakana providers", () => {
+    const configuredProviders = MODEL_PROVIDER_REGISTRY.flatMap((entry) => [entry.family, entry.provider, ...entry.env]);
+    expect(configuredProviders.join(" ")).not.toMatch(/fugu|sakana/i);
+  });
+
   it("maps the council providers to their intended roles", () => {
     expect(MODEL_PROVIDER_REGISTRY.filter((entry) => entry.council).map((entry) => [entry.family, entry.role])).toEqual([
       ["openai", "engineering"],

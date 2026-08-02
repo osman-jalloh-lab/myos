@@ -7,7 +7,7 @@ describe("provider health safety", () => {
   });
 
   it("does not treat configured but untested providers as failures", () => {
-    expect(apiProviderSeverity({ provider: "Sakana / Fugu", status: "configured_untested" })).toBe("healthy");
+    expect(apiProviderSeverity({ provider: "OpenAI", status: "configured_untested" })).toBe("healthy");
   });
 
   it("treats missing providers as warnings, not failures", () => {

@@ -378,7 +378,7 @@ export function cleanProviderCredential(value: string | undefined): string {
 
 const SANITIZED_PROVIDER_ENV = new Set([
   "GITHUB_TOKEN", "VERCEL_TOKEN", "FIRECRAWL_API_KEY", "SERPAPI_API_KEY",
-  "SAKANA_API_KEY", "TELEGRAM_BOT_TOKEN", "AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET",
+  "TELEGRAM_BOT_TOKEN", "AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET",
   "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
 ]);
 
@@ -503,7 +503,6 @@ export async function getApiProviderHealth(userId: string, runs: AgentRunRow[], 
   const source = runtimeSource();
   const rows: ApiProviderHealth[] = [
     ...councilProviderRows(runs),
-    providerRow({ provider: "Sakana / Fugu", env: ["SAKANA_API_KEY"], runs, component: providerComponent("Sakana / Fugu") }),
     providerRow({ provider: "Firecrawl Web Search", env: ["FIRECRAWL_API_KEY"], runs, component: providerComponent("Firecrawl Web Search") }),
     providerRow({ provider: "SerpAPI Google Flights", env: ["SERPAPI_API_KEY"], runs, component: providerComponent("SerpAPI Google Flights") }),
     providerRow({ provider: "Gmail", env: [], runs, component: providerComponent("Gmail"), configured: accounts.some((account) => /gmail|mail\.google/i.test(account.scopes)) }),
@@ -769,7 +768,6 @@ export async function getHealthCenterSnapshot(userId: string): Promise<HealthCen
       ] : [],
     },
     { name: "Codex Executor", status: executorStatus(latestRun(runs, ["codex_cli"]), busyExecutors.has("codex_cli"), codexStatus.available), lastRun: iso(latestRun(runs, ["codex_cli"])?.createdAt), lastError: codexStatus.available ? latestRun(runs, ["codex_cli"])?.status === "failed" ? latestRun(runs, ["codex_cli"])?.outputSummary ?? null : null : codexStatus.message },
-    { name: "Fugu Critic", status: executorStatus(latestRun(runs, ["fugu"]), false, hasEnv("SAKANA_API_KEY")), lastRun: iso(latestRun(runs, ["fugu"])?.createdAt), lastError: hasEnv("SAKANA_API_KEY") ? null : "SAKANA_API_KEY is not configured" },
     { name: "Job Tracker", status: executorStatus(latestRun(runs, ["job-tracker", "job-scout"]), false, true), lastRun: iso(latestRun(runs, ["job-tracker", "job-scout"])?.createdAt), lastError: latestRun(runs, ["job-tracker", "job-scout"])?.status === "failed" ? latestRun(runs, ["job-tracker", "job-scout"])?.outputSummary ?? null : null },
     { name: "Email Intelligence", status: executorStatus(latestRun(runs, ["email-watcher", "thread-watcher"]), false, hasUsableGmail), lastRun: iso(latestRun(runs, ["email-watcher", "thread-watcher"])?.createdAt), lastError: hasUsableGmail ? null : "No connected Google account with Gmail scope" },
   ];

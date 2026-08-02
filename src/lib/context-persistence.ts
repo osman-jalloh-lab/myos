@@ -282,12 +282,6 @@ export function toolHealthFromEnvironment(now = new Date()): ToolHealthEntry[] {
       reason: hasAll("AMADEUS_CLIENT_ID", "AMADEUS_CLIENT_SECRET") ? null : "Missing AMADEUS_CLIENT_ID or AMADEUS_CLIENT_SECRET.",
       lastChecked: checked,
     },
-    {
-      tool: "Fugu Design Critic",
-      status: hasAny("SAKANA_API_KEY") ? "available" : "unavailable",
-      reason: hasAny("SAKANA_API_KEY") ? null : "Missing SAKANA_API_KEY.",
-      lastChecked: checked,
-    },
   ];
 }
 
