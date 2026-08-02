@@ -358,15 +358,6 @@ model Project {
   localPreviewStatus     String?
   localPreviewCheckedAt  String?
   localResearchBrief     String?
-  localDesignReview      String?
-  localPolishReview      String?
-  designScore            Int?
-  fuguGateStatus         String?
-  fuguGateScore          Int?
-  fuguGateReview         String?
-  fuguGateReviewedAt     String?
-  fuguGateOverrideReason String?
-  fuguPolishStatus       String?
   localQaStatus          String?
   localQaChecklist       String?
   createdAt              DateTime?
