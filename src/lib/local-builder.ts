@@ -4,6 +4,7 @@ import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promi
 import net from "node:net";
 import path from "node:path";
 import crypto from "node:crypto";
+import { normalizeBuilderLifecycle } from "@/lib/builder-lifecycle";
 import {
   formatFuguDesignGate,
   getFuguDesignGateMode,
@@ -304,6 +305,12 @@ export function canStartBuildWithFuguGate(
   project: { fuguGateStatus?: unknown; fuguGateOverrideReason?: unknown },
   mode: FuguGateMode = getFuguDesignGateMode()
 ): { allowed: boolean; reason: string } {
+  void project;
+  void mode;
+  // Compatibility-only: legacy Fugu fields remain readable until their schema
+  // migration, but no longer control canonical Builder progression.
+  return { allowed: true, reason: "Canonical Builder lifecycle proceeds directly to build and QA." };
+  /*
   if (mode === "off" || mode === "recommended") return { allowed: true, reason: `Fugu gate mode is ${mode}.` };
   const status = fuguGateStatus(project.fuguGateStatus);
   if (status === "pass") return { allowed: true, reason: "Fugu approved the design direction." };
@@ -314,6 +321,7 @@ export function canStartBuildWithFuguGate(
       ? `Fugu design gate is ${status}; required mode blocks normal build until pass or override.`
       : "Fugu design gate has not passed; required mode blocks normal build until pass or override.",
   };
+  */
 }
 
 function projectGateFields(project: Record<string, unknown>) {
@@ -897,7 +905,7 @@ async function run(command: string, args: string[], cwd: string, nodeEnv?: "deve
 async function updateProjectBuildState(db: Db, projectId: string, status: string, log: string, error: string | null = null): Promise<void> {
   await db.execute({
     sql: `UPDATE Project SET status = ?, localBuildLog = ?, localBuildError = ?, updatedAt = datetime('now') WHERE id = ?`,
-    args: [status, log.slice(-12000), error?.slice(0, 4000) ?? null, projectId],
+    args: [normalizeBuilderLifecycle(status), log.slice(-12000), error?.slice(0, 4000) ?? null, projectId],
   });
 }
 
@@ -2099,8 +2107,8 @@ export async function runLocalBuilderQa(userId: string, projectId: string): Prom
   }
 
   const passed = qa.status === "qa_passed";
-  const finalStatus = passed ? "completed" : "qa_pending";
-  const displayedQaStatus = passed ? "qa_passed" : "qa_pending";
+  const finalStatus = passed ? "completed" : "failed";
+  const displayedQaStatus = passed ? "qa_passed" : "qa_failed";
   await db.execute({
     sql: `UPDATE Project SET status = ?, localQaStatus = ?, localQaChecklist = ?, localBuildLog = ?, localBuildError = ?, updatedAt = datetime('now') WHERE id = ?`,
     args: [finalStatus, displayedQaStatus, JSON.stringify(qa.checklist), log.slice(-12000), null, projectId],

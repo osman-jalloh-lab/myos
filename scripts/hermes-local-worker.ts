@@ -26,13 +26,13 @@ type QueueTask = {
 };
 
 type ExecutionPhase =
-  | "queued" | "claimed" | "initializing" | "planning" | "fugu_design_gate"
+  | "queued" | "claimed" | "initializing" | "planning"
   | "waiting_for_worker" | "waiting_for_approval" | "preparing_workspace"
   | "hermes_nous_running" | "codex_fallback_running" | "installing_dependencies"
-  | "building" | "starting_preview" | "browser_qa" | "fugu_polish_review"
+  | "building" | "starting_preview" | "browser_qa"
   | "completed" | "failed" | "cancelled" | "stalled";
 
-type ExecutionSource = "web" | "local_worker" | "hermes_nous" | "codex" | "fugu" | "qa";
+type ExecutionSource = "web" | "local_worker" | "hermes_nous" | "codex" | "qa";
 type ExecutionSeverity = "info" | "warning" | "error";
 
 type WorkerCapabilities = {
@@ -936,7 +936,7 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
   const builder = await import("../src/lib/local-builder");
   await traceEvent(db, task, { phase: "planning", source: "local_worker", message: "Building Hermes Nous execution packet." });
   const packet = await builder.buildHermesAgentExecutionPrompt(task.userId, task.projectId, task.description);
-  await traceEvent(db, task, { phase: "fugu_design_gate", source: "fugu", message: "Fugu design gate context prepared for Hermes Nous." });
+  await traceEvent(db, task, { phase: "planning", source: "local_worker", message: "Execution packet prepared; continuing directly to build and QA." });
   const folder = await assertSafeHermesProjectFolder(packet.folder);
   await traceEvent(db, task, {
     phase: "preparing_workspace",

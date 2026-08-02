@@ -3,6 +3,7 @@ import {
   BUILDER_LIFECYCLE_COMPATIBILITY,
   CANONICAL_BUILDER_STAGES,
   isTerminalBuilderStage,
+  deriveCanonicalBuilderStage,
   normalizeBuilderLifecycle,
 } from "../builder-lifecycle";
 
@@ -30,5 +31,9 @@ describe("builder lifecycle compatibility", () => {
     expect(normalizeBuilderLifecycle({ status: "fugu_design_gate" })).toBe("building");
     expect(normalizeBuilderLifecycle("Fugu Design Gate")).toBe("building");
     expect(normalizeBuilderLifecycle("unrecognized legacy state")).toBe("queued");
+  });
+
+  it("prioritizes persisted QA state over an older project status", () => {
+    expect(deriveCanonicalBuilderStage({ status: "Fugu Design Gate", localQaStatus: "qa_running" })).toBe("qa_running");
   });
 });

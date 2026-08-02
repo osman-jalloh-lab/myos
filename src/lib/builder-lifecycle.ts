@@ -66,6 +66,15 @@ export function normalizeBuilderLifecycle(value: unknown): CanonicalBuilderStage
   return LEGACY_STAGE_MAP[keyFor(value)] ?? "queued";
 }
 
+/** Prefer a QA-specific state when a persisted project row supplies one. */
+export function deriveCanonicalBuilderStage(record: {
+  status?: unknown;
+  qaStatus?: unknown;
+  localQaStatus?: unknown;
+}): CanonicalBuilderStage {
+  return normalizeBuilderLifecycle(record.qaStatus ?? record.localQaStatus ?? record.status);
+}
+
 export function isTerminalBuilderStage(stage: CanonicalBuilderStage): boolean {
   return stage === "completed" || stage === "failed";
 }

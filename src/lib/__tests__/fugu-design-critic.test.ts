@@ -119,8 +119,8 @@ describe("Fugu design gate", () => {
     expect(gate.summary).toBe("Ready");
   });
 
-  it("blocks required-mode builds until Fugu passes or an override is recorded", () => {
-    expect(canStartBuildWithFuguGate({ fuguGateStatus: "revise" }, "required")).toMatchObject({ allowed: false });
+  it("keeps legacy gate data from blocking the canonical build lifecycle", () => {
+    expect(canStartBuildWithFuguGate({ fuguGateStatus: "revise" }, "required")).toMatchObject({ allowed: true });
     expect(canStartBuildWithFuguGate({ fuguGateStatus: "pass" }, "required")).toMatchObject({ allowed: true });
     expect(canStartBuildWithFuguGate({ fuguGateStatus: "error", fuguGateOverrideReason: "Owner accepted visual risk for prototype." }, "required")).toMatchObject({ allowed: true });
     expect(canStartBuildWithFuguGate({ fuguGateStatus: "revise" }, "recommended")).toMatchObject({ allowed: true });
