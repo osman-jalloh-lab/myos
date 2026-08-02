@@ -1,4 +1,5 @@
-import type { CanonicalBuilderStage } from "@/lib/builder-lifecycle";
+import { isTerminalBuilderStage, type CanonicalBuilderStage } from "@/lib/builder-lifecycle";
+import { BUILDER_PROGRESS_STEPS, canonicalBuilderProgressStep, canonicalBuilderStageOrder } from "@/lib/builder-stage-display";
 
 export type BuildStepStatus = "pending" | "running" | "complete" | "failed" | "skipped";
 
@@ -49,6 +50,29 @@ export type LiveBuildConsoleData = {
     canRetry: boolean;
   } | null;
 };
+
+/** Canonical lifecycle drives both the timeline and live polling termination. */
+export function shouldPollLiveBuild(stage: CanonicalBuilderStage): boolean {
+  return !isTerminalBuilderStage(stage);
+}
+
+/** Ignore duplicate or late events that would move an observed stage backward. */
+export function latestCanonicalBuilderStage(current: CanonicalBuilderStage | null, incoming: CanonicalBuilderStage): CanonicalBuilderStage {
+  if (!current) return incoming;
+  if (isTerminalBuilderStage(current)) return current;
+  if (isTerminalBuilderStage(incoming)) return incoming;
+  return canonicalBuilderStageOrder(incoming) < canonicalBuilderStageOrder(current) ? current : incoming;
+}
+
+export function canonicalLiveBuildTimeline(stage: CanonicalBuilderStage, timestamp: string | null): BuildTimelineStep[] {
+  const activeStep = canonicalBuilderProgressStep(stage);
+  return BUILDER_PROGRESS_STEPS.map((label, index) => ({
+    key: label.toLowerCase(),
+    label,
+    status: stage === "failed" ? "pending" : stage === "completed" || (activeStep !== null && index < activeStep) ? "complete" : activeStep === index ? "running" : "pending",
+    timestamp: stage === "completed" || (activeStep !== null && index <= activeStep) ? timestamp : null,
+  }));
+}
 
 export function redactBuildText(value: string): string {
   return value

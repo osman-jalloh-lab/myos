@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { canonicalBuilderStageColor, canonicalBuilderStageLabel } from "@/lib/builder-stage-display";
+import { latestCanonicalBuilderStage, shouldPollLiveBuild } from "@/lib/live-build-console";
 import type { BuildStepStatus, LiveBuildConsoleData } from "@/lib/live-build-console";
 
 const shell: React.CSSProperties = { background: "linear-gradient(180deg, rgba(19,28,44,.97), rgba(8,14,25,.95))", border: "1px solid rgba(96,165,250,.28)", borderRadius: 10, boxShadow: "0 16px 38px rgba(0,0,0,.24)", overflow: "hidden" };
@@ -37,14 +39,22 @@ export default function LiveBuildConsole({ projectId, compact = false }: { proje
   const refresh = useCallback(async () => {
     const query = selectedId ? `?projectId=${encodeURIComponent(selectedId)}` : "";
     const response = await fetch(`/api/command-center/live-build${query}`, { cache: "no-store" });
-    if (response.ok) setData(await response.json() as LiveBuildConsoleData);
+    if (!response.ok) return;
+    const incoming = await response.json() as LiveBuildConsoleData;
+    setData((current) => {
+      if (!current?.project || !incoming.project) return incoming;
+      const canonicalStage = latestCanonicalBuilderStage(current.project.canonicalStage, incoming.project.canonicalStage);
+      return { ...incoming, active: shouldPollLiveBuild(canonicalStage), project: { ...incoming.project, canonicalStage } };
+    });
   }, [selectedId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
-    const interval = window.setInterval(() => { setNow(Date.now()); void refresh(); }, data?.active ? 4_000 : 15_000);
+    const shouldPoll = !data?.project || shouldPollLiveBuild(data.project.canonicalStage);
+    if (!shouldPoll) return;
+    const interval = window.setInterval(() => { setNow(Date.now()); void refresh(); }, data?.project ? 4_000 : 15_000);
     return () => window.clearInterval(interval);
-  }, [data?.active, refresh]);
+  }, [data?.project, refresh]);
 
   const visibleLogs = useMemo(() => (data?.logs ?? []).filter((log) => technical || !log.technical).slice(compact ? -6 : -80), [data?.logs, technical, compact]);
   const copy = async (value: string, key: string) => { await navigator.clipboard.writeText(value); setCopied(key); window.setTimeout(() => setCopied(null), 1600); };
@@ -74,10 +84,10 @@ export default function LiveBuildConsole({ projectId, compact = false }: { proje
           <div style={{ display: "grid", gridTemplateColumns: compact ? "minmax(0,1fr) auto" : "minmax(220px,1.5fr) repeat(4,minmax(100px,auto))", gap: 10, alignItems: "center" }}>
             <div style={{ minWidth: 0 }}>
               <div style={{ color: "#F1F4FB", fontSize: 15, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{data.project.name}</div>
-              <div style={{ color: "#60A5FA", fontSize: 10, marginTop: 3, textTransform: "uppercase", letterSpacing: ".06em" }}>{data.project.statusMeaning}</div>
+              <div style={{ color: canonicalBuilderStageColor(data.project.canonicalStage), fontSize: 10, marginTop: 3, textTransform: "uppercase", letterSpacing: ".06em" }}>{canonicalBuilderStageLabel(data.project.canonicalStage)}</div>
             </div>
             {!compact && <><Datum label="Category" value={data.project.appType} /><Datum label="Executor" value={data.project.executor} /><Datum label="Started" value={clock(data.project.startedAt)} /><Datum label="Elapsed" value={data.project.startedAt ? elapsed(Math.max(0, now - new Date(data.project.startedAt).getTime())) : "Waiting"} /></>}
-            {compact && <span style={{ color: tone(data.project.status), fontSize: 10, ...mono }}>{elapsed(data.project.elapsedMs)}</span>}
+            {compact && <span style={{ color: canonicalBuilderStageColor(data.project.canonicalStage), fontSize: 10, ...mono }}>{canonicalBuilderStageLabel(data.project.canonicalStage)} · {elapsed(data.project.elapsedMs)}</span>}
           </div>
 
           {data.project.folderPath && !compact && <div style={{ color: "#94A3B8", fontSize: 10, ...mono, overflowWrap: "anywhere" }}>Folder · {data.project.folderPath}</div>}

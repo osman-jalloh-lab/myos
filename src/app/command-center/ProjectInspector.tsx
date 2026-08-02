@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { LiveBuildConsoleData } from "@/lib/live-build-console";
+import { canonicalBuilderStageLabel } from "@/lib/builder-stage-display";
+import { shouldPollLiveBuild, type LiveBuildConsoleData } from "@/lib/live-build-console";
 
 function duration(ms: number): string {
   const minutes = Math.floor(ms / 60_000);
@@ -18,7 +19,12 @@ export default function ProjectInspector({ projectId }: { projectId: string }) {
     const response = await fetch(`/api/command-center/live-build?projectId=${encodeURIComponent(projectId)}`, { cache: "no-store" });
     if (response.ok) setData(await response.json() as LiveBuildConsoleData);
   }, [projectId]);
-  useEffect(() => { void refresh(); const interval = window.setInterval(() => void refresh(), 5_000); return () => window.clearInterval(interval); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    if (data?.project && !shouldPollLiveBuild(data.project.canonicalStage)) return;
+    const interval = window.setInterval(() => void refresh(), 5_000);
+    return () => window.clearInterval(interval);
+  }, [data?.project, refresh]);
 
   const retry = async () => {
     setBusy("retry"); setMessage(null);
@@ -36,14 +42,15 @@ export default function ProjectInspector({ projectId }: { projectId: string }) {
 
   if (!data?.project || !data.inspector) return <div style={panel}><Header /><div style={{ color: "#647089", fontSize: 11 }}>Inspector is loading recorded project state.</div></div>;
   const inspector = data.inspector;
-  const failed = Boolean(inspector.exactError);
+  const failed = data.project.canonicalStage === "failed";
+  const canRetry = data.project.canonicalStage === "failed" && inspector.canRetry;
   const viewLogs = `/command-center?liveBuild=${encodeURIComponent(projectId)}#live-build-console`;
 
   return (
     <div style={panel}>
       <Header />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 7 }}>
-        <Datum label="Current stage" value={inspector.currentStage} />
+        <Datum label="Current stage" value={canonicalBuilderStageLabel(data.project.canonicalStage)} />
         <Datum label="Current step" value={inspector.currentStep} />
         <Datum label="Last successful step" value={inspector.lastSuccessfulStep ?? "None recorded"} />
         <Datum label="Last failed step" value={inspector.lastFailedStep ?? "None"} danger={Boolean(inspector.lastFailedStep)} />
@@ -52,9 +59,9 @@ export default function ProjectInspector({ projectId }: { projectId: string }) {
         <Datum label="Elapsed time" value={data.project.startedAt ? duration(Date.now() - new Date(data.project.startedAt).getTime()) : "Not started"} />
         <Datum label="Failure source" value={inspector.failureCategory ?? "None"} danger={failed} />
       </div>
-      {failed && <div style={{ marginTop: 9, padding: "9px 10px", borderRadius: 7, border: "1px solid rgba(248,113,113,.28)", background: "rgba(248,113,113,.07)" }}><div style={{ color: "#F87171", fontSize: 9, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 }}>Exact error</div><div style={{ color: "#FCA5A5", fontSize: 11, lineHeight: 1.45, overflowWrap: "anywhere" }}>{inspector.exactError}</div></div>}
+      {failed && inspector.exactError && <div style={{ marginTop: 9, padding: "9px 10px", borderRadius: 7, border: "1px solid rgba(248,113,113,.28)", background: "rgba(248,113,113,.07)" }}><div style={{ color: "#F87171", fontSize: 9, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 4 }}>Exact error</div><div style={{ color: "#FCA5A5", fontSize: 11, lineHeight: 1.45, overflowWrap: "anywhere" }}>{inspector.exactError}</div></div>}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
-        <button onClick={() => void retry()} disabled={!inspector.canRetry || busy !== null} style={{ ...button, opacity: inspector.canRetry ? 1 : .45 }}>{busy === "retry" ? "Queuing…" : "Retry"}</button>
+        <button onClick={() => void retry()} disabled={!canRetry || busy !== null} style={{ ...button, opacity: canRetry ? 1 : .45 }}>{busy === "retry" ? "Queuing…" : "Retry"}</button>
         <a href={viewLogs} style={button}>View logs</a>
         <button onClick={() => void openFolder()} disabled={busy !== null} style={button}>{busy === "folder" ? "Opening…" : "Open folder"}</button>
         {data.preview?.url ? <a href={data.preview.url} target="_blank" rel="noopener" style={button}>Open preview</a> : <span style={{ ...button, opacity: .45 }}>Open preview</span>}
