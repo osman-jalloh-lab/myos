@@ -18,7 +18,8 @@ export function redactPlanningRunnerError(value: unknown): string {
  * both of which the process-boundary audit classified as unsafe for planning.
  */
 export class HardenedHermesPlanningRunner implements RestrictedPlanningRunner {
-  async run(_prompt: string, _timeoutMs: number): Promise<{ status: "unavailable" }> {
+  async run(prompt: string, timeoutMs: number): Promise<{ status: "unavailable" }> {
+    void prompt; void timeoutMs;
     return { status: "unavailable" };
   }
 }
