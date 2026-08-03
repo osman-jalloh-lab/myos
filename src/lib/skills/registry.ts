@@ -564,22 +564,27 @@ export function clearSkillRegistryCache(): void {
   cache = null;
 }
 
-export async function getRegisteredSkills(userId: string, refresh = false): Promise<SkillRegistryEntry[]> {
+// Read-only consumers (such as plan previews) must not initialize telemetry or
+// mutate per-user skill state merely to inspect available metadata.
+export async function getRegisteredSkillsReadOnly(userId: string, refresh = false): Promise<SkillRegistryEntry[]> {
   if (refresh) clearSkillRegistryCache();
   if (!cache || Date.now() - cache.createdAt > CACHE_MS) {
     const projectsRoot = resolveLocalProjectsRoot();
     const [repo, agent, local, user] = await Promise.all([
-      scanRepoSkills(),
-      scanFolderSkills(path.join(os.homedir(), ".agents", "skills"), "agent"),
-      scanFolderSkills(path.join(projectsRoot, "skills"), "local"),
-      scanUserSkills(userId),
+      scanRepoSkills(), scanFolderSkills(path.join(os.homedir(), ".agents", "skills"), "agent"),
+      scanFolderSkills(path.join(projectsRoot, "skills"), "local"), scanUserSkills(userId),
     ]);
     const byId = new Map<string, SkillRegistryEntry>();
     for (const skill of [...repo, ...agent, ...local, ...user]) if (!byId.has(skill.id)) byId.set(skill.id, skill);
     cache = { createdAt: Date.now(), entries: [...byId.values()].sort((a, b) => a.name.localeCompare(b.name)) };
   }
+  return cache.entries;
+}
+
+export async function getRegisteredSkills(userId: string, refresh = false): Promise<SkillRegistryEntry[]> {
+  const entries = await getRegisteredSkillsReadOnly(userId, refresh);
   const state = await stateBySkill(userId);
-  return cache.entries.map((skill) => {
+  return entries.map((skill) => {
     const row = state.get(skill.id);
     return {
       ...skill,

@@ -12,4 +12,10 @@ Skill references are verified against the existing My OS registry through a smal
 
 Provider-neutral trace vocabulary is exported for future auditing, from `orchestration_received` through `orchestration_completed` or `orchestration_cancelled`. No Fugu terminology is used.
 
+## Read-only My OS planning adapter
+
+`POST /api/orchestration/plan` authenticates with the normal My OS session, derives the user only from that session, and returns a deterministic plan preview. It classifies answer, research, plan, write, code, and review requests without a model call. Code previews recommend Codex and describe future approval and validation requirements; they never queue or run work. Claude is preferred for read-only architecture, research, planning, writing, and review; DeepSeek is an optional review recommendation only.
+
+The response includes a bounded hypothetical context request, matched skill IDs/names/reasons, policy codes and warnings, and `executionStatus: "not_started"`. The route uses a read-only registry view and deterministic score function, so it does not execute skills, create telemetry, create approval or queue records, retrieve Obsidian, write memory, or call any provider. A later phase may replace the deterministic planner with a provider adapter after authorization, auditing, and queue integration. Telegram and Hermes Agent intake remain deferred.
+
 The first pilot should be a read-only My OS chat planning request. Later phases may add Telegram intake and provider adapters for Hermes Agent, Claude, Codex, OpenAI, DeepSeek, and Local only after each adapter is authorized, audited, and integrated with existing approval and execution queues.
