@@ -189,6 +189,7 @@ export async function ensureWebhookRegistered(expectedUrl: string): Promise<void
 // ── Inbound update shapes (only the fields we read) ──────────────────────────
 
 export interface TelegramUpdate {
+  update_id?: number;
   message?: {
     chat: { id: number };
     from?: { id: number };

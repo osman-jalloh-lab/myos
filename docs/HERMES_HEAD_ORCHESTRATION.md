@@ -18,4 +18,8 @@ Provider-neutral trace vocabulary is exported for future auditing, from `orchest
 
 The response includes a bounded hypothetical context request, matched skill IDs/names/reasons, policy codes and warnings, and `executionStatus: "not_started"`. The route uses a read-only registry view and deterministic score function, so it does not execute skills, create telemetry, create approval or queue records, retrieve Obsidian, write memory, or call any provider. A later phase may replace the deterministic planner with a provider adapter after authorization, auditing, and queue integration. Telegram and Hermes Agent intake remain deferred.
 
+## Telegram planning bridge
+
+The existing `POST /api/telegram/webhook` remains the only Telegram intake owner. After its existing secret-header and owner checks, `/plan <request>` (or the explicit planning-only mode) reuses its reply transport to return a deterministic policy-validated preview. Telegram update IDs form the idempotency input; the bridge does not create a second webhook, bot, listener, approval, queue task, or provider call. Normal Telegram text handling remains unchanged. Voice transcription remains owned by the existing Hermes gateway and can pass its resulting text through this same preview boundary in a later voice integration pass.
+
 The first pilot should be a read-only My OS chat planning request. Later phases may add Telegram intake and provider adapters for Hermes Agent, Claude, Codex, OpenAI, DeepSeek, and Local only after each adapter is authorized, audited, and integrated with existing approval and execution queues.

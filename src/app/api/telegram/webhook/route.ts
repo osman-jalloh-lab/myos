@@ -11,6 +11,7 @@ import {
 } from "@/lib/telegram";
 import type { RouteResult } from "@/agents/hermes";
 import { COMMAND_AGENT_PREFIXES } from "@/lib/agent-roster";
+import { createTelegramPlanPreview, formatTelegramPlanPreview } from "@/lib/orchestration/telegram-planner";
 
 // Bot command shortcuts — map Telegram slash commands to natural-language
 // queries so every command fans through the same routeMessage() intent router.
@@ -149,6 +150,20 @@ export async function POST(req: Request) {
 
   const { text: resolvedText, targetAgent } = resolveCommandText(rawText);
   const fullText = contextPrefix + resolvedText;
+
+  // This is deliberately an opt-in planning branch in the existing gateway.
+  // It does not call the chat router, providers, tools, approvals, or queues.
+  const planningOnly = process.env.HERMES_TELEGRAM_PLANNING_ONLY === "true" || /^\/plan\s+/i.test(rawText);
+  if (planningOnly) {
+    const planningText = rawText.replace(/^\/plan\s+/i, "").trim();
+    if (!planningText) {
+      await sendTelegramMessage(chatId, "Tell me what you want planned. Execution has not started.");
+      return new Response("ok");
+    }
+    const preview = await createTelegramPlanPreview(user.id, String(chatId), planningText, update.update_id);
+    await sendTelegramMessage(chatId, formatTelegramPlanPreview(preview));
+    return new Response("ok");
+  }
 
   // Build memory context block before the LLM call — session, active project, recent messages.
   // Failures are non-fatal: a missing context block degrades gracefully to stateless behavior.
