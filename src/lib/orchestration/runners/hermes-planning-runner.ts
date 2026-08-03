@@ -3,7 +3,7 @@ import type { RestrictedPlanningRunner } from "../planning-provider";
 const SECRET_KEYS = /(?:KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL)/i;
 export function hermesPlanningEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const allowed = ["SystemRoot", "WINDIR", "COMSPEC", "PATH", "PATHEXT", "TEMP", "TMP", "LANG", "LC_ALL", "HERMES_HOME"];
-  return Object.fromEntries(allowed.flatMap((key) => env[key] && !SECRET_KEYS.test(key) ? [[key, env[key] as string]] : []));
+  return Object.fromEntries(allowed.flatMap((key) => env[key] && !SECRET_KEYS.test(key) ? [[key, env[key] as string]] : [])) as NodeJS.ProcessEnv;
 }
 export function redactPlanningRunnerError(value: unknown): string {
   return String(value ?? "Hermes planning runner unavailable.")
