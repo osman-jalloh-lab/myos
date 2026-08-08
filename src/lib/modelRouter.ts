@@ -6,8 +6,17 @@ import { prisma } from "./db";
 export type DataClass = "PUBLIC" | "PERSONAL" | "PRIVATE" | "SECRET";
 export type Provider = "groq" | "openai" | "anthropic" | "ollama";
 
+const DATA_CLASSES = new Set<DataClass>(["PUBLIC", "PERSONAL", "PRIVATE", "SECRET"]);
+
+function assertModelDataClass(value: unknown): asserts value is DataClass {
+  if (!DATA_CLASSES.has(value as DataClass)) {
+    throw new Error("Model data classification is missing or invalid.");
+  }
+  if (value === "SECRET") throw new Error("SECRET data must never reach an LLM");
+}
+
 export function pickProvider(taskType: string, dataClass: DataClass): Provider {
-  if (dataClass === "SECRET") throw new Error("SECRET data must never reach an LLM");
+  assertModelDataClass(dataClass);
   if (taskType === "code" || taskType === "long-doc") return "anthropic";
   // PRIVATE data (email, finance, I-9) stays on Groq per CLAUDE.md rule 4
   if (dataClass === "PRIVATE") return process.env.OLLAMA_BASE_URL ? "ollama" : "groq";
@@ -274,6 +283,7 @@ async function logUsage(params: ModelCallParams, provider: Provider, response: P
  *   for await (const chunk of callModelStream(params)) { ... }
  */
 export async function* callModelStream(params: ModelCallParams): AsyncGenerator<string, void, unknown> {
+  assertModelDataClass(params.dataClass);
   const provider = params.providerOverride ?? pickProvider(params.taskType, params.dataClass);
   let fullText = "";
 
@@ -347,6 +357,7 @@ export async function* callModelStream(params: ModelCallParams): AsyncGenerator<
  * logged to model_usage, so the cost panel stays honest about what ran where.
  */
 export async function callModel(params: ModelCallParams): Promise<ModelCallResult> {
+  assertModelDataClass(params.dataClass);
   const provider = params.providerOverride ?? pickProvider(params.taskType, params.dataClass);
 
   try {
