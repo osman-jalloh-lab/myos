@@ -20,7 +20,7 @@ vi.mock("@/lib/local-projects-root", () => ({
   resolveLocalProjectsRoot: vi.fn(() => "C:\\Users\\osman\\OneDrive\\Desktop\\HermesProject"),
 }));
 
-import { checkDuplicateSkill, clearSkillRegistryCache, getRegisteredSkills } from "@/lib/skills/registry";
+import { checkDuplicateSkill, clearSkillRegistryCache, getRegisteredSkills, loadRegisteredSkillFile } from "@/lib/skills/registry";
 
 const PERSONAL_SKILLS = [
   "personal-context-anchor",
@@ -76,6 +76,15 @@ describe("skills registry", () => {
       duplicate: true,
       message: "personal-context-anchor is already installed; no action taken.",
     });
+  });
+
+  it("loads complete native instructions on demand and rejects traversal", async () => {
+    clearSkillRegistryCache();
+    const loaded = await loadRegisteredSkillFile("user_1", "personal-context-anchor");
+    expect(loaded.skillId).toBe("personal-context-anchor");
+    expect(loaded.content).toContain("personal-context-anchor");
+    await expect(loadRegisteredSkillFile("user_1", "personal-context-anchor", "../package.json"))
+      .rejects.toThrow("not allowed");
   });
 
   it("merges DB-backed skills while skipping malformed JSON and letting filesystem skills win duplicate ids", async () => {

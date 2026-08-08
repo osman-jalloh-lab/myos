@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { resolveLocalProjectsRoot } from "@/lib/local-projects-root";
 import { calculateSkillQualityScore, DEFAULT_OUTPUT_CONTRACT } from "@/lib/skills/quality";
 import { inferAgent, MIN_CONFIDENCE, scoreRegisteredSkill } from "@/lib/skills/scoring";
+import { discoverSkillDocuments, readSkillFile as readSkillFileContent } from "@/lib/skills/skill-files";
 import type { SkillEvaluationPrompt, SkillOutputContract, SkillQualityBand } from "@/lib/skills/types";
 
 export type RegisteredSkill = {
@@ -435,18 +436,25 @@ function buildRegistryEntry({
 async function scanRepoSkills(): Promise<SkillRegistryEntry[]> {
   const root = path.join(process.cwd(), "skills");
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const documents = await discoverSkillDocuments(root);
+  const directDocuments = new Map(
+    documents
+      .filter((document) => !document.relativePath.includes("/"))
+      .map((document) => [document.relativePath, document]),
+  );
   const names = new Set<string>();
   for (const entry of entries) {
-    if (entry.isDirectory() && !entry.name.startsWith("_")) names.add(entry.name);
     if (entry.isFile() && entry.name.endsWith(".json")) names.add(entry.name.replace(/\.json$/i, ""));
   }
+  for (const name of directDocuments.keys()) names.add(name);
 
   const skills: SkillRegistryEntry[] = [];
   for (const id of names) {
     const dir = path.join(root, id);
     const jsonPath = path.join(root, `${id}.json`);
     const json = await readJson(jsonPath);
-    const skillMd = await readSkillMd(path.join(dir, "SKILL.md"));
+    const document = directDocuments.get(id);
+    const skillMd = await readSkillMd(document?.instructionFile ?? path.join(dir, "SKILL.md"));
     const meta = { ...(json ?? {}), ...(skillMd?.meta ?? {}) };
     const info = await stat(json ? jsonPath : dir).catch(() => null);
     const source: RegisteredSkill["source"] = id.startsWith("skill-scout-") ? "scouted" : PERSONAL_SKILL_ID_SET.has(id) ? "installed" : "built_in";
@@ -455,29 +463,52 @@ async function scanRepoSkills(): Promise<SkillRegistryEntry[]> {
       meta,
       source,
       pathValue: json ? jsonPath : dir,
-      instructionFile: skillMd ? path.join(dir, "SKILL.md") : null,
+      instructionFile: skillMd ? document?.instructionFile ?? path.join(dir, "SKILL.md") : null,
       instructionPreview: skillMd?.preview ?? null,
       dateAdded: info?.birthtime?.toISOString() ?? null,
       hasJson: Boolean(json),
       hasSkillMd: Boolean(skillMd),
     }));
   }
+
+  const seenIds = new Set(names);
+  for (const document of documents.filter((item) => item.relativePath.includes("/"))) {
+    const id = path.basename(document.directory);
+    if (seenIds.has(id)) continue;
+    seenIds.add(id);
+    const skillMd = await readSkillMd(document.instructionFile);
+    if (!skillMd) continue;
+    const meta = { category: document.category ?? undefined, ...skillMd.meta };
+    const info = await stat(document.directory).catch(() => null);
+    skills.push(buildRegistryEntry({
+      id,
+      meta,
+      source: "built_in",
+      pathValue: document.directory,
+      instructionFile: document.instructionFile,
+      instructionPreview: skillMd.preview,
+      dateAdded: info?.birthtime?.toISOString() ?? null,
+      hasJson: false,
+      hasSkillMd: true,
+    }));
+  }
   return skills;
 }
 
 async function scanFolderSkills(root: string, sourceLabel: string): Promise<SkillRegistryEntry[]> {
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  return Promise.all(entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).map(async (entry) => {
-    const dir = path.join(root, entry.name);
-    const skillMd = await readSkillMd(path.join(dir, "SKILL.md"));
-    const meta = skillMd?.meta ?? {};
-    const info = await stat(dir).catch(() => null);
+  const documents = await discoverSkillDocuments(root);
+  return Promise.all(documents.map(async (document) => {
+    const nestedId = document.relativePath.replace(/\//g, "__");
+    const id = `${sourceLabel}:${nestedId}`;
+    const skillMd = await readSkillMd(document.instructionFile);
+    const meta = { category: document.category ?? undefined, ...(skillMd?.meta ?? {}) };
+    const info = await stat(document.directory).catch(() => null);
     return buildRegistryEntry({
-      id: `${sourceLabel}:${entry.name}`,
+      id,
       meta,
       source: "installed",
-      pathValue: dir,
-      instructionFile: skillMd ? path.join(dir, "SKILL.md") : null,
+      pathValue: document.directory,
+      instructionFile: skillMd ? document.instructionFile : null,
       instructionPreview: skillMd?.preview ?? null,
       dateAdded: info?.birthtime?.toISOString() ?? null,
       hasJson: false,
@@ -593,6 +624,32 @@ export async function getRegisteredSkills(userId: string, refresh = false): Prom
       usageCount: row?.usageCount ? Number(row.usageCount) : skill.usageCount,
     };
   });
+}
+
+export type LoadedSkillFile = {
+  skillId: string;
+  relativeFile: string;
+  content: string;
+};
+
+export async function loadRegisteredSkillFile(
+  userId: string,
+  skillId: string,
+  relativeFile = "SKILL.md",
+): Promise<LoadedSkillFile> {
+  const skill = (await getRegisteredSkills(userId)).find((entry) => entry.id === skillId);
+  if (!skill) throw new Error(`Unknown skill: ${skillId}`);
+  if (!skill.enabled) throw new Error(`Skill is disabled: ${skillId}`);
+
+  if (skill.path.startsWith("db:user-skill:")) {
+    if (relativeFile !== "SKILL.md") throw new Error("DB-backed skills do not expose linked files.");
+    if (!skill.instructionPreview) throw new Error(`Skill instructions are unavailable: ${skillId}`);
+    return { skillId, relativeFile, content: skill.instructionPreview };
+  }
+
+  if (!skill.instructionFile) throw new Error(`Skill instructions are unavailable: ${skillId}`);
+  const content = await readSkillFileContent(path.dirname(skill.instructionFile), relativeFile);
+  return { skillId, relativeFile, content };
 }
 
 export async function getPlannerSkillCatalog(userId: string): Promise<PlannerSkillCatalogEntry[]> {
