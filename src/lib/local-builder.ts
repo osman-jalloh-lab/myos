@@ -15,8 +15,16 @@ import {
   isWindowsAbsolute,
   resolveLocalProjectsRoot,
 } from "@/lib/local-projects-root";
+import {
+  createBuilderDockerRunSpec,
+  createDockerBuilderSandboxRuntime,
+  discoverBuilderDockerExecutable,
+  type BuilderSandboxCommandResult,
+  type BuilderSandboxRunSpec,
+} from "@/lib/builder-sandbox-runtime";
 
 export { DEFAULT_LOCAL_PROJECTS_ROOT };
+export { BuilderRuntimeUnavailableError, createBuilderDockerRunSpec, discoverBuilderDockerExecutable } from "@/lib/builder-sandbox-runtime";
 
 type Db = ReturnType<typeof createClient>;
 
@@ -68,115 +76,18 @@ export type CodexCliStatus = {
   message: string;
 };
 
-type CommandResult = {
-  ok: boolean;
-  stdout: string;
-  stderr: string;
-  output: string;
-  command: string;
-  exitCode: number | null;
-};
+type CommandResult = BuilderSandboxCommandResult;
 
 const LOCAL_BUILDER_AGENT = "hermes-local-builder";
 const ATHENA_RESEARCH_AGENT = "athena";
 const CODEX_CLI_EXECUTOR = "codex_cli";
 const DEFAULT_CODEX_CLI_MODEL = "gpt-5.4";
-const BUILDER_NODE_IMAGE = "node:22-bookworm-slim";
 const BUILDER_DOCKER_REGISTRY = "https://registry.npmjs.org/";
-const BUILDER_DOCKER_MEMORY = "2g";
-const BUILDER_DOCKER_CPUS = "2";
-const BUILDER_DOCKER_PIDS = "256";
 
-export class BuilderRuntimeUnavailableError extends Error {
-  constructor(message: string) {
-    super(`builder_runtime_unavailable: ${message}`);
-    this.name = "BuilderRuntimeUnavailableError";
-  }
-}
-
-export type BuilderDockerRunSpec = { executable: string; args: string[]; displayCommand: string };
-
-function builderContainerToken(value: string): string {
-  const token = value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
-  return (token || "project").slice(0, 48);
-}
-
-async function fileExists(file: string): Promise<boolean> {
-  try {
-    return (await stat(file)).isFile();
-  } catch {
-    return false;
-  }
-}
-
-export async function discoverBuilderDockerExecutable(candidatesOverride?: string[]): Promise<string> {
-  const candidates = candidatesOverride ?? [
-    process.env.BUILDER_DOCKER_PATH,
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Programs", "DockerDesktop", "resources", "bin", "docker.exe") : undefined,
-    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, "Docker", "Docker", "resources", "bin", "docker.exe") : undefined,
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  for (const candidate of candidates) {
-    if (await fileExists(candidate)) return candidate;
-  }
-  throw new BuilderRuntimeUnavailableError("Docker Desktop CLI was not found at an approved executable path.");
-}
-
-export function createBuilderDockerRunSpec(params: {
-  dockerExecutable: string;
-  folder: string;
-  projectId: string;
-  runId: string;
-  command: string[];
-  detached?: boolean;
-  hostPort?: number;
-}): BuilderDockerRunSpec {
-  const name = `builder-${params.detached ? "preview" : "job"}-${builderContainerToken(params.projectId)}-${builderContainerToken(params.runId)}`;
-  const args = [
-    "run",
-    ...(params.detached ? ["-d"] : ["--rm"]),
-    "--name", name,
-    "--label", "hermes.builder.owner=local-builder",
-    "--label", `hermes.builder.project-id=${params.projectId}`,
-    "--label", `hermes.builder.kind=${params.detached ? "preview" : "job"}`,
-    "--cap-drop", "ALL",
-    "--security-opt", "no-new-privileges",
-    "--user", "node",
-    "--memory", BUILDER_DOCKER_MEMORY,
-    "--cpus", BUILDER_DOCKER_CPUS,
-    "--pids-limit", BUILDER_DOCKER_PIDS,
-    "--mount", `type=bind,src=${params.folder},dst=/workspace`,
-    "--workdir", "/workspace",
-    ...(params.hostPort ? ["-p", `127.0.0.1:${params.hostPort}:3000`] : []),
-    BUILDER_NODE_IMAGE,
-    ...params.command,
-  ];
-  return { executable: params.dockerExecutable, args, displayCommand: commandForLog(params.dockerExecutable, args) };
-}
-
-function dockerProcessEnv(dockerExecutable: string): NodeJS.ProcessEnv {
-  const env = childProcessEnv();
-  const dockerBin = path.dirname(dockerExecutable);
-  const existingPath = env.PATH ?? process.env.PATH ?? "";
-  env.PATH = `${dockerBin}${path.delimiter}${existingPath}`;
-  return env;
-}
+export type BuilderDockerRunSpec = BuilderSandboxRunSpec;
 
 async function runBuilderDockerCommand(folder: string, projectId: string, runId: string, command: string[], options: { timeoutMs?: number; detached?: boolean; hostPort?: number } = {}): Promise<CommandResult> {
-  const root = await realpath(path.resolve(await getLocalProjectsRoot())).catch(() => "");
-  const resolvedFolder = await realpath(path.resolve(folder)).catch(() => "");
-  if (!root || !resolvedFolder) {
-    throw new BuilderRuntimeUnavailableError("Approved generated project directory could not be canonicalized.");
-  }
-  const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  if (resolvedFolder === root || !resolvedFolder.startsWith(rootWithSep) || !(await exists(resolvedFolder))) {
-    throw new BuilderRuntimeUnavailableError("Refusing Docker execution outside an approved generated project directory.");
-  }
-  const dockerExecutable = await discoverBuilderDockerExecutable();
-  const env = dockerProcessEnv(dockerExecutable);
-  const probe = await runDetailed(dockerExecutable, ["version", "--format", "{{.Server.Version}}"], folder, { timeoutMs: 15_000, env, displayCommand: "docker version --format <server-version>" });
-  if (!probe.ok || !probe.stdout.trim()) throw new BuilderRuntimeUnavailableError("Docker Engine is unavailable.");
-  const spec = createBuilderDockerRunSpec({ dockerExecutable, folder: resolvedFolder, projectId, runId, command, detached: options.detached, hostPort: options.hostPort });
-  return runDetailed(spec.executable, spec.args, resolvedFolder, { timeoutMs: options.timeoutMs, env, displayCommand: spec.displayCommand });
+  return builderSandboxRuntime.execute({ folder, projectId, runId, command, ...options });
 }
 
 export async function runBuilderProjectDockerCommand(folder: string, projectId: string, command: string[], timeoutMs = 10 * 60_000): Promise<CommandResult> {
@@ -184,14 +95,7 @@ export async function runBuilderProjectDockerCommand(folder: string, projectId: 
 }
 
 async function removeBuilderPreviewContainers(folder: string, projectId: string): Promise<void> {
-  const dockerExecutable = await discoverBuilderDockerExecutable();
-  const env = dockerProcessEnv(dockerExecutable);
-  const list = await runDetailed(dockerExecutable, ["ps", "-aq", "--filter", "label=hermes.builder.owner=local-builder", "--filter", `label=hermes.builder.project-id=${projectId}`, "--filter", "label=hermes.builder.kind=preview"], folder, { timeoutMs: 30_000, env, displayCommand: "docker ps -aq --filter builder-project-preview" });
-  if (!list.ok) throw new BuilderRuntimeUnavailableError("Docker Engine is unavailable while locating the prior Builder preview.");
-  const ids = list.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
-  if (!ids.length) return;
-  const stopped = await runDetailed(dockerExecutable, ["rm", "-f", ...ids], folder, { timeoutMs: 30_000, env, displayCommand: "docker rm -f <prior-builder-preview>" });
-  if (!stopped.ok) throw new Error(`Unable to remove the prior Builder preview. ${stopped.output}`);
+  await builderSandboxRuntime.stopPreview({ folder, projectId });
 }
 
 export function isServerlessRuntime(): boolean {
@@ -220,6 +124,19 @@ async function exists(dir: string): Promise<boolean> {
 export async function getLocalProjectsRoot(): Promise<string> {
   return resolveLocalProjectsRoot();
 }
+
+// All current Builder execution goes through this provider-neutral seam. Docker
+// remains the only enabled provider; future hosted sandboxes must implement the
+// same confined workspace contract rather than bypassing it.
+const builderSandboxRuntime = createDockerBuilderSandboxRuntime({
+  getApprovedProjectsRoot: getLocalProjectsRoot,
+  run: (executable, args, cwd, options) => runDetailed(executable, args, cwd, options),
+  environment: (dockerExecutable) => {
+    const env = childProcessEnv();
+    env.PATH = `${path.dirname(dockerExecutable)}${path.delimiter}${env.PATH ?? process.env.PATH ?? ""}`;
+    return env;
+  },
+});
 
 export async function getLocalBuilderRootInfo(): Promise<LocalBuilderRootInfo> {
   const root = await getLocalProjectsRoot();

@@ -56,11 +56,13 @@ describe("local Builder API contract", () => {
     expect(source).toContain("prepareLocalBuildProject(task.userId, message, task.projectId)");
     expect(source).toMatch(/await heartbeat\(db, capabilities, apiBaseUrl\)\.catch/);
     const builderSource = readFileSync(path.join(process.cwd(), "src/lib/local-builder.ts"), "utf8");
+    const runtimeSource = readFileSync(path.join(process.cwd(), "src/lib/builder-sandbox-runtime.ts"), "utf8");
     expect(builderSource).toContain('runBuilderDockerCommand(');
-    expect(builderSource).toContain('"node:22-bookworm-slim"');
-    expect(builderSource).toContain('"--cap-drop", "ALL"');
-    expect(builderSource).toContain('"--security-opt", "no-new-privileges"');
-    expect(builderSource).toContain('`127.0.0.1:${params.hostPort}:3000`');
+    expect(builderSource).toContain("createDockerBuilderSandboxRuntime");
+    expect(runtimeSource).toContain('"node:22-bookworm-slim"');
+    expect(runtimeSource).toContain('"--cap-drop", "ALL"');
+    expect(runtimeSource).toContain('"--security-opt", "no-new-privileges"');
+    expect(runtimeSource).toContain('`127.0.0.1:${params.hostPort}:3000`');
     expect(builderSource).not.toContain('spawn(localNextExecutable');
     expect(source).toContain('runBuilderDockerCommand(folder, task.projectId!');
     expect(source).not.toContain('function runNpm(');
