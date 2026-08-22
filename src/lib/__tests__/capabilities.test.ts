@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   ensureRegistryInitialized: vi.fn(async () => undefined),
   listTools: vi.fn(),
   getLocalWorkerLiveness: vi.fn(),
+  getCodexCliReadiness: vi.fn(),
   getHermesAgentReadiness: vi.fn(),
 }));
 
@@ -14,6 +15,7 @@ vi.mock("@/lib/hermes-execution/tool-registry", () => ({
 
 vi.mock("@/lib/worker-watch", () => ({
   getLocalWorkerLiveness: mocks.getLocalWorkerLiveness,
+  getCodexCliReadiness: mocks.getCodexCliReadiness,
   getHermesAgentReadiness: mocks.getHermesAgentReadiness,
 }));
 
@@ -45,10 +47,11 @@ function snapshot(overrides: Partial<CapabilitySnapshot> = {}): CapabilitySnapsh
       currentTask: null,
     },
     hermesAgent: { ready: true, reason: null },
+    codexCli: { ready: true, reason: null },
     buildExecution: {
       available: true,
-      executor: "hermes_agent",
-      reason: "Local worker is online and Hermes Nous is ready.",
+      executor: "codex_cli",
+      reason: "Local worker is online and Codex CLI is available; Hermes Agent is the fallback.",
     },
     ...overrides,
   };
@@ -80,6 +83,7 @@ describe("capability snapshot", () => {
       currentTask: "idle",
     });
     mocks.getHermesAgentReadiness.mockResolvedValue({ ready: true, reason: null });
+    mocks.getCodexCliReadiness.mockResolvedValue({ ready: true, reason: null });
 
     const snapshot = await getCapabilitySnapshot();
 
@@ -97,8 +101,8 @@ describe("capability snapshot", () => {
     expect(snapshot.worker.status).toBe("online");
     expect(snapshot.buildExecution).toEqual({
       available: true,
-      executor: "hermes_agent",
-      reason: "Local worker is online and Hermes Nous is ready.",
+      executor: "codex_cli",
+      reason: "Local worker is online and Codex CLI is available; Hermes Agent is the fallback.",
     });
   });
 
@@ -112,6 +116,7 @@ describe("capability snapshot", () => {
       currentTask: null,
     });
     mocks.getHermesAgentReadiness.mockResolvedValue({ ready: false, reason: "Hermes Nous is not installed" });
+    mocks.getCodexCliReadiness.mockResolvedValue({ ready: false, reason: "Codex CLI unavailable" });
 
     const snapshot = await getCapabilitySnapshot();
 
@@ -132,6 +137,7 @@ describe("capability snapshot", () => {
     const result = answerCapabilityQuestion("Can you build a page?", snapshot({
       worker: { status: "offline", lastHeartbeat: null, machineName: null, ageMs: null, currentTask: null },
       hermesAgent: { ready: false, reason: "no local worker" },
+      codexCli: { ready: false, reason: "Codex CLI unavailable" },
       buildExecution: { available: false, executor: null, reason: "Local worker is offline." },
     }));
 

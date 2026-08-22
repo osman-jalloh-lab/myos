@@ -71,8 +71,10 @@ export function workerOfflineNotice(liveness: WorkerLiveness): string | null {
 // (getCapabilities() in scripts/hermes-local-worker.ts) — do not re-detect.
 
 export type HermesAgentReadiness = { ready: boolean; reason: string | null };
+export type CodexCliReadiness = { ready: boolean; reason: string | null };
 
 type CapabilityRow = {
+  codexAvailable?: number | bigint | boolean | null;
   hermesAgentAvailable: number | bigint | boolean | null;
   hermesAgentAuthConfigured: number | bigint | boolean | null;
   hermesAgentModelConfigured: number | bigint | boolean | null;
@@ -94,6 +96,17 @@ export async function getHermesAgentReadiness(): Promise<HermesAgentReadiness> {
   if (!flag(row.hermesAgentAuthConfigured)) return { ready: false, reason: "Hermes Nous auth is not configured (run `hermes auth` on the worker machine)" };
   if (!flag(row.hermesAgentModelConfigured)) return { ready: false, reason: "Hermes Nous has no model/provider selected (run `hermes model` on the worker machine)" };
   return { ready: true, reason: null };
+}
+
+export async function getCodexCliReadiness(): Promise<CodexCliReadiness> {
+  const rows = await prisma
+    .$queryRawUnsafe<CapabilityRow[]>(`SELECT codexAvailable FROM LocalWorkerHeartbeat ORDER BY lastHeartbeat DESC LIMIT 1`)
+    .catch(() => [] as CapabilityRow[]);
+  const row = rows[0];
+  if (!row) return { ready: false, reason: "no local worker has ever reported in" };
+  return flag(row.codexAvailable ?? null)
+    ? { ready: true, reason: null }
+    : { ready: false, reason: "Codex CLI is not available on the worker machine" };
 }
 
 /**

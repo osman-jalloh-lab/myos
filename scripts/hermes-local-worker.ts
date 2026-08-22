@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 // unlike ../src/lib/local-builder which is only ever imported dynamically.
 import { parseHermesChatOutput, sanitizeHermesOutput } from "../src/lib/hermes-nous-cli";
 import { councilProviderEntries, formatCouncilResponse, getCouncilProvider, runCouncilProvider, type CouncilChatMode } from "../src/lib/council-providers";
+import { BuilderBlockedResearchError, executeBuilderCoderWorkflow } from "../src/lib/builder-coder-workflow";
 import type { ProviderFamily } from "../src/lib/model-provider-registry";
 import { DEFAULT_LOCAL_PROJECTS_ROOT, resolveLocalProjectsRoot } from "../src/lib/local-projects-root";
 
@@ -53,7 +54,7 @@ const POLL_MS = Number(process.env.HERMES_LOCAL_WORKER_POLL_MS ?? 15_000);
 const HEARTBEAT_MS = Number(process.env.HERMES_LOCAL_WORKER_HEARTBEAT_MS ?? 15_000);
 const LEASE_MS = 5 * 60_000;
 const WORKER_ID = process.env.HERMES_LOCAL_WORKER_ID?.trim() || `local-worker:${os.hostname()}:${process.pid}`;
-const ALLOWED_ACTIONS = new Set(["prepare", "generate", "runQa", "rebuild", "build", "npmBuild", "startDev", "stopDev"]);
+const ALLOWED_ACTIONS = new Set(["prepare", "generate", "runQa", "rebuild", "build", "npmBuild", "runCodex", "startDev", "stopDev"]);
 
 let currentTask: string | null = null;
 let lastError: string | null = null;
@@ -444,7 +445,7 @@ async function recoverStaleTasks(db: Client): Promise<number> {
   const stale = await db.execute({
     sql: `SELECT id, logs FROM AgentTask
           WHERE status = 'executing'
-            AND assigned_executor IN ('local_worker', 'hermes_agent', 'hermes_chat', 'council_chat')
+            AND assigned_executor IN ('local_worker', 'codex_cli', 'hermes_agent', 'hermes_chat', 'council_chat')
             AND (lease_expires_at < datetime('now')
               OR (lease_expires_at IS NULL AND updatedAt < datetime('now', '-5 minutes')))`,
     args: [],
@@ -653,7 +654,7 @@ async function claimTask(db: Client): Promise<QueueTask | null> {
     sql: `
       SELECT id, userId, title, description, status, project_id, logs, assigned_executor
       FROM AgentTask
-      WHERE assigned_executor IN ('local_worker', 'hermes_agent', 'hermes_chat', 'council_chat') AND status = 'queued'
+      WHERE assigned_executor IN ('local_worker', 'codex_cli', 'hermes_agent', 'hermes_chat', 'council_chat') AND status = 'queued'
       ORDER BY createdAt ASC
       LIMIT 1
     `,
@@ -882,16 +883,11 @@ async function listReportableFiles(root: string, folder = root): Promise<string[
   return files.sort();
 }
 
-async function runNpm(folder: string, args: string[], timeout: number): Promise<string> {
-  const command = ["npm", ...args].join(" ");
-  const result = await execFileAsync(process.env.ComSpec ?? "C:\\Windows\\System32\\cmd.exe", ["/d", "/s", "/c", command], {
-    cwd: folder,
-    windowsHide: true,
-    timeout,
-    maxBuffer: 2_000_000,
-    env: hermesAgentProcessEnv(),
-  });
-  return safeHermesOutput(`${result.stdout}${result.stderr}`.trim());
+async function runBuilderDockerCommand(folder: string, projectId: string, command: string[], timeout: number): Promise<string> {
+  const builder = await import("../src/lib/local-builder");
+  const result = await builder.runBuilderProjectDockerCommand(folder, projectId, command, timeout);
+  if (!result.ok) throw new Error(safeHermesOutput(result.output));
+  return safeHermesOutput(result.output);
 }
 
 async function verifyParawiLocalAppContract(folder: string): Promise<void> {
@@ -1008,23 +1004,30 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
 
   await updateTask(db, task, { log: "Hermes Agent finished editing; verifying the app contract and generated files." });
   if (packet.requiresNextContract) await verifyParawiLocalAppContract(folder);
+  const packagePath = path.join(folder, "package.json");
+  const manifestError = existsSync(packagePath)
+    ? builder.validateBuilderPackageManifest(await readFile(packagePath, "utf8"))
+    : null;
+  const workspaceError = manifestError ? null : await builder.validateBuilderWorkspaceForHostExecution(folder);
+  if (manifestError || workspaceError) throw new Error(`Refusing Builder Docker execution: ${manifestError || workspaceError}`);
   const filesCreated = await listReportableFiles(folder);
   await updateTask(db, task, { files: filesCreated, log: `Files created or updated: ${filesCreated.length}.` });
 
-  const packagePath = path.join(folder, "package.json");
   let buildOutput = "No package.json found; npm build skipped.";
   if (existsSync(packagePath)) {
     await updateTask(db, task, { log: "Dependencies install started." });
     await traceEvent(db, task, { phase: "installing_dependencies", source: "local_worker", message: "Dependency install started.", details: { commandCategory: "package_install" } });
     await throwIfCancellationRequested(db, task);
-    const installOutput = existsSync(path.join(folder, "node_modules")) ? "Dependencies already present." : await runNpm(folder, ["install"], 10 * 60_000);
+    const installOutput = await runBuilderDockerCommand(folder, task.projectId!, ["npm", "install", "--ignore-scripts", "--registry=https://registry.npmjs.org/"], 10 * 60_000);
     await updateTask(db, task, { log: "Dependencies installed successfully." });
-    await updateTask(db, task, { log: "npm run build started." });
+    await updateTask(db, task, { log: "Controlled Next.js build started." });
     await traceEvent(db, task, { phase: "building", source: "local_worker", message: "Build started.", details: { commandCategory: "package_build" } });
     await throwIfCancellationRequested(db, task);
-    const npmBuildOutput = await runNpm(folder, ["run", "build"], 10 * 60_000);
-    await updateTask(db, task, { log: "npm run build passed." });
-    buildOutput = `${installOutput}\n${npmBuildOutput}`.trim();
+    const npmBuildOutput = await runBuilderDockerCommand(folder, task.projectId!, ["npm", "run", "build"], 10 * 60_000);
+    await updateTask(db, task, { log: "Controlled Next.js build passed." });
+    const validationOutput = (await builder.runApplicableBuilderValidation(folder, task.projectId!, await readFile(packagePath, "utf8")))
+      .map((result) => result.output).join("\n");
+    buildOutput = `${installOutput}\n${npmBuildOutput}\n${validationOutput}`.trim();
   }
 
   await db.execute({
@@ -1040,7 +1043,7 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
   await traceEvent(db, task, { phase: "starting_preview", source: "local_worker", message: "Preview startup started." });
   const qa = await builder.startPreviewAndRunBrowserQa(task.userId, task.projectId);
   await traceEvent(db, task, { phase: "browser_qa", source: "qa", message: "Browser QA completed.", details: { qaStatus: qa.qaStatus, localDevUrl: qa.localDevUrl ?? "unavailable" } });
-  const passed = qa.qaStatus === "qa_passed";
+  const passed = qa.qaStatus === "qa_passed" && qa.previewStatus === "online";
   await updateTask(db, task, { log: `Browser QA ${passed ? "passed" : "needs review"}; preview ${qa.localDevUrl ? "started" : "unavailable"}.` });
   const summary = [
     `Hermes Agent completed ${packet.projectName}.`,
@@ -1054,7 +1057,7 @@ async function executeHermesAgentTask(db: Client, task: QueueTask, capabilities:
     `QA: ${passed ? "passed" : "review pending"}`,
     `Preview: ${qa.localDevUrl ?? "unavailable"}`,
     !passed ? "The app was built successfully. It still needs review for accessibility, responsive layout, and polish before marking complete." : null,
-    `Local preview: cd "${folder}" then run npm run dev`,
+    `Local preview: Builder Docker container at ${qa.localDevUrl ?? "unavailable"}`,
     agentOutput ? `Agent output:\n${agentOutput.slice(-4000)}` : null,
     `Build output:\n${buildOutput.slice(-3000)}`,
   ].filter(Boolean).join("\n");
@@ -1193,6 +1196,86 @@ async function executeCouncilChatTask(db: Client, task: QueueTask): Promise<void
   });
 }
 
+async function executeCodexWorkflowTask(db: Client, task: QueueTask, options: { allowHermesFallback?: boolean } = {}): Promise<void> {
+  const { action, message } = parseTaskPayload(task);
+  if (!task.projectId) throw new Error(`${action} requires a project id.`);
+  const capabilities = await getCapabilities();
+  const builder = await import("../src/lib/local-builder");
+
+  // The first Codex pass must receive the persisted research brief, not a
+  // template generated under a Codex label. prepareLocalBuildProject reuses
+  // the existing id/folder when this task already has a project id.
+  if (action === "generate") {
+    await traceEvent(db, task, { phase: "preparing_workspace", source: "local_worker", message: "Preparing persistent workspace and Builder research brief for Codex." });
+    const prepared = await builder.prepareLocalBuildProject(task.userId, message, task.projectId);
+    if (!prepared || prepared.id !== task.projectId) throw new Error("Initial Codex build could not prepare its existing project workspace.");
+  }
+
+  const result = await executeBuilderCoderWorkflow({
+    projectId: task.projectId,
+    request: message || "Continue this Builder project and complete the requested work.",
+    availableCoders: {
+      codex_cli: capabilities.codexAvailable,
+      hermes_agent: options.allowHermesFallback !== false && capabilities.hermesAgentAvailable && capabilities.hermesAgentAuthConfigured && capabilities.hermesAgentModelConfigured,
+    },
+    availableResearchers: {
+      deepseek: Boolean(getCouncilProvider("deepseek")),
+      claude: Boolean(getCouncilProvider("anthropic")),
+      openai: Boolean(getCouncilProvider("openai")),
+    },
+    runCoder: async ({ executor, request, researchFindings }) => {
+      if (executor === "hermes_agent") {
+        const hermesDescription = researchFindings
+          ? `${request}
+
+Focused public research findings:
+${researchFindings}
+
+Apply these findings to the same project.`
+          : request;
+        await executeHermesAgentTask(db, { ...task, description: hermesDescription, assignedExecutor: "hermes_agent" }, capabilities);
+        const preview = await builder.startPreviewAndRunBrowserQa(task.userId, task.projectId!);
+        if (preview.status === "failed" || preview.buildError || preview.qaStatus !== "qa_passed" || preview.previewStatus !== "online") {
+          throw new Error(preview.buildError || `Hermes fallback preview or browser QA failed (preview=${preview.previewStatus ?? "unknown"}, qa=${preview.qaStatus ?? "unknown"}).`);
+        }
+        return { status: "completed", value: preview };
+      }
+      try {
+        const prompt = researchFindings ? `${request}\n\nFocused public research findings:\n${researchFindings}\n\nApply these findings to the same project.` : request;
+        const project = await builder.runLocalCodexExecutor(task.userId, task.projectId!, prompt);
+        if (/failed/i.test(project.status)) throw new Error(project.buildError || "Codex CLI build failed.");
+        const preview = await builder.startPreviewAndRunBrowserQa(task.userId, task.projectId!);
+        if (preview.status === "failed" || preview.buildError || preview.qaStatus !== "qa_passed" || preview.previewStatus !== "online") {
+          throw new Error(preview.buildError || `Codex CLI preview or browser QA failed (preview=${preview.previewStatus ?? "unknown"}, qa=${preview.qaStatus ?? "unknown"}).`);
+        }
+        return { status: "completed", value: preview };
+      } catch (error) {
+        if (error instanceof BuilderBlockedResearchError) return { status: "blocked", question: error.question };
+        throw error;
+      }
+    },
+    runResearch: async ({ executor, question }) => {
+      const family = executor === "claude" ? "anthropic" : executor;
+      const provider = getCouncilProvider(family);
+      if (!provider) throw new Error(`Council provider ${executor} is unavailable.`);
+      const response = await runCouncilProvider(provider, `PUBLIC Builder research only. Answer this focused implementation question with concise, actionable findings: ${question}`);
+      if (response.status !== "answered" || !response.text.trim()) throw new Error(`${provider.provider} could not answer the Builder research request.`);
+      await traceEvent(db, task, { phase: "planning", source: "local_worker", message: `Council research completed through ${executor}.`, details: { provider: executor, question } });
+      return response.text.trim();
+    },
+    onEvent: async (event) => {
+      await traceEvent(db, task, {
+        phase: event.type === "research_requested" || event.type === "research_completed" ? "planning" : event.type === "coder_completed" ? "completed" : "building",
+        source: event.executor === "codex_cli" ? "codex" : event.executor === "hermes_agent" ? "hermes_nous" : "local_worker",
+        severity: event.type === "coder_failed" ? "warning" : "info",
+        message: `Builder workflow: ${event.type}${event.error ? `: ${event.error}` : ""}`,
+        details: event.question ? { question: event.question } : undefined,
+      });
+    },
+  });
+  await updateTask(db, task, { status: "completed", result: `Builder workflow completed with ${result.coder}${result.fallbackUsed ? " (fallback)" : ""}.`, error: null, log: `Builder workflow completed with ${result.coder}.` });
+}
+
 async function executeTask(db: Client, task: QueueTask): Promise<void> {
   await traceEvent(db, task, { phase: "initializing", source: "local_worker", message: "Worker initialized execution." });
   await throwIfCancellationRequested(db, task);
@@ -1230,7 +1313,7 @@ async function executeTask(db: Client, task: QueueTask): Promise<void> {
       const fallbackTask = { ...task, assignedExecutor: "codex_cli" };
       await updateTask(db, task, { log: `Hermes Nous failed: ${hermesReason}. Automatically fell back to Codex.` }).catch(() => undefined);
       try {
-        await executeLocalWorkerTask(db, fallbackTask);
+        await executeCodexWorkflowTask(db, fallbackTask, { allowHermesFallback: false });
         if (task.projectId) {
           await db.execute({
             sql: `UPDATE Project SET assignedAgent = 'codex_cli', updatedAt = datetime('now') WHERE id = ? AND userId = ?`,
@@ -1254,12 +1337,20 @@ async function executeTask(db: Client, task: QueueTask): Promise<void> {
       }
     }
   }
+  if (task.assignedExecutor === "codex_cli") {
+    await executeCodexWorkflowTask(db, task);
+    return;
+  }
   await executeLocalWorkerTask(db, task);
 }
 async function executeLocalWorkerTask(db: Client, task: QueueTask): Promise<void> {
   const { action, message } = parseTaskPayload(task);
   if (!ALLOWED_ACTIONS.has(action)) {
     throw new Error(`Unsupported local worker action: ${action}`);
+  }
+  if (action === "runCodex") {
+    await executeCodexWorkflowTask(db, { ...task, assignedExecutor: "codex_cli" });
+    return;
   }
 
   const builder = await import("../src/lib/local-builder");
@@ -1403,7 +1494,12 @@ async function runLoop(): Promise<void> {
         ]).catch((error) => { lastError = safeError(error); });
       }, HEARTBEAT_MS);
       try {
-        await heartbeat(db, capabilities, apiBaseUrl);
+        // The worker API can be unavailable while the durable database queue and
+        // local coder are healthy. Do not fail a claimed build solely because
+        // the browser-facing health endpoint is offline.
+        await heartbeat(db, capabilities, apiBaseUrl).catch((error) => {
+          lastError = safeError(error);
+        });
         await executeTask(db, task);
         lastError = null;
       } catch (error) {

@@ -1,6 +1,6 @@
 import { ensureRegistryInitialized, listTools } from "./tool-registry";
 import type { ExecutionRisk } from "./types";
-import { getHermesAgentReadiness, getLocalWorkerLiveness, type HermesAgentReadiness, type WorkerLiveness } from "@/lib/worker-watch";
+import { getCodexCliReadiness, getHermesAgentReadiness, getLocalWorkerLiveness, type CodexCliReadiness, type HermesAgentReadiness, type WorkerLiveness } from "@/lib/worker-watch";
 
 export type CapabilityTool = {
   name: string;
@@ -21,9 +21,10 @@ export type CapabilitySnapshot = {
   };
   worker: WorkerLiveness;
   hermesAgent: HermesAgentReadiness;
+  codexCli: CodexCliReadiness;
   buildExecution: {
     available: boolean;
-    executor: "hermes_agent" | "local_worker" | null;
+    executor: "codex_cli" | "hermes_agent" | "local_worker" | null;
     reason: string;
   };
 };
@@ -37,7 +38,7 @@ export type CapabilityAnswer = {
   workerStatus: CapabilitySnapshot["worker"]["status"];
 };
 
-function buildExecutionStatus(worker: WorkerLiveness, hermesAgent: HermesAgentReadiness): CapabilitySnapshot["buildExecution"] {
+function buildExecutionStatus(worker: WorkerLiveness, codexCli: CodexCliReadiness, hermesAgent: HermesAgentReadiness): CapabilitySnapshot["buildExecution"] {
   if (worker.status !== "online") {
     return {
       available: false,
@@ -48,27 +49,30 @@ function buildExecutionStatus(worker: WorkerLiveness, hermesAgent: HermesAgentRe
     };
   }
 
-  if (hermesAgent.ready) {
+  if (codexCli.ready) {
     return {
       available: true,
-      executor: "hermes_agent",
-      reason: "Local worker is online and Hermes Nous is ready.",
+      executor: "codex_cli",
+      reason: "Local worker is online and Codex CLI is available; Hermes Agent is the fallback.",
     };
   }
+
+  if (hermesAgent.ready) return { available: true, executor: "hermes_agent", reason: "Local worker is online; Codex CLI is unavailable and Hermes Agent is ready as fallback." };
 
   return {
     available: true,
     executor: "local_worker",
-    reason: `Local worker is online; Hermes Nous fallback reason: ${hermesAgent.reason ?? "not ready"}.`,
+      reason: `Local worker is online; Codex CLI unavailable and Hermes Agent fallback reason: ${hermesAgent.reason ?? "not ready"}.`,
   };
 }
 
 export async function getCapabilitySnapshot(): Promise<CapabilitySnapshot> {
-  const [worker, hermesAgent] = await Promise.all([
+  const [worker, codexCli, hermesAgent] = await Promise.all([
     getLocalWorkerLiveness(),
+    getCodexCliReadiness(),
     getHermesAgentReadiness(),
     ensureRegistryInitialized(),
-  ]).then(([workerResult, hermesAgentResult]) => [workerResult, hermesAgentResult] as const);
+  ]).then(([workerResult, codexResult, hermesAgentResult]) => [workerResult, codexResult, hermesAgentResult] as const);
 
   const tools = listTools()
     .map((tool) => ({
@@ -90,8 +94,9 @@ export async function getCapabilitySnapshot(): Promise<CapabilitySnapshot> {
       approvalRequired: tools.filter((tool) => tool.requiresApproval).length,
     },
     worker,
+    codexCli,
     hermesAgent,
-    buildExecution: buildExecutionStatus(worker, hermesAgent),
+    buildExecution: buildExecutionStatus(worker, codexCli, hermesAgent),
   };
 }
 
@@ -118,7 +123,7 @@ export function answerCapabilityQuestion(message: string, snapshot: CapabilitySn
 
   if (wantsBuild && hasTool(snapshot, /internal\.code\.build|build feature|deployment status|project/i)) {
     if (snapshot.buildExecution.available) {
-      const executor = snapshot.buildExecution.executor === "hermes_agent" ? "Hermes Nous through the local worker" : "the local worker";
+      const executor = snapshot.buildExecution.executor === "codex_cli" ? "Codex CLI through the local worker" : snapshot.buildExecution.executor === "hermes_agent" ? "Hermes Agent through the local worker" : "the local worker";
       return {
         shape: "ready_now",
         answer: `Yes. I can route this through ${executor}. I will still respect approval gates for external writes and production deployment.`,

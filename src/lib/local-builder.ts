@@ -1,9 +1,11 @@
 import { createClient } from "@libsql/client";
 import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rm, stat, unlink, writeFile } from "node:fs/promises";
 import net from "node:net";
+import { builtinModules } from "node:module";
 import path from "node:path";
 import crypto from "node:crypto";
+import { BuilderBlockedResearchError, parseBuilderBlockedQuestion } from "@/lib/builder-coder-workflow";
 import { normalizeBuilderLifecycle, withCanonicalBuilderStage, type CanonicalBuilderStage, type CanonicalBuilderStageResponse } from "@/lib/builder-lifecycle";
 import { createExecutionQueueTask, updateExecutionQueueTask } from "@/lib/execution-queue";
 import { loadAgentKnowledgeContext, type KnowledgeCard } from "@/lib/knowledge-cards";
@@ -79,7 +81,118 @@ const LOCAL_BUILDER_AGENT = "hermes-local-builder";
 const ATHENA_RESEARCH_AGENT = "athena";
 const CODEX_CLI_EXECUTOR = "codex_cli";
 const DEFAULT_CODEX_CLI_MODEL = "gpt-5.4";
-const devServers = new Map<string, { child: ReturnType<typeof spawn>; url: string; pid: number | null }>();
+const BUILDER_NODE_IMAGE = "node:22-bookworm-slim";
+const BUILDER_DOCKER_REGISTRY = "https://registry.npmjs.org/";
+const BUILDER_DOCKER_MEMORY = "2g";
+const BUILDER_DOCKER_CPUS = "2";
+const BUILDER_DOCKER_PIDS = "256";
+
+export class BuilderRuntimeUnavailableError extends Error {
+  constructor(message: string) {
+    super(`builder_runtime_unavailable: ${message}`);
+    this.name = "BuilderRuntimeUnavailableError";
+  }
+}
+
+export type BuilderDockerRunSpec = { executable: string; args: string[]; displayCommand: string };
+
+function builderContainerToken(value: string): string {
+  const token = value.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "");
+  return (token || "project").slice(0, 48);
+}
+
+async function fileExists(file: string): Promise<boolean> {
+  try {
+    return (await stat(file)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+export async function discoverBuilderDockerExecutable(candidatesOverride?: string[]): Promise<string> {
+  const candidates = candidatesOverride ?? [
+    process.env.BUILDER_DOCKER_PATH,
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Programs", "DockerDesktop", "resources", "bin", "docker.exe") : undefined,
+    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, "Docker", "Docker", "resources", "bin", "docker.exe") : undefined,
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) return candidate;
+  }
+  throw new BuilderRuntimeUnavailableError("Docker Desktop CLI was not found at an approved executable path.");
+}
+
+export function createBuilderDockerRunSpec(params: {
+  dockerExecutable: string;
+  folder: string;
+  projectId: string;
+  runId: string;
+  command: string[];
+  detached?: boolean;
+  hostPort?: number;
+}): BuilderDockerRunSpec {
+  const name = `builder-${params.detached ? "preview" : "job"}-${builderContainerToken(params.projectId)}-${builderContainerToken(params.runId)}`;
+  const args = [
+    "run",
+    ...(params.detached ? ["-d"] : ["--rm"]),
+    "--name", name,
+    "--label", "hermes.builder.owner=local-builder",
+    "--label", `hermes.builder.project-id=${params.projectId}`,
+    "--label", `hermes.builder.kind=${params.detached ? "preview" : "job"}`,
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges",
+    "--user", "node",
+    "--memory", BUILDER_DOCKER_MEMORY,
+    "--cpus", BUILDER_DOCKER_CPUS,
+    "--pids-limit", BUILDER_DOCKER_PIDS,
+    "--mount", `type=bind,src=${params.folder},dst=/workspace`,
+    "--workdir", "/workspace",
+    ...(params.hostPort ? ["-p", `127.0.0.1:${params.hostPort}:3000`] : []),
+    BUILDER_NODE_IMAGE,
+    ...params.command,
+  ];
+  return { executable: params.dockerExecutable, args, displayCommand: commandForLog(params.dockerExecutable, args) };
+}
+
+function dockerProcessEnv(dockerExecutable: string): NodeJS.ProcessEnv {
+  const env = childProcessEnv();
+  const dockerBin = path.dirname(dockerExecutable);
+  const existingPath = env.PATH ?? process.env.PATH ?? "";
+  env.PATH = `${dockerBin}${path.delimiter}${existingPath}`;
+  return env;
+}
+
+async function runBuilderDockerCommand(folder: string, projectId: string, runId: string, command: string[], options: { timeoutMs?: number; detached?: boolean; hostPort?: number } = {}): Promise<CommandResult> {
+  const root = await realpath(path.resolve(await getLocalProjectsRoot())).catch(() => "");
+  const resolvedFolder = await realpath(path.resolve(folder)).catch(() => "");
+  if (!root || !resolvedFolder) {
+    throw new BuilderRuntimeUnavailableError("Approved generated project directory could not be canonicalized.");
+  }
+  const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (resolvedFolder === root || !resolvedFolder.startsWith(rootWithSep) || !(await exists(resolvedFolder))) {
+    throw new BuilderRuntimeUnavailableError("Refusing Docker execution outside an approved generated project directory.");
+  }
+  const dockerExecutable = await discoverBuilderDockerExecutable();
+  const env = dockerProcessEnv(dockerExecutable);
+  const probe = await runDetailed(dockerExecutable, ["version", "--format", "{{.Server.Version}}"], folder, { timeoutMs: 15_000, env, displayCommand: "docker version --format <server-version>" });
+  if (!probe.ok || !probe.stdout.trim()) throw new BuilderRuntimeUnavailableError("Docker Engine is unavailable.");
+  const spec = createBuilderDockerRunSpec({ dockerExecutable, folder: resolvedFolder, projectId, runId, command, detached: options.detached, hostPort: options.hostPort });
+  return runDetailed(spec.executable, spec.args, resolvedFolder, { timeoutMs: options.timeoutMs, env, displayCommand: spec.displayCommand });
+}
+
+export async function runBuilderProjectDockerCommand(folder: string, projectId: string, command: string[], timeoutMs = 10 * 60_000): Promise<CommandResult> {
+  return runBuilderDockerCommand(folder, projectId, crypto.randomUUID(), command, { timeoutMs });
+}
+
+async function removeBuilderPreviewContainers(folder: string, projectId: string): Promise<void> {
+  const dockerExecutable = await discoverBuilderDockerExecutable();
+  const env = dockerProcessEnv(dockerExecutable);
+  const list = await runDetailed(dockerExecutable, ["ps", "-aq", "--filter", "label=hermes.builder.owner=local-builder", "--filter", `label=hermes.builder.project-id=${projectId}`, "--filter", "label=hermes.builder.kind=preview"], folder, { timeoutMs: 30_000, env, displayCommand: "docker ps -aq --filter builder-project-preview" });
+  if (!list.ok) throw new BuilderRuntimeUnavailableError("Docker Engine is unavailable while locating the prior Builder preview.");
+  const ids = list.stdout.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+  if (!ids.length) return;
+  const stopped = await runDetailed(dockerExecutable, ["rm", "-f", ...ids], folder, { timeoutMs: 30_000, env, displayCommand: "docker rm -f <prior-builder-preview>" });
+  if (!stopped.ok) throw new Error(`Unable to remove the prior Builder preview. ${stopped.output}`);
+}
 
 export function isServerlessRuntime(): boolean {
   return Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT);
@@ -164,13 +277,13 @@ function classifyAppType(message: string): Pick<BuildRequestAnalysis, "appType" 
 export function parseLocalBuildRequest(message: string): BuildRequestAnalysis | null {
   const trimmed = message.trim();
   if (!/\b(build|create|make|start|scaffold|generate)\b/i.test(trimmed)) return null;
-  if (!/\b(website|site|app|web app|landing page|project|marketplace|store|shop|archive|product|experience)\b/i.test(trimmed)) return null;
+  if (!/\b(website|site|app|web app|landing page|dashboard|project|marketplace|store|shop|archive|product|experience)\b/i.test(trimmed)) return null;
 
   const explicitName =
     trimmed.match(/\b(?:called|named)\s+["'“”‘’]?([^.!?\r\n]{2,80}?)["'“”‘’]?(?=\s+(?:for|with|that|using|in)\b|[.!?]|$)/i)?.[1] ??
     trimmed.match(/\b(?:website|site|app|web app|landing page|project|marketplace|store|shop)\s+["']?([a-z0-9][a-z0-9 _-]{1,70})["']?/i)?.[1] ??
     trimmed.match(/\bbuild(?:\s+me)?\s+(?:a|an)?\s*["']?([a-z0-9][a-z0-9 _-]{1,70}?(?:website|site|app|web app|landing page|project|marketplace|store|shop|archive|product|experience))["']?(?:[.!?]|$)/i)?.[1] ??
-    trimmed.match(/\b(?:build|create|make|generate)\s+(?:a|an|the)?\s*["']?([a-z0-9][a-z0-9 _-]{1,70})["']?(?:[.!?]|$)/i)?.[1];
+    trimmed.match(/\b(?:build|create|make|generate)(?:\s+me)?\s+(?:a|an|the)?\s*["']?([a-z0-9][a-z0-9 _-]{1,70})["']?(?:[.!?]|$)/i)?.[1];
 
   if (!explicitName) return null;
 
@@ -597,7 +710,7 @@ async function appFiles(projectName: string, message: string, researchBrief?: st
         typescript: "^5.6.0",
       },
     }, null, 2)}\n`,
-    "README.md": `# ${safeName}\n\nGenerated by Hermes Local Builder using an internal Athena research brief and Builder knowledge cards.\n\n## Athena Research Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Commands\n\n\`\`\`bash\nnpm install\nnpm run build\nnpm run dev\n\`\`\`\n`,
+    "README.md": `# ${safeName}\n\nGenerated by Hermes Local Builder using an internal Athena research brief and Builder knowledge cards.\n\n## Athena Research Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Runtime\n\nUse the Builder controls to install, build, validate, and preview this project. Generated-project commands run only in the Builder Docker runtime.\n`,
     "BUILDER_PLAN.md": `# ${safeName} Builder Plan\n\n## Product Brief\n\n${briefText}\n\n## Builder Knowledge Cards\n\n${knowledgeText}\n\n## Design Brief\n\nOriginal visual direction only. Do not copy brand layouts, product photography, or copyrighted assets.\n\n## Feature Plan\n\nInclude real sections, clickable controls, stateful interactions, empty states, and responsive behavior appropriate to the prompt.\n\n## Build Plan\n\nGenerate a working Next.js app with visible product structure and local demo behavior before running install and build.\n\n## QA Checklist\n\n- npm run build passes\n- Main buttons work\n- Navigation works\n- Filters or core controls work\n- Saved/compare or equivalent state works when relevant\n- Mobile layout works\n- App feels like a real product\n- No copied assets\n`,
     "next.config.mjs": `const nextConfig = {};\n\nexport default nextConfig;\n`,
     "tsconfig.json": `${JSON.stringify({
@@ -730,11 +843,6 @@ async function runDetailed(
   });
 }
 
-async function run(command: string, args: string[], cwd: string, nodeEnv?: "development" | "production" | "test"): Promise<{ ok: boolean; output: string }> {
-  const result = await runDetailed(command, args, cwd, { nodeEnv });
-  return { ok: result.ok, output: result.output.slice(-8000) };
-}
-
 async function updateProjectBuildState(db: Db, projectId: string, status: string, log: string, error: string | null = null): Promise<void> {
   await db.execute({
     sql: `UPDATE Project SET status = ?, localBuildLog = ?, localBuildError = ?, updatedAt = datetime('now') WHERE id = ?`,
@@ -766,8 +874,9 @@ async function resolveProjectFolder(project: Record<string, unknown>): Promise<{
   if (!projectName || !localFolderPath) throw new Error("Project is missing its local folder path.");
 
   const root = await getLocalProjectsRoot();
-  const resolvedRoot = path.resolve(root);
-  const resolvedFolder = path.resolve(localFolderPath);
+  const resolvedRoot = await realpath(path.resolve(root)).catch(() => "");
+  const resolvedFolder = await realpath(path.resolve(localFolderPath)).catch(() => "");
+  if (!resolvedRoot || !resolvedFolder) throw new Error("Project folder could not be canonicalized.");
   const rootWithSep = resolvedRoot.endsWith(path.sep) ? resolvedRoot : `${resolvedRoot}${path.sep}`;
   if (resolvedFolder !== resolvedRoot && !resolvedFolder.startsWith(rootWithSep)) {
     throw new Error("Unsafe local project folder path rejected.");
@@ -792,16 +901,6 @@ async function nextAvailablePort(start = 3000): Promise<number> {
     if (await isPortAvailable(port)) return port;
   }
   throw new Error("No available localhost port found between 3000 and 3049.");
-}
-
-async function killProcessTree(pid: number): Promise<void> {
-  await new Promise<void>((resolve) => {
-    const child = process.platform === "win32"
-      ? spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { shell: false, stdio: "ignore" })
-      : spawn("kill", ["-TERM", String(pid)], { shell: false, stdio: "ignore" });
-    child.on("close", () => resolve());
-    child.on("error", () => resolve());
-  });
 }
 
 async function logLocalBuilderRun(db: Db, status: string, input: string, output: string): Promise<void> {
@@ -852,10 +951,18 @@ async function summarizeGeneratedPage(folder: string): Promise<string> {
   return summaries.filter(Boolean).join("\n\n") || "No generated app files found yet.";
 }
 
+async function readFirstProjectFile(folder: string, candidates: string[]): Promise<string> {
+  for (const candidate of candidates) {
+    const content = await readFile(path.join(folder, ...candidate.split("/")), "utf8").catch(() => "");
+    if (content.trim()) return content;
+  }
+  return "";
+}
+
 async function readGeneratedAppFiles(folder: string): Promise<{ page: string; css: string; plan: string }> {
   const [page, css, plan] = await Promise.all([
-    readFile(path.join(folder, "src", "app", "page.tsx"), "utf8").catch(() => ""),
-    readFile(path.join(folder, "src", "app", "globals.css"), "utf8").catch(() => ""),
+    readFirstProjectFile(folder, ["src/app/page.tsx", "app/page.tsx"]),
+    readFirstProjectFile(folder, ["src/app/globals.css", "app/globals.css"]),
     readFile(path.join(folder, "BUILDER_PLAN.md"), "utf8").catch(() => ""),
   ]);
   return { page, css, plan };
@@ -976,8 +1083,9 @@ function buildCodexImprovementPrompt(params: {
     "- Do not modify files outside this folder.",
     "- Do not read, create, edit, or print .env files, API keys, tokens, credentials, private keys, or secrets.",
     "- Do not deploy, push, commit, or change production behavior.",
-    "- Improve the existing Next.js app; do not replace it with a generic landing page.",
+    "- Improve the existing Next.js app; when this workspace has no app files yet, create the requested app from the supplied brief instead of using a template.",
     "- Preserve working build scripts and keep the app self-contained.",
+    "- If a missing PUBLIC fact genuinely blocks implementation, emit exactly one line: BUILDER_BLOCKED_RESEARCH: <focused question>. Do not use that marker for ordinary implementation choices.",
     "",
     "Original user request:",
     params.userRequest || "No original request recorded.",
@@ -997,7 +1105,7 @@ function buildCodexImprovementPrompt(params: {
     "Current app summary:",
     params.pageSummary,
     "",
-    "After editing, run npm run build if practical and fix any build errors. Leave a concise summary in your final response listing files changed and behavior added.",
+    "After editing, do not run node, npm, next, lint, typecheck, tests, builds, or preview commands on the host. The Builder Docker runtime performs controlled validation. Leave a concise summary in your final response listing files changed and behavior added.",
   ].join("\n");
 }
 
@@ -1114,12 +1222,16 @@ function hasAccessibleButtonLabels(page: string): { passed: boolean; detail: str
   };
 }
 
-function hasFormLabels(page: string): { passed: boolean; detail: string; skipped: boolean } {
-  const fields = [...page.matchAll(/<(input|select|textarea)\b([^>]*)>/gi)].filter((match) => !/\btype=["'](?:hidden|submit|button)["']/i.test(match[2] ?? ""));
-  if (!fields.length && !/<form\b/i.test(page)) return { passed: true, skipped: true, detail: "No forms or editable fields detected." };
-  const labels = [...page.matchAll(/<label\b[^>]*\bhtmlFor=["']([^"']+)["']/gi)].map((match) => match[1]);
+export function hasFormLabels(page: string): { passed: boolean; detail: string; skipped: boolean } {
+  const pageForTagParsing = page.replace(/=>/g, "__JSX_ARROW__");
+  const fields = [...pageForTagParsing.matchAll(/<(input|select|textarea)\b([^>]*)>/gi)].filter((match) => !/\btype=["'](?:hidden|submit|button)["']/i.test(match[2] ?? ""));
+  if (!fields.length && !/<form\b/i.test(pageForTagParsing)) return { passed: true, skipped: true, detail: "No forms or editable fields detected." };
+  const labels = [...pageForTagParsing.matchAll(/<label\b[^>]*\bhtmlFor=["']([^"']+)["']/gi)].map((match) => match[1]);
   const labelSet = new Set(labels);
-  const unlabeled = fields.filter((match) => {
+  const pageWithoutNestedLabels = pageForTagParsing.replace(/<label\b[^>]*>[\s\S]*?<\/label>/gi, "");
+  const fieldsOutsideLabels = [...pageWithoutNestedLabels.matchAll(/<(input|select|textarea)\b([^>]*)>/gi)]
+    .filter((match) => !/\btype=["'](?:hidden|submit|button)["']/i.test(match[2] ?? ""));
+  const unlabeled = fieldsOutsideLabels.filter((match) => {
     const attrs = match[2] ?? "";
     const id = attrs.match(/\bid=["']([^"']+)["']/i)?.[1];
     return !/\b(aria-label|aria-labelledby)=["'][^"']+["']/i.test(attrs) && (!id || !labelSet.has(id));
@@ -1131,6 +1243,23 @@ function hasFormLabels(page: string): { passed: boolean; detail: string; skipped
       ? `${fields.length} form field(s) have label, aria-label, or aria-labelledby coverage.`
       : `${unlabeled.length} form field(s) are missing labels.`,
   };
+}
+
+export function hasMeaningfulNavigation(page: string): boolean {
+  return /href=["'](?!#["'])[^"']+["']/.test(page)
+    || /id=["'][^"']+["']/.test(page)
+    || /router\.push|next\/link|<Link\b/.test(page)
+    || /<nav\b[\s\S]*?<button\b[^>]*\bonClick=/i.test(page);
+}
+
+export function hasNoDeadSectionHints(page: string, css: string): boolean {
+  const pageWithoutInputHints = page.replace(/\splaceholder=(?:["'][^"']*["']|\{[^}]*\})/gi, "");
+  const deadHints = [
+    /href=["']#["']/,
+    /onClick=\{\(\)\s*=>\s*\{\s*\}\}/,
+    /TODO|coming soon|placeholder|lorem ipsum/i,
+  ];
+  return !deadHints.some((pattern) => pattern.test(`${pageWithoutInputHints}\n${css}`));
 }
 
 function hasKeyboardSafeInteractions(page: string): { passed: boolean; detail: string } {
@@ -1213,19 +1342,42 @@ function hasReadableContrast(css: string): { passed: boolean; detail: string } {
   };
 }
 
+export function hasRecordedBuildSuccess(buildLog: string, projectStatus: string): boolean {
+  return /Building:\s*passed|Rebuild:\s*passed|Codex build:\s*passed/i.test(buildLog)
+    || ["Build Passed", "qa_pending", "qa_failed", "qa_passed", "completed"].includes(projectStatus);
+}
+
+async function hasCurrentProductionBuild(folder: string): Promise<boolean> {
+  const build = await stat(path.join(folder, ".next", "BUILD_ID")).catch(() => null);
+  if (!build?.isFile()) return false;
+  const pending = [folder];
+  while (pending.length) {
+    const current = pending.pop()!;
+    for (const entry of await readdir(current, { withFileTypes: true }).catch(() => [])) {
+      if (["node_modules", ".next", ".git"].includes(entry.name)) continue;
+      const absolute = path.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(absolute);
+      else if (entry.isFile() && /(?:package\.json|\.(?:js|jsx|ts|tsx|mjs|cjs|css|json))$/i.test(entry.name)) {
+        const source = await stat(absolute).catch(() => null);
+        if (source && source.mtimeMs > build.mtimeMs) return false;
+      }
+    }
+  }
+  return true;
+}
+
 async function evaluateLocalBuilderQa(project: Record<string, unknown>, folder: string): Promise<{ status: "qa_passed" | "qa_failed"; checklist: LocalBuilderQaItem[]; summary: string }> {
   const { page, css, plan } = await readGeneratedAppFiles(folder);
   const buildLog = rowString(project.localBuildLog);
   const projectStatus = rowString(project.status);
   const dependencyInstallExists = await exists(path.join(folder, "node_modules"));
-  const hasBuildPassed = /Building:\s*passed|Rebuild:\s*passed/i.test(buildLog)
-    || ["Build Passed", "qa_pending", "qa_failed", "qa_passed", "completed"].includes(projectStatus);
+  const hasBuildPassed = hasRecordedBuildSuccess(buildLog, projectStatus) && await hasCurrentProductionBuild(folder);
   const hasInstallPassed = /Installing:\s*passed/i.test(buildLog)
     || /Rebuild:\s*passed/i.test(buildLog)
     || dependencyInstallExists
     || hasBuildPassed;
   const hasHomepage = page.trim().length > 0 && /export\s+default\s+function|export\s+default\s+async\s+function/.test(page);
-  const hasNavigation = /href=["'](?!#["'])[^"']+["']/.test(page) || /id=["'][^"']+["']/.test(page) || /router\.push|next\/link|<Link\b/.test(page);
+  const hasNavigation = hasMeaningfulNavigation(page);
   const buttonMatches = page.match(/<button\b|role=["']button["']|<a\s+[^>]*href=/g) ?? [];
   const buttonHandlerMatches = page.match(/onClick=|href=["'](?!#["'])[^"']+["']/g) ?? [];
   const hasPrimaryButtons = buttonMatches.length > 0 && buttonHandlerMatches.length > 0;
@@ -1234,12 +1386,7 @@ async function evaluateLocalBuilderQa(project: Record<string, unknown>, folder: 
   const usesLocalStorage = /localStorage/.test(page);
   const localStorageSafe = !usesLocalStorage || /typeof\s+window|useEffect|try\s*\{/.test(page);
   const mobileReviewed = /@media\s*\(|grid-template-columns:\s*1fr|max-width:\s*\d+px|clamp\(/i.test(css);
-  const deadHints = [
-    /href=["']#["']/,
-    /onClick=\{\(\)\s*=>\s*\{\s*\}\}/,
-    /TODO|coming soon|placeholder|lorem ipsum/i,
-  ];
-  const noDeadSections = !deadHints.some((pattern) => pattern.test(`${page}\n${css}`));
+  const noDeadSections = hasNoDeadSectionHints(page, css);
   const semantic = hasSemanticStructure(page);
   const buttonLabels = hasAccessibleButtonLabels(page);
   const formLabels = hasFormLabels(page);
@@ -1250,7 +1397,7 @@ async function evaluateLocalBuilderQa(project: Record<string, unknown>, folder: 
   const checklist: LocalBuilderQaItem[] = [
     qaItem("npm_install_completed", "npm install completed", hasInstallPassed, hasInstallPassed ? "Install step completed successfully." : "Install success was not recorded in the build log."),
     qaItem("npm_build_passed", "npm run build passed", hasBuildPassed, hasBuildPassed ? "Production build completed successfully." : "Production build success was not recorded."),
-    qaItem("homepage_loads", "homepage loads", hasHomepage, hasHomepage ? "src/app/page.tsx exists and exports a page component." : "No valid homepage component was found."),
+    qaItem("homepage_loads", "homepage loads", hasHomepage, hasHomepage ? "An App Router page exists and exports a page component." : "No valid homepage component was found."),
     qaItem("navigation_works", "navigation works", hasNavigation, hasNavigation ? "Navigation anchors, ids, router usage, or Link usage were found." : "No meaningful navigation target was found."),
     qaItem("primary_buttons_clickable", "primary buttons are clickable", hasPrimaryButtons, hasPrimaryButtons ? `${buttonMatches.length} button/link control(s) with handler or href found.` : "Primary controls are missing or appear inert."),
     qaItem("semantic_html", "semantic HTML landmarks and headings", semantic.passed, semantic.detail),
@@ -1303,40 +1450,49 @@ async function upsertSkillTask(db: Db, projectId: string, userId: string, title:
   });
 }
 
-export async function prepareLocalBuildProject(userId: string, message: string): Promise<LocalBuildProject | null> {
+export async function prepareLocalBuildProject(userId: string, message: string, expectedProjectId?: string): Promise<LocalBuildProject | null> {
   const parsed = parseLocalBuildRequest(message);
   if (!parsed) return null;
   if (parsed.questions.length) {
     throw new Error(`Clarification required before building ${parsed.projectName}: ${parsed.questions.join(" ")}`);
   }
 
-  const root = await getLocalProjectsRoot();
+  const root = path.resolve(await getLocalProjectsRoot());
   if (!(await exists(root))) {
     throw new Error(`Local builder root folder is missing: ${root}`);
   }
 
-  const localFolderPath = path.resolve(root, parsed.folderName);
+  const db = getDb();
+  await ensureLocalBuilderColumns(db);
+  let localFolderPath = path.resolve(root, parsed.folderName);
+  let existingRows: Record<string, unknown>[];
+  if (expectedProjectId) {
+    const expectedProject = await findLocalBuildProject(db, userId, expectedProjectId);
+    const persistedFolder = rowString(expectedProject.localFolderPath);
+    if (!persistedFolder) throw new Error("Queued Builder project has no persistent local folder.");
+    localFolderPath = path.resolve(persistedFolder);
+    existingRows = [expectedProject];
+  } else {
+    const existing = await db.execute({
+      sql: `SELECT * FROM Project WHERE userId = ? AND (lower(projectName) = lower(?) OR localFolderPath = ?) LIMIT 1`,
+      args: [userId, parsed.projectName, localFolderPath],
+    });
+    existingRows = existing.rows as unknown as Record<string, unknown>[];
+  }
+
   const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  if (localFolderPath !== root && !localFolderPath.startsWith(rootWithSep)) {
+  if (localFolderPath === root || !localFolderPath.startsWith(rootWithSep)) {
     throw new Error("Unsafe local project folder path rejected.");
   }
   await mkdir(localFolderPath, { recursive: true });
-
-  const db = getDb();
-  await ensureLocalBuilderColumns(db);
   const researchBrief = await createAthenaResearchBrief(parsed.projectName, message);
 
   const now = new Date().toISOString();
-  const existing = await db.execute({
-    sql: `SELECT * FROM Project WHERE userId = ? AND (lower(projectName) = lower(?) OR localFolderPath = ?) LIMIT 1`,
-    args: [userId, parsed.projectName, localFolderPath],
-  });
-
   let projectId: string;
   let createdAt = now;
 
-  if (existing.rows.length) {
-    const row = existing.rows[0] as Record<string, unknown>;
+  if (existingRows.length) {
+    const row = existingRows[0];
     projectId = rowString(row.id);
     createdAt = rowString(row.createdAt) || now;
     await db.execute({
@@ -1445,7 +1601,7 @@ export async function queueLocalBuilderWorkerTask(
   action: string,
   message: string,
   projectId?: string,
-  assignedExecutor: "local_worker" | "hermes_agent" = "local_worker"
+  assignedExecutor: "local_worker" | "hermes_agent" | "codex_cli" = "local_worker"
 ): Promise<LocalBuildProject | null> {
   const db = getDb();
   await ensureLocalBuilderColumns(db);
@@ -1603,6 +1759,7 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
 
   try {
     await updateProjectBuildState(db, projectId, "Generating", log);
+    await rm(resolvedFolder, { recursive: true, force: true });
     await mkdir(resolvedFolder, { recursive: true });
     for (const [relativePath, content] of Object.entries(files)) {
       const absolutePath = path.resolve(resolvedFolder, ...relativePath.split("/"));
@@ -1614,16 +1771,22 @@ export async function generateLocalStarterApp(userId: string, projectId: string,
       await writeFile(absolutePath, content, "utf8");
     }
     log += `Generating: wrote ${changedFiles.join(", ")}\n`;
+    const generatedManifest = await readFile(path.join(resolvedFolder, "package.json"), "utf8").catch(() => "");
+    const generatedManifestError = validateBuilderPackageManifest(generatedManifest);
+    const generatedWorkspaceError = generatedManifestError ? null : await validateBuilderWorkspaceForHostExecution(resolvedFolder);
+    if (generatedManifestError || generatedWorkspaceError) throw new Error(`Refusing Builder Docker execution: ${generatedManifestError || generatedWorkspaceError}`);
 
     await updateProjectBuildState(db, projectId, "Installing", log);
-    const install = await run("npm", ["install"], resolvedFolder);
+    const install = await runBuilderDockerCommand(resolvedFolder, projectId, crypto.randomUUID(), ["npm", "install", "--ignore-scripts", `--registry=${BUILDER_DOCKER_REGISTRY}`], { timeoutMs: 10 * 60_000 });
     log += `\nInstalling: ${install.ok ? "passed" : "failed"}\n${install.output}\n`;
     if (!install.ok) throw new Error(`npm install failed\n${install.output}`);
 
     await updateProjectBuildState(db, projectId, "Building", log);
-    const build = await run("npm", ["run", "build"], resolvedFolder, "production");
+    const build = await runBuilderDockerCommand(resolvedFolder, projectId, crypto.randomUUID(), ["npm", "run", "build"], { timeoutMs: 10 * 60_000 });
     log += `\nBuilding: ${build.ok ? "passed" : "failed"}\n${build.output}\n`;
     if (!build.ok) throw new Error(`npm run build failed\n${build.output}`);
+    const validations = await runApplicableBuilderValidation(resolvedFolder, projectId, generatedManifest);
+    log += validations.map((result) => `Validation: ${result.command}\n${result.output}`).join("\n");
 
     log += "\nQA: build passed; checklist pending.\n";
     await updateProjectBuildState(db, projectId, "qa_pending", log);
@@ -1746,6 +1909,139 @@ export async function runLocalBuilderQa(userId: string, projectId: string): Prom
   };
 }
 
+const BUILDER_ALLOWED_PACKAGES = new Set([
+  "next", "react", "react-dom", "typescript", "eslint", "eslint-config-next",
+  "tailwindcss", "@tailwindcss/postcss", "postcss", "@types/node", "@types/react", "@types/react-dom", "vitest",
+]);
+
+export function validateBuilderPackageManifest(raw: string): string | null {
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(raw);
+  } catch {
+    return "Generated package.json is not valid JSON.";
+  }
+  if (!manifest || typeof manifest !== "object") return "Generated package.json must contain an object.";
+  const record = manifest as Record<string, unknown>;
+  const allowedTopLevel = new Set(["name", "version", "private", "scripts", "dependencies", "devDependencies"]);
+  const unsupportedField = Object.keys(record).find((name) => !allowedTopLevel.has(name));
+  if (unsupportedField) return `Generated package.json field is not allowed for host execution: ${unsupportedField}.`;
+  const scripts = record.scripts;
+  if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) return "Generated package.json must define controlled scripts.";
+  const values = scripts as Record<string, unknown>;
+  for (const name of ["preinstall", "install", "postinstall", "prepare", "prepublish", "prepublishOnly"]) {
+    if (typeof values[name] === "string" && values[name].trim()) return `Generated package.json lifecycle script is not allowed: ${name}.`;
+  }
+  if (values.build !== "next build") return "Generated package.json build script must be exactly `next build`.";
+  if (values.dev !== undefined && values.dev !== "next dev") return "Generated package.json dev script must be exactly `next dev`.";
+  if (values.start !== undefined && values.start !== "next start") return "Generated package.json start script must be exactly `next start`.";
+  if (values.lint !== undefined && (typeof values.lint !== "string" || !["eslint", "eslint .", "next lint"].includes(values.lint))) return "Generated package.json lint script must be exactly `eslint`, `eslint .`, or `next lint`.";
+  if (values.typecheck !== undefined && values.typecheck !== "tsc --noEmit") return "Generated package.json typecheck script must be exactly `tsc --noEmit`.";
+  if (values.test !== undefined && values.test !== "vitest run") return "Generated package.json test script must be exactly `vitest run`.";
+  for (const [name, value] of Object.entries(values)) {
+    if (!["build", "dev", "start", "lint", "typecheck", "test"].includes(name) && typeof value === "string" && value.trim()) return `Generated package.json script is not allowed: ${name}.`;
+  }
+  for (const section of ["dependencies", "devDependencies"] as const) {
+    const dependencies = record[section];
+    if (dependencies === undefined) continue;
+    if (!dependencies || typeof dependencies !== "object" || Array.isArray(dependencies)) return `Generated package.json ${section} must be an object.`;
+    for (const [name, version] of Object.entries(dependencies as Record<string, unknown>)) {
+      if (!BUILDER_ALLOWED_PACKAGES.has(name)) return `Generated package.json dependency is not allowed for host execution: ${name}.`;
+      if (typeof version !== "string" || !/^[~^]?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) {
+        return `Generated package.json dependency specifier is not a pinned registry version: ${name}.`;
+      }
+    }
+  }
+  return null;
+}
+
+export async function runApplicableBuilderValidation(folder: string, projectId: string, rawManifest: string): Promise<CommandResult[]> {
+  let manifest: { scripts?: Record<string, unknown>; dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+  try { manifest = JSON.parse(rawManifest) as typeof manifest; } catch { return []; }
+  const scripts = manifest.scripts ?? {};
+  const packages = { ...(manifest.dependencies ?? {}), ...(manifest.devDependencies ?? {}) };
+  const commands = (["lint", "typecheck", "test"] as const).filter((name) => {
+    if (typeof scripts[name] !== "string") return false;
+    if (name === "lint") return Boolean(packages.eslint);
+    if (name === "typecheck") return Boolean(packages.typescript);
+    return Boolean(packages.vitest);
+  });
+  const results: CommandResult[] = [];
+  for (const script of commands) {
+    const result = await runBuilderDockerCommand(folder, projectId, crypto.randomUUID(), ["npm", "run", script], { timeoutMs: 10 * 60_000 });
+    results.push(result);
+    if (!result.ok) throw new Error(`Applicable ${script} validation failed.\n${result.output}`);
+  }
+  return results;
+}
+
+export function validateBuilderProjectSourcePath(relativePath: string): string | null {
+  if (!relativePath || /^[\\/]|^[A-Za-z]:[\\/]|^\\\\/.test(relativePath)) return `Generated project path is absolute or UNC: ${relativePath}.`;
+  const normalizedPath = relativePath.replace(/\\/g, "/");
+  if (normalizedPath.split("/").some((part) => part === ".." || !part)) return `Generated project path traversal is not allowed: ${relativePath}.`;
+  const allowed = /^(?:src\/(?:app|pages|components|lib)\/(?:[^/]+\/)*[^/]+|(?:app|pages|components|lib|public|styles)\/(?:[^/]+\/)*[^/]+|(?:next|postcss)\.config\.(?:js|mjs|cjs|ts)|eslint\.config\.(?:js|mjs|cjs|ts)|next-env\.d\.ts|tsconfig\.json|package(?:-lock)?\.json|\.gitignore|(?:README|BUILDER_PLAN)\.md)$/i.test(normalizedPath);
+  return allowed ? null : `Generated project path is outside the Builder allowlist: ${normalizedPath}.`;
+}
+
+export function validateBuilderExecutableSource(relativePath: string, source: string): string | null {
+  const pathError = validateBuilderProjectSourcePath(relativePath);
+  if (pathError) return pathError;
+  const normalizedPath = relativePath.replace(/\\/g, "/");
+  const allowedPath = /^(?:src\/)?(?:app|pages|components|lib)\/.+\.(?:js|jsx|ts|tsx)$/i.test(normalizedPath)
+    || /^(?:app|pages|components|lib)\/.+\.(?:js|jsx|ts|tsx)$/i.test(normalizedPath)
+    || /^next-env\.d\.ts$/i.test(normalizedPath)
+    || /^(?:next|postcss)\.config\.(?:js|mjs|cjs|ts)$/i.test(normalizedPath)
+    || /^eslint\.config\.(?:js|mjs|cjs|ts)$/i.test(normalizedPath);
+  if (!allowedPath) return `Generated executable file is outside the Builder execution path allowlist: ${normalizedPath}.`;
+  if (/\bimport\s*\(|\brequire\s*\(/.test(source)) return `Generated executable source uses dynamic module loading: ${normalizedPath}.`;
+  const dangerous = /\b(?:process|globalThis|eval|Function|fetch|WebSocket|XMLHttpRequest)\b|node:/;
+  if (dangerous.test(source)) return `Generated executable source requests a forbidden host capability: ${normalizedPath}.`;
+  const builtinRoots = new Set(builtinModules.map((name) => name.replace(/^node:/, "").split("/")[0]));
+  const imports = [...source.matchAll(/\bfrom\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']/g)]
+    .map((match) => match[1] || match[2]);
+  for (const specifier of imports) {
+    if (specifier.startsWith(".") || specifier.startsWith("@/")) continue;
+    const root = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : specifier.split("/")[0];
+    if (builtinRoots.has(root) || !BUILDER_ALLOWED_PACKAGES.has(root)) return `Generated executable source module import is not allowed: ${specifier} in ${normalizedPath}.`;
+  }
+  if (/^next\.config\.(?:js|mjs|cjs|ts)$/i.test(normalizedPath)) {
+    const compact = source.replace(/\s+/g, "");
+    const safeConfig = /^importtype\{NextConfig\}from["']next["'];constnextConfig:NextConfig=\{(?:reactStrictMode:(?:true|false),?)?\};exportdefaultnextConfig;?$/.test(compact)
+      || /^constnextConfig=\{\};exportdefaultnextConfig;?$/.test(compact);
+    if (!safeConfig) return `Generated Next.js config is outside the static host-execution allowlist: ${normalizedPath}.`;
+  }
+  return null;
+}
+
+export async function validateBuilderWorkspaceForHostExecution(folder: string): Promise<string | null> {
+  const pending: Array<{ absolute: string; relative: string }> = [{ absolute: folder, relative: "" }];
+  let visited = 0;
+  while (pending.length) {
+    const current = pending.pop()!;
+    const entries = await readdir(current.absolute, { withFileTypes: true });
+    for (const entry of entries) {
+      if (["node_modules", ".next", ".git"].includes(entry.name)) continue;
+      const relative = current.relative ? `${current.relative}/${entry.name}` : entry.name;
+      const absolute = path.join(current.absolute, entry.name);
+      if ([".npmrc", "npm-shrinkwrap.json"].includes(entry.name)) return `Generated workspace package-manager override is not allowed: ${relative}.`;
+      if (entry.isSymbolicLink()) return `Generated workspace symbolic links are not allowed before host execution: ${relative}.`;
+      if (entry.isDirectory()) {
+        pending.push({ absolute, relative });
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const pathError = validateBuilderProjectSourcePath(relative);
+      if (pathError) return pathError;
+      if (!/\.(?:js|jsx|ts|tsx|mjs|cjs)$/i.test(entry.name)) continue;
+      visited += 1;
+      if (visited > 500) return "Generated workspace contains too many executable source files for safe host validation.";
+      const error = validateBuilderExecutableSource(relative, await readFile(absolute, "utf8"));
+      if (error) return error;
+    }
+  }
+  return null;
+}
+
 export async function runLocalCodexExecutor(userId: string, projectId: string, improvementPrompt: string): Promise<LocalBuildProject> {
   const db = getDb();
   const project = await findLocalBuildProject(db, userId, projectId);
@@ -1831,6 +2127,15 @@ export async function runLocalCodexExecutor(userId: string, projectId: string, i
     codex.stderr ? `stderr:\n${codex.stderr}` : null,
   ].filter(Boolean).join("\n");
 
+  const blockedQuestion = parseBuilderBlockedQuestion(`${codex.stdout}\n${codex.stderr}`);
+  if (blockedQuestion) {
+    const detail = `Codex requested focused public research: ${blockedQuestion}`;
+    await updateExecutionQueueTask(userId, queueTask.id, { status: "qa_pending", result: detail, log: detail });
+    await updateProjectBuildState(db, projectId, "qa_pending", log, null);
+    await logLocalBuilderRun(db, "blocked", `codex_cli project=${projectName}`, detail);
+    throw new BuilderBlockedResearchError(blockedQuestion);
+  }
+
   if (!codex.ok || secretFiles.length) {
     const detail = secretFiles.length
       ? `Codex attempted to modify forbidden secret file(s): ${secretFiles.join(", ")}. Changes were restored.`
@@ -1857,14 +2162,68 @@ export async function runLocalCodexExecutor(userId: string, projectId: string, i
     };
   }
 
+  const packageManifest = await readFile(path.join(folder, "package.json"), "utf8").catch(() => "");
+  const manifestError = validateBuilderPackageManifest(packageManifest);
+  const workspaceError = manifestError ? null : await validateBuilderWorkspaceForHostExecution(folder);
+  if (manifestError || workspaceError) {
+    const detail = `Refusing Builder Docker execution: ${manifestError || workspaceError}`;
+    await updateExecutionQueueTask(userId, queueTask.id, { status: "failed", error: detail, log: detail });
+    await updateProjectBuildState(db, projectId, "failed", log, detail);
+    await logLocalBuilderRun(db, "failed", `codex_cli project=${projectName}`, detail);
+    return {
+      id: projectId,
+      projectName,
+      localFolderPath: folder,
+      status: "failed",
+      createdAt,
+      currentTask: `Codex CLI improvement for ${projectName}`,
+      taskId: queueTask.id,
+      buildLog: log.slice(-12000),
+      buildError: detail,
+      localDevUrl: rowString(project.localDevUrl) || null,
+      localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
+      researchBrief: rowString(project.localResearchBrief) || null,
+      qaStatus: "qa_failed",
+      qaChecklist: parseQaChecklist(project.localQaChecklist),
+      files: changedFiles,
+    };
+  }
+
   await updateExecutionQueueTask(userId, queueTask.id, {
-    status: "qa_pending",
-    result: `Codex edited ${changedFiles.length} file(s). Running npm build and QA.`,
+    status: "executing",
+    result: `Codex edited ${changedFiles.length} file(s). Installing dependencies before build and QA.`,
     log: `Codex completed. Changed files: ${changedFiles.join(", ") || "none"}.`,
   });
-  await updateProjectBuildState(db, projectId, "qa_pending", `${log}\nCodex CLI: build validation started.\n`);
+  await updateProjectBuildState(db, projectId, "Installing", `${log}\nCodex CLI: dependency installation started.\n`);
 
-  const build = await runDetailed("npm", ["run", "build"], folder, { nodeEnv: "production", displayCommand: "npm run build" });
+  const install = await runBuilderDockerCommand(folder, projectId, crypto.randomUUID(), ["npm", "install", "--ignore-scripts", `--registry=${BUILDER_DOCKER_REGISTRY}`], { timeoutMs: 10 * 60_000 });
+  log += `\n\nCodex install: ${install.ok ? "passed" : "failed"}\nCommand: ${install.command}\nstdout:\n${install.stdout}\nstderr:\n${install.stderr}\n`;
+  if (!install.ok) {
+    const detail = `npm install failed after Codex CLI.\n${install.output}`;
+    await updateExecutionQueueTask(userId, queueTask.id, { status: "failed", error: detail, log: "Dependency installation failed after Codex CLI." });
+    await updateProjectBuildState(db, projectId, "failed", log, detail);
+    await logLocalBuilderRun(db, "failed", `codex_cli project=${projectName}`, detail.slice(0, 2000));
+    return {
+      id: projectId,
+      projectName,
+      localFolderPath: folder,
+      status: "failed",
+      createdAt,
+      currentTask: `Codex CLI improvement for ${projectName}`,
+      taskId: queueTask.id,
+      buildLog: log.slice(-12000),
+      buildError: detail,
+      localDevUrl: rowString(project.localDevUrl) || null,
+      localDevPid: typeof project.localDevPid === "number" ? project.localDevPid : null,
+      researchBrief: rowString(project.localResearchBrief) || null,
+      qaStatus: "qa_failed",
+      qaChecklist: parseQaChecklist(project.localQaChecklist),
+      files: changedFiles,
+    };
+  }
+
+  await updateProjectBuildState(db, projectId, "qa_pending", `${log}\nCodex CLI: build validation started.\n`);
+  const build = await runBuilderDockerCommand(folder, projectId, crypto.randomUUID(), ["npm", "run", "build"], { timeoutMs: 10 * 60_000 });
   log += `\n\nCodex build: ${build.ok ? "passed" : "failed"}\nCommand: ${build.command}\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}\n`;
   if (!build.ok) {
     const detail = `npm run build failed after Codex CLI.\n${build.output}`;
@@ -1889,6 +2248,8 @@ export async function runLocalCodexExecutor(userId: string, projectId: string, i
       files: changedFiles,
     };
   }
+  const validations = await runApplicableBuilderValidation(folder, projectId, packageManifest);
+  log += validations.map((result) => `\nCodex validation: ${result.command}\n${result.output}\n`).join("");
 
   await db.execute({
     sql: `UPDATE Project SET status = 'qa_pending', localQaStatus = 'qa_pending', localQaChecklist = NULL, localBuildLog = ?, localBuildError = NULL, updatedAt = datetime('now') WHERE id = ?`,
@@ -1927,9 +2288,18 @@ export async function rebuildLocalStarterApp(userId: string, projectId: string):
 
   try {
     await updateProjectBuildState(db, projectId, "Building", log);
-    const build = await run("npm", ["run", "build"], folder, "production");
+    const packageManifest = await readFile(path.join(folder, "package.json"), "utf8").catch(() => "");
+    const manifestError = validateBuilderPackageManifest(packageManifest);
+    const workspaceError = manifestError ? null : await validateBuilderWorkspaceForHostExecution(folder);
+    if (manifestError || workspaceError) throw new Error(`Refusing Builder Docker execution: ${manifestError || workspaceError}`);
+    const install = await runBuilderDockerCommand(folder, projectId, crypto.randomUUID(), ["npm", "install", "--ignore-scripts", `--registry=${BUILDER_DOCKER_REGISTRY}`], { timeoutMs: 10 * 60_000 });
+    if (!install.ok) throw new Error(`Controlled npm install failed
+${install.output}`);
+    const build = await runBuilderDockerCommand(folder, projectId, crypto.randomUUID(), ["npm", "run", "build"], { timeoutMs: 10 * 60_000 });
     log += `\n\nRebuild: ${build.ok ? "passed" : "failed"}\n${build.output}\n`;
     if (!build.ok) throw new Error(`npm run build failed\n${build.output}`);
+    const validations = await runApplicableBuilderValidation(folder, projectId, packageManifest);
+    log += validations.map((result) => `Validation: ${result.command}\n${result.output}`).join("\n");
     log += "\nQA: rebuild passed; checklist pending.\n";
     await updateProjectBuildState(db, projectId, "qa_pending", log);
     await db.execute({
@@ -2016,8 +2386,8 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
   const db = getDb();
   const project = await findLocalBuildProject(db, userId, projectId);
   const { projectName, folder, createdAt } = await resolveProjectFolder(project);
-  const existing = devServers.get(projectId);
-  if (existing && !existing.child.killed && await previewResponds(existing.url)) {
+  const existingUrl = rowString(project.localDevUrl);
+  if (existingUrl && rowString(project.localPreviewStatus) === "online" && await previewResponds(existingUrl)) {
     return {
       id: projectId,
       projectName,
@@ -2028,8 +2398,8 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
       taskId: crypto.randomUUID(),
       buildLog: rowString(project.localBuildLog),
       buildError: null,
-      localDevUrl: existing.url,
-      localDevPid: existing.pid,
+      localDevUrl: existingUrl,
+      localDevPid: null,
       previewStatus: "online",
       researchBrief: rowString(project.localResearchBrief) || null,
       qaStatus: rowString(project.localQaStatus) || null,
@@ -2037,38 +2407,41 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
     };
   }
 
+  const packageManifest = await readFile(path.join(folder, "package.json"), "utf8").catch(() => "");
+  const manifestError = validateBuilderPackageManifest(packageManifest);
+  const workspaceError = manifestError ? null : await validateBuilderWorkspaceForHostExecution(folder);
+  if (manifestError || workspaceError) throw new Error(`Refusing Builder Docker preview: ${manifestError || workspaceError}`);
+  if (!/"start"\s*:\s*"next start"/.test(packageManifest)) throw new Error("Refusing Builder Docker preview: package.json must define the controlled `next start` script.");
+  const install = await runBuilderDockerCommand(folder, projectId, crypto.randomUUID(), ["npm", "install", "--ignore-scripts", `--registry=${BUILDER_DOCKER_REGISTRY}`], { timeoutMs: 10 * 60_000 });
+  if (!install.ok) throw new Error(`Controlled dependency install failed before preview.\n${install.output}`);
+  const build = await runBuilderDockerCommand(folder, projectId, crypto.randomUUID(), ["npm", "run", "build"], { timeoutMs: 10 * 60_000 });
+  if (!build.ok) throw new Error(`Controlled production build failed before preview.\n${build.output}`);
+  await runApplicableBuilderValidation(folder, projectId, packageManifest);
+
   const port = await nextAvailablePort(3000);
   const url = `http://localhost:${port}`;
-  let output = `${rowString(project.localBuildLog)}\nStarting dev server at ${url}\n`.trim();
-  const child = spawn("npm", ["run", "dev", "--", "-p", String(port)], {
-    cwd: folder,
-    shell: process.platform === "win32",
-    env: childProcessEnv("development"),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  devServers.set(projectId, { child, url, pid: child.pid ?? null });
-  child.stdout?.on("data", (chunk) => { output = `${output}\n${String(chunk)}`.slice(-12000); });
-  child.stderr?.on("data", (chunk) => { output = `${output}\n${String(chunk)}`.slice(-12000); });
-  child.on("exit", () => {
-    const current = devServers.get(projectId);
-    if (current?.child === child) {
-      devServers.delete(projectId);
-      const staleLog = `${output}\nPreview process exited; preview marked stale.`.slice(-12000);
-      void updateProjectDevState(db, projectId, "Preview Stale", url, null, staleLog).catch(() => undefined);
-    }
-  });
+  await removeBuilderPreviewContainers(folder, projectId);
+  const previewRunId = crypto.randomUUID();
+  const dockerExecutable = await discoverBuilderDockerExecutable();
+  const previewSpec = createBuilderDockerRunSpec({ dockerExecutable, folder, projectId, runId: previewRunId, detached: true, hostPort: port, command: ["npm", "run", "start", "--", "--hostname", "0.0.0.0", "--port", "3000"] });
+  const preview = await runBuilderDockerCommand(folder, projectId, previewRunId, ["npm", "run", "start", "--", "--hostname", "0.0.0.0", "--port", "3000"], { detached: true, hostPort: port, timeoutMs: 60_000 });
+  if (!preview.ok) throw new Error(`Builder Docker preview failed to start.\n${preview.output}`);
+  const containerId = preview.stdout.trim().split(/\r?\n/).pop() ?? "unknown";
+  const containerName = previewSpec.args[previewSpec.args.indexOf("--name") + 1] ?? "unknown";
+  const startedAt = new Date().toISOString();
+  let output = `${rowString(project.localBuildLog)}\nBuilder Docker preview started: projectId=${projectId} containerId=${containerId} containerName=${containerName} port=${port} status=starting startedAt=${startedAt}\n`.slice(-12000);
 
   try {
     await waitForPreview(url);
   } catch (error) {
-    if (child.pid) await killProcessTree(child.pid).catch(() => undefined);
-    devServers.delete(projectId);
+    await removeBuilderPreviewContainers(folder, projectId).catch(() => undefined);
     output = `${output}\n${error instanceof Error ? error.message : String(error)}`.slice(-12000);
     await updateProjectDevState(db, projectId, "Preview Stale", url, null, output);
     throw error;
   }
-  await updateProjectDevState(db, projectId, "Dev Server Running", url, child.pid ?? null, output);
-  await logLocalBuilderRun(db, "completed", `local_build_start_dev project=${projectName}`, `Dev Server Running: ${url}`);
+  output = `${output}\nBuilder Docker preview online: projectId=${projectId} containerId=${containerId} containerName=${containerName} port=${port} status=online startedAt=${startedAt}`.slice(-12000);
+  await updateProjectDevState(db, projectId, "Dev Server Running", url, null, output);
+  await logLocalBuilderRun(db, "completed", `local_build_start_dev project=${projectName}`, `Builder Docker preview online: ${url} (${containerName})`);
 
   return {
     id: projectId,
@@ -2081,7 +2454,7 @@ export async function startLocalDevServer(userId: string, projectId: string): Pr
     buildLog: output.slice(-12000),
     buildError: null,
     localDevUrl: url,
-    localDevPid: child.pid ?? null,
+    localDevPid: null,
     previewStatus: "online",
     researchBrief: rowString(project.localResearchBrief) || null,
     qaStatus: rowString(project.localQaStatus) || null,
@@ -2093,11 +2466,8 @@ export async function stopLocalDevServer(userId: string, projectId: string): Pro
   const db = getDb();
   const project = await findLocalBuildProject(db, userId, projectId);
   const { projectName, folder, createdAt } = await resolveProjectFolder(project);
-  const running = devServers.get(projectId);
-  if (running?.pid) await killProcessTree(running.pid);
-  else if (typeof project.localDevPid === "number") await killProcessTree(project.localDevPid);
-  devServers.delete(projectId);
-  const log = `${rowString(project.localBuildLog)}\nDev Server Stopped`.trim();
+  await removeBuilderPreviewContainers(folder, projectId);
+  const log = `${rowString(project.localBuildLog)}\nBuilder Docker preview stopped: projectId=${projectId} status=offline`.slice(-12000);
   await updateProjectDevState(db, projectId, "Dev Server Stopped", null, null, log);
   await logLocalBuilderRun(db, "completed", `local_build_stop_dev project=${projectName}`, "Dev Server Stopped");
   return {

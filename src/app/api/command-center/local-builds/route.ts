@@ -19,13 +19,13 @@ import {
   stopLocalDevServer,
 } from "@/lib/local-builder";
 import { redactInternalDetails } from "@/lib/hermes-execution/response-formatter";
-import { getHermesAgentReadiness, getLocalWorkerLiveness, workerOfflineNotice } from "@/lib/worker-watch";
+import { getCodexCliReadiness, getHermesAgentReadiness, getLocalWorkerLiveness, workerOfflineNotice } from "@/lib/worker-watch";
 
-// Build-shaped actions default to Hermes Nous (hermes_agent) when it is
-// installed + authed + has a model on the worker machine; Codex CLI via
-// local_worker is the fallback. Non-build actions (prepare, dev servers,
-// QA-only) stay on the local_worker path — hermes_agent tasks need a project.
-const HERMES_PRIMARY_ACTIONS = new Set(["generate", "rebuild", "build", "npmBuild", "runCodex"]);
+// Build-shaped actions default to Codex CLI when it is ready on the worker.
+// Hermes Agent is the eligible fallback.
+// The local_worker executor is deterministic worker/template execution for
+// prepare, preview, and QA work.
+const CODER_ACTIONS = new Set(["generate", "rebuild", "build", "npmBuild", "runCodex"]);
 const SUPPORTED_LOCAL_BUILD_ACTIONS = new Set(["prepare", "generate", "rebuild", "build", "npmBuild", "runCodex", "open", "startDev", "stopDev", "runQa"]);
 
 function projectView(project: LocalBuildProject): LocalBuildProjectResponse & { route: null; taskCounts: { done: number; total: number } } {
@@ -102,7 +102,7 @@ export async function POST(req: Request) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = (await req.json().catch(() => null)) as { action?: string; message?: string; projectId?: string; executor?: "local_worker" | "hermes_agent" } | null;
+  const body = (await req.json().catch(() => null)) as { action?: string; message?: string; projectId?: string; executor?: "codex_cli" | "local_worker" | "hermes_agent" } | null;
   const message = body?.message?.trim();
   const action = body?.action ?? "prepare";
   const projectId = body?.projectId;
@@ -110,28 +110,32 @@ export async function POST(req: Request) {
   if (!SUPPORTED_LOCAL_BUILD_ACTIONS.has(action)) return NextResponse.json({ error: "Unsupported local builder action." }, { status: 400 });
   if (action !== "prepare" && !projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });
 
-  // Hermes Nous is the primary executor; Codex CLI (local_worker) is the
-  // fallback. An explicit `executor` in the request always wins. Either way
+  // Codex CLI is the primary coder and Hermes Nous is its fallback. An explicit
+  // `executor` in the request always wins. Either way
   // the response says which executor was actually assigned — never a silent swap.
-  let selectedExecutor: "hermes_agent" | "local_worker";
+  let selectedExecutor: "codex_cli" | "hermes_agent" | "local_worker";
   let executorNote: string | null = null;
-  if (body?.executor === "hermes_agent" || body?.executor === "local_worker") {
+  if (body?.executor === "codex_cli" || body?.executor === "hermes_agent" || body?.executor === "local_worker") {
     selectedExecutor = body.executor;
-    executorNote = `Executor: ${selectedExecutor === "hermes_agent" ? "Hermes Nous" : "Codex CLI (local worker)"} — explicitly requested.`;
-  } else if (HERMES_PRIMARY_ACTIONS.has(action)) {
+    executorNote = `Executor: ${selectedExecutor === "hermes_agent" ? "Hermes Nous" : selectedExecutor === "codex_cli" ? "Codex CLI" : "Local worker (deterministic worker/template execution)"} — explicitly requested.`;
+  } else if (CODER_ACTIONS.has(action)) {
+    const codex = await getCodexCliReadiness().catch(() => ({ ready: false, reason: "readiness check failed" }));
     const readiness = await getHermesAgentReadiness().catch(() => ({ ready: false, reason: "readiness check failed" }));
-    if (readiness.ready) {
+    if (codex.ready) {
+      selectedExecutor = "codex_cli";
+      executorNote = "Executor: Codex CLI (primary, reported available by the local worker). Hermes Agent is the eligible fallback.";
+    } else if (readiness.ready) {
       selectedExecutor = "hermes_agent";
-      executorNote = "Executor: Hermes Nous (primary). Codex CLI fallback is available from Run Inspector after explicit approval.";
+      executorNote = "Executor: Hermes Agent (fallback because Codex CLI is unavailable).";
     } else {
       selectedExecutor = "local_worker";
-      executorNote = `Executor: Codex CLI (local worker) — Hermes Nous unavailable: ${readiness.reason}.`;
+      executorNote = `Executor: Local worker (deterministic worker/template execution) — Codex CLI and Hermes Agent unavailable: ${readiness.reason}.`;
     }
   } else {
     selectedExecutor = "local_worker";
   }
 
-  if (isServerlessRuntime() || selectedExecutor === "hermes_agent") {
+  if (isServerlessRuntime() || selectedExecutor === "hermes_agent" || selectedExecutor === "codex_cli") {
     let queued: LocalBuildProject | null;
     try {
       queued = await queueLocalBuilderWorkerTask(session.user.id, action, message ?? "", projectId, selectedExecutor);

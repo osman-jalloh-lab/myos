@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { serializeLocalBuildProject, type LocalBuildProject } from "../local-builder";
+import { parseLocalBuildRequest, serializeLocalBuildProject, type LocalBuildProject } from "../local-builder";
 
 const project: LocalBuildProject = {
   id: "project-1",
@@ -21,6 +21,14 @@ const project: LocalBuildProject = {
 };
 
 describe("local Builder API contract", () => {
+  it("recognizes the production CRM dashboard smoke request as build intent", () => {
+    expect(parseLocalBuildRequest("Build me a small CRM dashboard for a roofing company. Include leads, customers, jobs, estimates, and a dashboard. Use a modern responsive interface.")).toMatchObject({
+      projectName: "small CRM dashboard",
+      appType: "dashboard app",
+      questions: [],
+    });
+  });
+
   it("serializes current records with a canonical stage without mutation", () => {
     const before = JSON.stringify(project);
     const serialized = serializeLocalBuildProject(project) as Record<string, unknown>;
@@ -34,6 +42,30 @@ describe("local Builder API contract", () => {
     expect(source).toContain("Unsupported local builder action.");
     expect(source).toContain('"runQa"');
     expect(source).not.toMatch(/runLocalFugu|overrideFugu|fuguDesignReview|fuguGateOverride|fuguGate/);
+  });
+
+  it("routes production Codex tasks through the Builder coder workflow", () => {
+    const source = readFileSync(path.join(process.cwd(), "scripts/hermes-local-worker.ts"), "utf8");
+    expect(source).toMatch(/import\s+\{[^}]*executeBuilderCoderWorkflow[^}]*\}\s+from\s+["']\.\.\/src\/lib\/builder-coder-workflow["']/);
+    expect(source).toMatch(/ALLOWED_ACTIONS\s*=\s*new Set\([^\n]*["']runCodex["']/);
+    expect(source).toMatch(/if\s*\(task\.assignedExecutor\s*===\s*["']codex_cli["']\)\s*\{\s*await executeCodexWorkflowTask\(db, task\)/);
+    expect(source).toMatch(/executeBuilderCoderWorkflow\s*\(/);
+    expect(source).toMatch(/startPreviewAndRunBrowserQa\s*\(/);
+    expect(source).toContain("preview.qaStatus !== \"qa_passed\"");
+    expect(source).toContain("preview.previewStatus !== \"online\"");
+    expect(source).toContain("prepareLocalBuildProject(task.userId, message, task.projectId)");
+    expect(source).toMatch(/await heartbeat\(db, capabilities, apiBaseUrl\)\.catch/);
+    const builderSource = readFileSync(path.join(process.cwd(), "src/lib/local-builder.ts"), "utf8");
+    expect(builderSource).toContain('runBuilderDockerCommand(');
+    expect(builderSource).toContain('"node:22-bookworm-slim"');
+    expect(builderSource).toContain('"--cap-drop", "ALL"');
+    expect(builderSource).toContain('"--security-opt", "no-new-privileges"');
+    expect(builderSource).toContain('`127.0.0.1:${params.hostPort}:3000`');
+    expect(builderSource).not.toContain('spawn(localNextExecutable');
+    expect(source).toContain('runBuilderDockerCommand(folder, task.projectId!');
+    expect(source).not.toContain('function runNpm(');
+    expect(source).not.toContain('function runNext(');
+    expect(builderSource).toContain('["src/app/page.tsx", "app/page.tsx"]');
   });
 
   it("keeps current project serialization canonical and free of retired fields", () => {
