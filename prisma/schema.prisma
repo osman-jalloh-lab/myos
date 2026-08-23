@@ -415,6 +415,12 @@ model SkillTeachingSession {
   activeScopeKey String? @unique
   goal      String
   status    String   @default("recording")
+  recordingActive Boolean @default(false)
+  recordingNonce String? @unique
+  recordingOrigin String?
+  recordingLastSequence Int @default(0)
+  recordingStartedAt DateTime?
+  recordingStoppedAt DateTime?
   startedAt DateTime @default(now())
   expiresAt DateTime
   stoppedAt DateTime?

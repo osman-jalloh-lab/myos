@@ -14,6 +14,7 @@ import {
   type SemanticTeachingEvent,
   type TaughtSkillCandidate,
 } from "@/lib/teach-hermes";
+import { appendRecordedBrowserEvent, startTeachingRecording, stopTeachingRecording, type RecordedBrowserEvent } from "@/lib/teach-hermes-recording";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -42,6 +43,12 @@ export async function POST(req: Request) {
         return NextResponse.json(await appendTeachingEvent(userId, String(body.sessionId ?? ""), String(body.eventKey ?? ""), body.event as SemanticTeachingEvent));
       case "stop":
         return NextResponse.json({ session: await stopTeachingSession(userId, String(body.sessionId ?? "")) });
+      case "startRecording":
+        return NextResponse.json(await startTeachingRecording(userId, String(body.sessionId ?? "")));
+      case "recordEvent":
+        return NextResponse.json(await appendRecordedBrowserEvent(userId, { sessionId: String(body.sessionId ?? ""), nonce: String(body.nonce ?? ""), browserSequence: Number(body.browserSequence), event: body.event as RecordedBrowserEvent }));
+      case "stopRecording":
+        return NextResponse.json({ session: await stopTeachingRecording(userId, String(body.sessionId ?? "")) });
       case "createDraft":
         return NextResponse.json({ draft: await createSkillDraft(userId, { sessionId: String(body.sessionId ?? ""), candidate: body.candidate as TaughtSkillCandidate, observedCapabilities: Array.isArray(body.observedCapabilities) ? body.observedCapabilities.map(String) : [], confidence: Number(body.confidence ?? 0), provenance: typeof body.provenance === "object" && body.provenance ? body.provenance as Record<string, unknown> : undefined }) });
       case "updateDraft":

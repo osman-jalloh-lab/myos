@@ -13,7 +13,7 @@ export type SkillDraftStatus = "draft" | "pending_approval" | "approved" | "expi
 
 export type SemanticTeachingEvent = {
   kind: TeachingEventKind;
-  target?: { role?: string; name?: string; selectorHint?: string; inputType?: string };
+  target?: { role?: string; name?: string; label?: string; stableId?: string; selectorHint?: string; tag?: string; inputType?: string; autocomplete?: string };
   value?: string;
   text?: string;
   url?: string;
@@ -52,12 +52,16 @@ export function sanitizeSemanticTeachingEvent(input: SemanticTeachingEvent): Sem
   const target = input.target ? {
     role: redactTeachingText(input.target.role, "role", 80) || undefined,
     name: redactTeachingText(input.target.name, "name", 160) || undefined,
+    label: redactTeachingText(input.target.label, "label", 160) || undefined,
+    stableId: redactTeachingText(input.target.stableId, "stableId", 120) || undefined,
     selectorHint: redactTeachingText(input.target.selectorHint, "selectorHint", 200) || undefined,
+    tag: redactTeachingText(input.target.tag, "tag", 40) || undefined,
     inputType: redactTeachingText(input.target.inputType, "inputType", 40) || undefined,
+    autocomplete: redactTeachingText(input.target.autocomplete, "autocomplete", 80) || undefined,
   } : undefined;
   const sensitiveFill = input.kind === "fill" && Boolean(
     target?.inputType && /password|hidden/i.test(target.inputType)
-    || target?.name && SECRET_FIELD_RE.test(target.name)
+    || [target?.name, target?.label, target?.stableId, target?.autocomplete].some((value) => value && SECRET_FIELD_RE.test(value))
   );
   const metadata = input.metadata
     ? Object.fromEntries(Object.entries(input.metadata).slice(0, 20).map(([key, value]) => [
@@ -171,7 +175,7 @@ async function assertProjectOwnership(userId: string, projectId?: string | null)
 export async function expireTeachingSessions(now = new Date()): Promise<number> {
   const result = await prisma.skillTeachingSession.updateMany({
     where: { status: "recording", expiresAt: { lte: now } },
-    data: { status: "expired", stoppedAt: now, activeScopeKey: null },
+    data: { status: "expired", stoppedAt: now, activeScopeKey: null, recordingActive: false, recordingStoppedAt: now },
   });
   return result.count;
 }
@@ -240,7 +244,7 @@ export async function appendTeachingEvent(userId: string, sessionId: string, eve
 export async function stopTeachingSession(userId: string, sessionId: string) {
   const session = await ownedSession(userId, sessionId);
   if (session.status !== "recording") return session;
-  return prisma.skillTeachingSession.update({ where: { id: session.id }, data: { status: "processing", stoppedAt: new Date(), activeScopeKey: null } });
+  return prisma.skillTeachingSession.update({ where: { id: session.id }, data: { status: "processing", stoppedAt: new Date(), activeScopeKey: null, recordingActive: false, recordingStoppedAt: new Date() } });
 }
 
 export async function createSkillDraft(userId: string, input: { sessionId: string; candidate: TaughtSkillCandidate; observedCapabilities?: string[]; confidence: number; provenance?: Record<string, unknown> }) {

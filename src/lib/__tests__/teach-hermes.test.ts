@@ -55,6 +55,8 @@ beforeAll(async () => {
   `);
   const migration = await readFile(path.join(process.cwd(), "prisma/migrations/20260823000000_add_teach_hermes_phase1/migration.sql"), "utf8");
   await executeSqlScript(migration);
+  const recordingMigration = await readFile(path.join(process.cwd(), "prisma/migrations/20260824000000_add_teach_hermes_recording/migration.sql"), "utf8");
+  await executeSqlScript(recordingMigration);
   await prisma.user.createMany({ data: [{ id: "owner", primaryEmail: "owner@example.test" }, { id: "other", primaryEmail: "other@example.test" }] });
   await prisma.project.createMany({ data: [{ id: "owner-project", userId: "owner", projectName: "Owner project" }, { id: "other-project", userId: "other", projectName: "Other project" }] });
   api = await import("@/lib/teach-hermes");
