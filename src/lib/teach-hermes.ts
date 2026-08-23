@@ -302,6 +302,7 @@ export async function requestSkillDraftApproval(userId: string, draftId: string)
   const approval = await createApproval(userId, "teach_skill_promote", { draftId: draft.id, revision: draft.revision, sessionId: draft.sessionId });
   const updated = await prisma.skillDraft.update({ where: { id: draft.id }, data: { status: "pending_approval", approvalId: approval.id } });
   await prisma.skillTeachingSession.update({ where: { id: draft.sessionId }, data: { status: "pending_approval" } });
+  await prisma.auditLog.create({ data: { userId, action: "skill.teaching.approval.requested", resourceType: "SkillDraft", resourceId: draft.id, detail: `revision=${draft.revision}; approval=${approval.id}` } });
   return { draft: updated, approval };
 }
 
@@ -315,6 +316,7 @@ export async function rejectSkillDraft(userId: string, draftId: string) {
   }
   const updated = await prisma.skillDraft.update({ where: { id: draft.id }, data: { status: "rejected" } });
   await prisma.skillTeachingSession.update({ where: { id: draft.sessionId }, data: { status: "rejected" } });
+  await prisma.auditLog.create({ data: { userId, action: "skill.teaching.draft.rejected", resourceType: "SkillDraft", resourceId: draft.id, detail: "Teach Hermes draft rejected; evidence preserved." } });
   return updated;
 }
 
@@ -362,6 +364,7 @@ export async function promoteApprovedSkillDraft(userId: string, draftId: string,
     await tx.skillDraft.update({ where: { id: draft.id }, data: { status: "approved", promotedSkillId: skillId, effectiveCapabilities: JSON.stringify(effective) } });
     await tx.skillTeachingSession.update({ where: { id: draft.sessionId }, data: { status: "approved" } });
     await tx.auditLog.create({ data: { userId, action: "promoted", resourceType: "SkillDraft", resourceId: draft.id, detail: `Approved Teach Hermes draft promoted to UserSkill ${skillId}.` } });
+    await tx.auditLog.create({ data: { userId, action: "skill.teaching.skill.promoted", resourceType: "UserSkill", resourceId: skill.id, detail: `draft=${draft.id}; revision=${draft.revision}; skill=${skillId}` } });
     return skill;
   });
   clearSkillRegistryCache(userId);

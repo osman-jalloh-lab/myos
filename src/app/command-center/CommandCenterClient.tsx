@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback, type CSSProperties } from "react";
 import BuilderOffice from "./BuilderOffice";
 import LiveBuildConsole from "./LiveBuildConsole";
+import TeachHermesReviewPanel from "./TeachHermesReviewPanel";
 import AgentRoster from "@/components/AgentRoster";
 import CouncilChatPanel from "@/components/CouncilChatPanel";
 import HermesNousChatPanel from "@/components/HermesNousChatPanel";
@@ -3077,7 +3078,7 @@ export default function CommandCenterClient() {
     <div style={{ minHeight: "100vh", display: "flex", background: "radial-gradient(1000px 520px at 15% -10%, rgba(139,123,255,.14), transparent 62%), radial-gradient(800px 480px at 100% 100%, rgba(96,165,250,.08), transparent 62%), #06060B", color: "#F1F4FB", fontFamily: "Hanken Grotesk, sans-serif" }}>
       <aside style={{ position: "sticky", top: 0, alignSelf: "flex-start", width: 226, height: "100vh", flexShrink: 0, boxSizing: "border-box", padding: "22px 12px", borderRight: "1px solid rgba(255,255,255,.08)", background: "rgba(8,8,15,.72)", backdropFilter: "blur(18px)" }}>
         <div style={{ padding: "0 10px 22px", color: "#F3F0FA", fontFamily: "Fraunces, serif", fontSize: 19 }}>HERMES OS<div style={{ marginTop: 4, color: "#A99BFF", fontFamily: "JetBrains Mono, monospace", fontSize: 9, letterSpacing: ".13em" }}>COMMAND CENTER</div></div>
-        <nav aria-label="Command Center navigation" style={{ display: "grid", gap: 4 }}>{([['overview', 'Overview'], ['agents', 'Agent Network'], ['runs', 'Task Board'], ['projects', 'Projects'], ['logs', 'Audit Logs'], ['health', 'System Health']] as Array<[Tab, string]>).map(([id, label]) => <button key={id} onClick={() => setTab(id)} style={{ width: "100%", border: tab === id ? "1px solid rgba(139,123,255,.34)" : "1px solid transparent", borderRadius: 10, padding: "10px 11px", textAlign: "left", color: tab === id ? "#F0EDFF" : "#9A96A9", background: tab === id ? "rgba(139,123,255,.13)" : "transparent", cursor: "pointer", fontSize: 12 }}>{label}</button>)}</nav>
+        <nav aria-label="Command Center navigation" style={{ display: "grid", gap: 4 }}>{([['overview', 'Overview'], ['agents', 'Agent Network'], ['runs', 'Task Board'], ['projects', 'Projects'], ['skills', 'Skills'], ['logs', 'Audit Logs'], ['health', 'System Health']] as Array<[Tab, string]>).map(([id, label]) => <button key={id} onClick={() => setTab(id)} style={{ width: "100%", border: tab === id ? "1px solid rgba(139,123,255,.34)" : "1px solid transparent", borderRadius: 10, padding: "10px 11px", textAlign: "left", color: tab === id ? "#F0EDFF" : "#9A96A9", background: tab === id ? "rgba(139,123,255,.13)" : "transparent", cursor: "pointer", fontSize: 12 }}>{label}</button>)}</nav>
       </aside>
       <div style={{ minWidth: 0, flex: 1 }}>
       {/* Header */}
@@ -3192,6 +3193,8 @@ export default function CommandCenterClient() {
             )}
             {tab === "memory" && <MemoryOfficePanel data={memoryOffice} debug={memoryContextDebug} onCreateTestMemory={createTestMemory} onMemoryAction={memoryCenterAction} />}
             {tab === "skills" && (
+              <div style={{ display: "grid", gap: 16 }}>
+              <TeachHermesReviewPanel onRegistryChanged={refreshSkills} />
               <SkillsPanel
                 skills={skills}
                 registry={skillRegistry}
@@ -3205,6 +3208,7 @@ export default function CommandCenterClient() {
                 onApprove={handleApprove}
                 onReject={handleReject}
               />
+              </div>
             )}
             {tab === "projects" && <ProjectsPanel projects={projects} />}
             {tab === "builds" && <BuildsPanel builds={builds} />}

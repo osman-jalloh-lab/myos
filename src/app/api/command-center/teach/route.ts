@@ -16,6 +16,7 @@ import {
 } from "@/lib/teach-hermes";
 import { appendRecordedBrowserEvent, startTeachingRecording, stopTeachingRecording, type RecordedBrowserEvent } from "@/lib/teach-hermes-recording";
 import { generateTeachingSkillDraft } from "@/lib/teach-hermes-generation";
+import { getTeachingDraftReview, listTeachingDraftReviews, updateTeachingDraftReview, type TeachingDraftReviewEdit } from "@/lib/teach-hermes-review";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -23,6 +24,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const draftId = url.searchParams.get("draftId");
   try {
+    if (url.searchParams.get("review") === "1") return NextResponse.json({ reviews: draftId ? [await getTeachingDraftReview(session.user.id, draftId)] : await listTeachingDraftReviews(session.user.id) });
     if (draftId) return NextResponse.json({ draft: await getSkillDraft(session.user.id, draftId) });
     return NextResponse.json({ session: await getCurrentTeachingSession(session.user.id, url.searchParams.get("projectId")) });
   } catch (error) {
@@ -52,6 +54,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ session: await stopTeachingRecording(userId, String(body.sessionId ?? "")) });
       case "generateDraft":
         return NextResponse.json(await generateTeachingSkillDraft(userId, { sessionId: String(body.sessionId ?? ""), requestKey: String(body.requestKey ?? "") }));
+      case "updateReview":
+        return NextResponse.json({ review: await updateTeachingDraftReview(userId, String(body.draftId ?? ""), Number(body.revision), body.edit as TeachingDraftReviewEdit) });
       case "createDraft":
         return NextResponse.json({ draft: await createSkillDraft(userId, { sessionId: String(body.sessionId ?? ""), candidate: body.candidate as TaughtSkillCandidate, observedCapabilities: Array.isArray(body.observedCapabilities) ? body.observedCapabilities.map(String) : [], confidence: Number(body.confidence ?? 0), provenance: typeof body.provenance === "object" && body.provenance ? body.provenance as Record<string, unknown> : undefined }) });
       case "updateDraft":

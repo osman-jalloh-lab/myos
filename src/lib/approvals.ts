@@ -122,7 +122,15 @@ export async function approveAction(userId: string, id: string): Promise<Approva
     data: { status: "approved", resolvedAt: new Date() },
   });
 
-  const result = await executeIfPossible(updated);
+  let result: ApprovalActionView;
+  try {
+    result = await executeIfPossible(updated);
+  } catch (error) {
+    if (row.actionType === "teach_skill_promote") {
+      await prisma.approvalAction.update({ where: { id }, data: { status: "pending", resolvedAt: null } });
+    }
+    throw error;
+  }
   await writeAuditLog(userId, "approved", "ApprovalAction", id, `${row.actionType} — ${result.executionNote ?? "approved"}`);
   return result;
 }
