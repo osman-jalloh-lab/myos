@@ -342,12 +342,16 @@ export async function promoteApprovedSkillDraft(userId: string, draftId: string,
   const candidate = validateTaughtSkillCandidate(parseJson<TaughtSkillCandidate>(draft.definition));
   const quality = calculateSkillQualityScore(candidate);
   if (quality.score < 60) throw new Error(`Skill quality is too low for promotion (${quality.score}/100).`);
-  const effective = await computeEffectiveCapabilities(candidate);
+  const events = draft.projectId ? await prisma.skillTeachingEvent.findMany({ where: { sessionId: draft.sessionId }, orderBy: { sequence: "asc" }, select: { kind: true, payload: true } }) : [];
+  const { BROWSER_WORKFLOW_TOOL, deriveApprovedBrowserWorkflow } = await import("@/lib/hermes-execution/tools/browser-workflow-tool");
+  const browserWorkflow = draft.projectId ? deriveApprovedBrowserWorkflow({ projectId: draft.projectId, requiredContext: candidate.requiredContext, events }) : null;
+  const effective = await computeEffectiveCapabilities(browserWorkflow ? { ...candidate, execution: { tool: BROWSER_WORKFLOW_TOOL } } : candidate);
   const promotedDefinition: Record<string, unknown> = {
     ...candidate,
     instructions: candidate.instructions ?? candidate.purpose,
     provenance: { source: "teach-hermes", teachingSessionId: draft.sessionId, skillDraftId: draft.id, revision: draft.revision, confidence: draft.confidence },
   };
+  if (browserWorkflow && effective.tool === BROWSER_WORKFLOW_TOOL) promotedDefinition.browserWorkflow = browserWorkflow;
   if (effective.tool) promotedDefinition.execution = { tool: effective.tool, risk: effective.risk, requiresApproval: effective.requiresApproval };
   else delete promotedDefinition.execution;
   const skillId = candidate.id;

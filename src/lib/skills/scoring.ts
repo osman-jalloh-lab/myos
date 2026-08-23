@@ -142,9 +142,13 @@ function unique(values: string[]): string[] {
 function includesPhrase(haystack: string, phrase: string): boolean {
   const needle = normalize(phrase);
   if (needle.length <= 2) return false;
-  if (haystack.includes(needle)) return true;
+  if (` ${haystack} `.includes(` ${needle} `)) return true;
   const phraseWords = tokens(phrase);
-  if (phraseWords.length <= 1) return false;
+  if (phraseWords.length === 1) {
+    const word = phraseWords[0];
+    return tokens(haystack).some((candidate) => candidate === `${word}s` || candidate === `${word}es`);
+  }
+  if (phraseWords.length === 0) return false;
   const hayWords = new Set(tokens(haystack));
   return phraseWords.every((word) => hayWords.has(word));
 }

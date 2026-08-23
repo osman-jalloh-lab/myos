@@ -5,6 +5,7 @@
 import { registerTool } from "../tool-registry";
 import type { ToolContext, ExecutionArtifact } from "../types";
 import { registerBuildTools } from "./build-tools";
+import { registerBrowserWorkflowTool } from "./browser-workflow-tool";
 
 const GITHUB_URL_PREFIX = "https://github.com/";
 const GITHUB_REPO_SEGMENT_RE = /^[a-zA-Z0-9_.-]+$/;
@@ -127,6 +128,8 @@ function defaultProjectPlan(message: string): Array<{ title: string; assignedAge
 // ── internal.chat.respond ─────────────────────────────────────────────────────
 
 export function registerInternalTools(): void {
+
+  registerBrowserWorkflowTool();
 
   registerTool({
     name: "internal.chat.respond",
