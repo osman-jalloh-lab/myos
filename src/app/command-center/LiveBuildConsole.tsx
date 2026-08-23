@@ -64,7 +64,7 @@ export default function LiveBuildConsole({ projectId, compact = false }: { proje
   };
 
   return (
-    <section id="live-build-console" style={shell} aria-label="Live Build Console">
+    <section id="live-build-console" className="os-live-console" style={shell} aria-label="Live Build Console">
       <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center", padding: compact ? "10px 12px" : "13px 15px", borderBottom: "1px solid rgba(93,111,143,.22)", background: "rgba(15,23,38,.8)" }}>
         <div>
           <div style={{ color: "#F1F4FB", fontSize: compact ? 14 : 17, fontWeight: 850, fontFamily: "Fraunces, serif" }}>Live Build Console</div>

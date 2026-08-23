@@ -97,7 +97,7 @@ export default function TeachHermesReviewPanel({ onRegistryChanged }: { onRegist
   const failureLines = edit.instructions.split(/(?<=[.!?])\s+/).filter((line) => /if|fail|unable|error|missing/i.test(line));
 
   return (
-    <section aria-label="Teach Hermes draft review" style={{ ...panel, display: "grid", gap: 16 }}>
+    <section className="os-teach-review" aria-label="Teach Hermes draft review" style={{ ...panel, display: "grid", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
         <div><div style={{ ...label, color: "#A99BFF" }}>Teach Hermes · Human Review</div><h2 style={{ margin: 0, fontFamily: "Fraunces, serif", fontSize: 24 }}>What Hermes learned</h2><p style={{ margin: "7px 0 0", color: "#94A3B8", fontSize: 13 }}>Review the reusable workflow before it can join the skill registry.</p></div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>

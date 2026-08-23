@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, type CSSProperties } from "re
 import BuilderOffice from "./BuilderOffice";
 import LiveBuildConsole from "./LiveBuildConsole";
 import TeachHermesReviewPanel from "./TeachHermesReviewPanel";
+import AppSidebar, { type CommandCenterDestination } from "./AppSidebar";
 import AgentRoster from "@/components/AgentRoster";
 import CouncilChatPanel from "@/components/CouncilChatPanel";
 import HermesNousChatPanel from "@/components/HermesNousChatPanel";
@@ -423,7 +424,7 @@ interface AccountsHealthData {
   results?: Array<{ accountId: string; status: string; email?: string; error?: string | null }>;
 }
 
-type Tab = "overview" | "health" | "agents" | "memory" | "skills" | "projects" | "builds" | "runs" | "bus" | "logs" | "chat";
+type Tab = CommandCenterDestination | "builds" | "bus";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -814,8 +815,24 @@ function OverviewPanel({
   ];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ ...missionCardStyle, padding: "10px 12px", display: "grid", gridTemplateColumns: "minmax(180px, 1fr) repeat(5, minmax(110px, auto))", gap: 10, alignItems: "center" }}>
+    <div className="os-overview">
+      <section className="os-overview-hero" aria-labelledby="overview-heading">
+        <div className="os-hero-copy"><span>Hermes command</span><h1 id="overview-heading">Your operating system is ready.</h1><p>Give Hermes work, continue an active project, or review anything that needs your attention.</p></div>
+        <div className="os-hero-health"><span className={`os-status-dot ${health && systemHealth.status === "healthy" ? "is-live" : "is-warning"}`} /><strong>{health ? `${systemHealth.score}% healthy` : "Status pending"}</strong><small>{health?.overall.message ?? "Waiting for a live health check"}</small></div>
+      </section>
+
+      <section className="os-command-surface" aria-label="Ask Hermes">
+        <div className="os-section-heading"><div><span>Primary command</span><h2>Ask Hermes</h2></div><button onClick={() => onTabSwitch("chat")}>Open full conversation →</button></div>
+        <CompactHermesConsole initialMessages={chatMessages} />
+        <div className="os-quick-actions" aria-label="Quick actions">
+          <button onClick={() => onTabSwitch("builder")}>Build something</button>
+          <button onClick={() => onTabSwitch("projects")}>Continue a project</button>
+          <button onClick={() => onTabSwitch("teach")}>Teach Hermes</button>
+          <button onClick={() => onTabSwitch("approvals")}>Review approvals {pendingApprovals.length ? `(${pendingApprovals.length})` : ""}</button>
+        </div>
+      </section>
+
+      <div className="os-overview-statusbar">
         <div style={{ minWidth: 0 }}>
           <div style={{ color: "#F1F4FB", fontSize: 16, fontWeight: 850, fontFamily: "Fraunces, serif", lineHeight: 1 }}>Mission Control</div>
           <div style={{ color: "#647089", fontSize: 10, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{health?.overall.message ?? "Live"} / {memoryStatus}</div>
@@ -823,7 +840,7 @@ function OverviewPanel({
         <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(systemHealth.status), boxShadow: `0 0 14px ${statusColor(systemHealth.status)}66` }} />
           <span style={{ color: "#94A3B8", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>System</span>
-          <strong style={{ color: "#F1F4FB", fontSize: 18, lineHeight: 1, fontFamily: "Fraunces, serif" }}>{systemHealth.score}%</strong>
+          <strong style={{ color: "#F1F4FB", fontSize: 18, lineHeight: 1, fontFamily: "Fraunces, serif" }}>{health ? `${systemHealth.score}%` : "Unknown"}</strong>
         </div>
         {[
           { label: "Accounts", value: accountIssues ? `${accountIssues} issue` : "healthy", color: accountIssues ? "#FBBF24" : "#34D399" },
@@ -841,20 +858,20 @@ function OverviewPanel({
 
       <MissionHealthBar health={health} queue={queue} memoryDebug={memoryDebug} />
 
-      <SystemHealthScorePanel health={systemHealth} />
+      {health ? <SystemHealthScorePanel health={systemHealth} /> : <div style={missionCardStyle}>System health details are unavailable until the live health service responds.</div>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
+      <section className="os-metric-grid" aria-label="Operating metrics">
         {metrics.map((metric) => (
           <button key={metric.label} onClick={() => onTabSwitch(metric.tab)} style={{ ...missionCardStyle, textAlign: "left", cursor: "pointer", minHeight: 70, padding: "11px 12px" }}>
             <div style={{ color: metric.tone, fontSize: 21, fontWeight: 850, fontFamily: "Fraunces, serif", lineHeight: 1 }}>{metric.value}</div>
             <div style={{ color: "#94A3B8", fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 8 }}>{metric.label}</div>
           </button>
         ))}
-      </div>
+      </section>
 
       <AgentNetworkStrip onOpen={() => onTabSwitch("agents")} />
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", gap: 10, alignItems: "start" }}>
+      <div className="os-overview-grid">
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <AgentCommandPanel runs={runs} health={health} projects={projects} memoryDebug={memoryDebug} onTabSwitch={onTabSwitch} onOfficeSelect={onOfficeSelect} />
           <MissionQueuePanel queue={queue} approvals={pendingApprovals} onApprove={onApprove} onReject={onReject} />
@@ -1460,7 +1477,7 @@ function ProjectsPanel({ projects }: { projects: Project[] }) {
     .sort((left, right) => canonicalBuilderStageOrder(left.canonicalStage) - canonicalBuilderStageOrder(right.canonicalStage) || new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="os-projects-workspace" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {BUILDER_STAGE_FILTERS.map((item) => <button key={item} type="button" onClick={() => setFilter(item)} style={pillStyle(filter === item)}>{item === "all" ? "All" : item === "qa" ? "QA" : item[0].toUpperCase() + item.slice(1)}</button>)}
       </div>
@@ -1870,6 +1887,8 @@ function SkillsPanel({
   };
 
   const installed = skills.filter((skill) => skill.source === "installed" || skill.source === "built_in");
+  const systemSkills = skills.filter((skill) => skill.source === "built_in" || skill.source === "installed");
+  const userSkills = skills.filter((skill) => skill.source === "user");
   const recentlyAdded = skills
     .filter((skill) => skill.dateAdded)
     .sort((a, b) => new Date(b.dateAdded ?? 0).getTime() - new Date(a.dateAdded ?? 0).getTime())
@@ -1889,7 +1908,11 @@ function SkillsPanel({
   const scoutApprovals = approvals.filter((approval) => approval.actionType === "skill_scout_import");
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="os-skills-workspace" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <section className="os-skills-intro">
+        <div><span>Skills workspace</span><h1>What Hermes knows how to do</h1><p>System skills are maintained by My OS. User and taught skills enter the normal registry only after review and approval.</p></div>
+        <div className="os-skill-counts"><span><strong>{systemSkills.length}</strong> system</span><span><strong>{userSkills.length}</strong> user / taught</span><span><strong>{skills.filter((skill) => skill.enabled).length}</strong> active</span></div>
+      </section>
       <div style={cardStyle}>
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 16, alignItems: "end" }}>
           <div style={{ minWidth: 0 }}>
@@ -2854,6 +2877,7 @@ export default function CommandCenterClient() {
   const [skillScoutResult, setSkillScoutResult] = useState<SkillScoutResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [taskComposerOpen, setTaskComposerOpen] = useState(false);
+  const [navigationOpen, setNavigationOpen] = useState(false);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -3075,30 +3099,26 @@ export default function CommandCenterClient() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", background: "radial-gradient(1000px 520px at 15% -10%, rgba(139,123,255,.14), transparent 62%), radial-gradient(800px 480px at 100% 100%, rgba(96,165,250,.08), transparent 62%), #06060B", color: "#F1F4FB", fontFamily: "Hanken Grotesk, sans-serif" }}>
-      <aside style={{ position: "sticky", top: 0, alignSelf: "flex-start", width: 226, height: "100vh", flexShrink: 0, boxSizing: "border-box", padding: "22px 12px", borderRight: "1px solid rgba(255,255,255,.08)", background: "rgba(8,8,15,.72)", backdropFilter: "blur(18px)" }}>
-        <div style={{ padding: "0 10px 22px", color: "#F3F0FA", fontFamily: "Fraunces, serif", fontSize: 19 }}>HERMES OS<div style={{ marginTop: 4, color: "#A99BFF", fontFamily: "JetBrains Mono, monospace", fontSize: 9, letterSpacing: ".13em" }}>COMMAND CENTER</div></div>
-        <nav aria-label="Command Center navigation" style={{ display: "grid", gap: 4 }}>{([['overview', 'Overview'], ['agents', 'Agent Network'], ['runs', 'Task Board'], ['projects', 'Projects'], ['skills', 'Skills'], ['logs', 'Audit Logs'], ['health', 'System Health']] as Array<[Tab, string]>).map(([id, label]) => <button key={id} onClick={() => setTab(id)} style={{ width: "100%", border: tab === id ? "1px solid rgba(139,123,255,.34)" : "1px solid transparent", borderRadius: 10, padding: "10px 11px", textAlign: "left", color: tab === id ? "#F0EDFF" : "#9A96A9", background: tab === id ? "rgba(139,123,255,.13)" : "transparent", cursor: "pointer", fontSize: 12 }}>{label}</button>)}</nav>
-      </aside>
-      <div style={{ minWidth: 0, flex: 1 }}>
+    <div className="os-shell">
+      <AppSidebar active={tab as CommandCenterDestination} pendingApprovals={pendingCount} open={navigationOpen} onClose={() => setNavigationOpen(false)} onNavigate={(destination) => setTab(destination)} />
+      <div className="os-workspace">
       {/* Header */}
-      <div style={{ borderBottom: "1px solid rgba(255,255,255,.09)", padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", minHeight: 58, background: "rgba(6,6,11,.64)", backdropFilter: "blur(18px)", position: "sticky", top: 0, zIndex: 20 }}>
+      <header className="os-topbar">
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <button className="os-menu-button" onClick={() => setNavigationOpen(true)} aria-label="Open navigation">☰</button>
           <a href="/" style={{ fontSize: 11, color: "#94A3B8", textDecoration: "none", display: "flex", alignItems: "center", gap: 6 }}>
             <span>←</span> Dashboard
           </a>
           <div style={{ width: 1, height: 16, background: "#28324A" }} />
-          <span style={{ fontSize: 17, fontWeight: 700, fontFamily: "Fraunces, serif", color: "#F1EEFF" }}>
-            HERMES OS <span style={{ color: "#8B7BFF", fontFamily: "JetBrains Mono, monospace", fontSize: 9, letterSpacing: "0.12em" }}>COMMAND CENTER</span>
-          </span>
+          <span className="os-page-title">{tab === "chat" ? "Ask Hermes" : tab === "builder" ? "Builder Office" : tab === "live" ? "Live Console" : tab === "teach" ? "Teach Hermes" : tab === "approvals" ? "Approvals" : tab.charAt(0).toUpperCase() + tab.slice(1)}<small>Command Center</small></span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "#94A3B8" }}>
           {loading && <span>Syncing...</span>}
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(healthCenter?.overall.status ?? "healthy"), animation: "pulse 2s infinite" }} />
           <span>{healthCenter ? `Health: ${systemHealth.score}%` : "Live"}</span>
-          <button onClick={() => setTaskComposerOpen(true)} style={{ border: 0, borderRadius: 10, padding: "9px 14px", background: "linear-gradient(135deg, #8B7BFF, #6A5CFF)", color: "#fff", fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 20px rgba(139,123,255,.28)" }}>+ New Task</button>
+          <button className="os-primary-button" onClick={() => setTaskComposerOpen(true)}>+ New Task</button>
         </div>
-      </div>
+      </header>
 
       {/* Tabs */}
       <div style={{ display: "none" }}>
@@ -3120,7 +3140,7 @@ export default function CommandCenterClient() {
       </div>
 
       {/* Content */}
-      <div style={{ padding: "12px 24px 28px", maxWidth: tab === "overview" ? 1560 : 1100, margin: "0 auto" }}>
+      <main className={`os-main os-view-${tab}`}>
         {loading && projects.length === 0 ? (
           <div style={{ textAlign: "center", color: "#4B5563", padding: 64 }}>Loading...</div>
         ) : (
@@ -3152,6 +3172,10 @@ export default function CommandCenterClient() {
                 onAccountHealthCheck={runAccountHealthCheck}
               />
             )}
+            {tab === "approvals" && <MissionQueuePanel queue={executionQueue} approvals={approvals.filter((item) => item.status === "pending")} onApprove={handleApprove} onReject={handleReject} />}
+            {tab === "builder" && <BuilderOffice />}
+            {tab === "live" && <LiveBuildConsole />}
+            {tab === "teach" && <TeachHermesReviewPanel onRegistryChanged={refreshSkills} />}
             {tab === "agents" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -3229,7 +3253,7 @@ export default function CommandCenterClient() {
             {tab === "chat" && <ChatPanel initialMessages={chatMessages} />}
           </>
         )}
-      </div>
+      </main>
       {taskComposerOpen && <TaskAssignmentModal onClose={() => setTaskComposerOpen(false)} onSubmit={createDashboardTask} />}
       </div>
     </div>

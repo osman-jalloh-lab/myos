@@ -389,7 +389,7 @@ export default function BuilderOffice() {
   const localWorker = health?.executors.find((executor) => executor.name === "Local Worker");
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.25fr) minmax(300px,.75fr)", gap: 20 }}>
+    <div className="os-builder-workspace" style={{ display: "grid", gridTemplateColumns: "minmax(0,1.25fr) minmax(300px,.75fr)", gap: 20 }}>
       <section style={{ ...card, minHeight: 520, display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 22 }}>
           <div>
