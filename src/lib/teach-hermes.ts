@@ -28,6 +28,7 @@ export type TaughtSkillCandidate = SkillDefinitionV2 & {
 
 const SECRET_FIELD_RE = /password|passcode|secret|token|api[-_ ]?key|authorization|cookie|session|credential|private[-_ ]?key|clipboard/i;
 const SECRET_VALUE_RE = /(?:Bearer\s+[A-Za-z0-9._~+/-]+=*|(?:sk|pk|ghp|gho|ghu|ghs|xox[baprs])-[A-Za-z0-9_-]{8,}|[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|COOKIE|CREDENTIAL|AUTH)[A-Z0-9_]*\s*[:=]\s*\S+)/i;
+const CREDENTIAL_SHAPED_RE = /\b(?:secret|token|password|credential|access[-_]?key|private[-_]?key)[-_][A-Za-z0-9_-]{6,}\b/gi;
 const REDACTED = "[REDACTED]";
 
 function cleanText(value: unknown, max: number): string {
@@ -43,6 +44,7 @@ export function redactTeachingText(value: unknown, fieldName = "text", max = 200
     .replace(/Bearer\s+[A-Za-z0-9._~+/-]+=*/gi, REDACTED)
     .replace(/([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|COOKIE|CREDENTIAL|AUTH)[A-Z0-9_]*)\s*[:=]\s*["']?[^"'\s,;]+/gi, `$1=${REDACTED}`)
     .replace(/(?:sk|pk|ghp|gho|ghu|ghs|xox[baprs])-[A-Za-z0-9_-]{8,}/gi, REDACTED)
+    .replace(CREDENTIAL_SHAPED_RE, REDACTED)
     .slice(0, max);
 }
 

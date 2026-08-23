@@ -15,6 +15,7 @@ import {
   type TaughtSkillCandidate,
 } from "@/lib/teach-hermes";
 import { appendRecordedBrowserEvent, startTeachingRecording, stopTeachingRecording, type RecordedBrowserEvent } from "@/lib/teach-hermes-recording";
+import { generateTeachingSkillDraft } from "@/lib/teach-hermes-generation";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -49,6 +50,8 @@ export async function POST(req: Request) {
         return NextResponse.json(await appendRecordedBrowserEvent(userId, { sessionId: String(body.sessionId ?? ""), nonce: String(body.nonce ?? ""), browserSequence: Number(body.browserSequence), event: body.event as RecordedBrowserEvent }));
       case "stopRecording":
         return NextResponse.json({ session: await stopTeachingRecording(userId, String(body.sessionId ?? "")) });
+      case "generateDraft":
+        return NextResponse.json(await generateTeachingSkillDraft(userId, { sessionId: String(body.sessionId ?? ""), requestKey: String(body.requestKey ?? "") }));
       case "createDraft":
         return NextResponse.json({ draft: await createSkillDraft(userId, { sessionId: String(body.sessionId ?? ""), candidate: body.candidate as TaughtSkillCandidate, observedCapabilities: Array.isArray(body.observedCapabilities) ? body.observedCapabilities.map(String) : [], confidence: Number(body.confidence ?? 0), provenance: typeof body.provenance === "object" && body.provenance ? body.provenance as Record<string, unknown> : undefined }) });
       case "updateDraft":

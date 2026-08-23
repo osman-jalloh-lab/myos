@@ -49,6 +49,10 @@ const HOSTED_PROVIDER_TIMEOUT_MS = 30_000;
 const OLLAMA_TIMEOUT_MS = 60_000;
 const MEMORY_EXTRACTION_TIMEOUT_MS = 5_000;
 
+function modelMaxTokens(taskType: string | undefined, fallback: number): number {
+  return taskType === "teach-hermes-draft" ? 2_500 : fallback;
+}
+
 // Rough list pricing per 1M tokens (not billing-accurate; update if pricing changes).
 const GROQ_COST_PER_MILLION = { input: 0.05, output: 0.08 };
 const ANTHROPIC_COST_PER_MILLION = {
@@ -85,7 +89,7 @@ async function callGroq(system: string, user: string, taskType?: string): Promis
         { role: "user", content: user },
       ],
       temperature: 0.4,
-      max_tokens: 400,
+      max_tokens: modelMaxTokens(taskType, 400),
     }),
     signal: providerTimeoutSignal("groq", taskType),
   });
@@ -155,7 +159,7 @@ async function callOpenAI(system: string, user: string, taskType?: string): Prom
         { role: "user", content: user },
       ],
       temperature: 0.4,
-      max_tokens: 500,
+      max_tokens: modelMaxTokens(taskType, 500),
     }),
     signal: providerTimeoutSignal("openai", taskType),
   });
@@ -181,7 +185,7 @@ async function callAnthropic(system: string, user: string, taskType?: string): P
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not set");
 
   // Synthesis tasks get Sonnet; everything else gets Haiku (fast + cheap).
-  const isSynthesis = taskType === "daily-brief" || taskType === "chat-multi-agent";
+  const isSynthesis = taskType === "daily-brief" || taskType === "chat-multi-agent" || taskType === "teach-hermes-draft";
   const model = isSynthesis ? ANTHROPIC_SYNTHESIS_MODEL : ANTHROPIC_CHAT_MODEL;
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -193,7 +197,7 @@ async function callAnthropic(system: string, user: string, taskType?: string): P
     },
     body: JSON.stringify({
       model,
-      max_tokens: isSynthesis ? 800 : 500,
+      max_tokens: taskType === "teach-hermes-draft" ? 2_500 : isSynthesis ? 800 : 500,
       system,
       messages: [{ role: "user", content: user }],
     }),
@@ -230,7 +234,7 @@ function estimateCost(provider: Provider, inputTokens = 0, outputTokens = 0, tas
     return (inputTokens / 1_000_000) * OPENAI_COST_PER_MILLION.input + (outputTokens / 1_000_000) * OPENAI_COST_PER_MILLION.output;
   }
   if (provider === "anthropic") {
-    const isSynthesis = taskType === "daily-brief" || taskType === "chat-multi-agent";
+    const isSynthesis = taskType === "daily-brief" || taskType === "chat-multi-agent" || taskType === "teach-hermes-draft";
     const rates = isSynthesis ? ANTHROPIC_COST_PER_MILLION.sonnet : ANTHROPIC_COST_PER_MILLION.haiku;
     return (inputTokens / 1_000_000) * rates.input + (outputTokens / 1_000_000) * rates.output;
   }
