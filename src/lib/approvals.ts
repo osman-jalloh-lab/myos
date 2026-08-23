@@ -20,6 +20,7 @@ export type ApprovalActionType =
   | "engineering_plan"
   | "skill_scout_import"
   | "skill_scout_arm"
+  | "teach_skill_promote"
   | "task_handoff"
   | "self_improvement_proposal"
   | "obsidian_write_note";
@@ -92,6 +93,7 @@ const SCOPE_BLOCKED: Record<ApprovalActionType, string | null> = {
   engineering_plan: null,
   skill_scout_import: null,
   skill_scout_arm: null,
+  teach_skill_promote: null,
   task_handoff: null,
   self_improvement_proposal: "Safe self-improvement proposals are advisory only. Branch implementation requires a separate explicit Osman-approved work request; this approval does not edit code, prompts, env, schema, branches, deployments, or integrations.",
   obsidian_write_note: null,
@@ -133,6 +135,12 @@ export async function rejectAction(userId: string, id: string): Promise<Approval
     where: { id },
     data: { status: "rejected", resolvedAt: new Date() },
   });
+  if (row.actionType === "teach_skill_promote") {
+    const payload = JSON.parse(row.payload) as { draftId?: string };
+    if (!payload.draftId) throw new Error("Teach Hermes approval is missing draftId.");
+    const { markSkillDraftRejectedFromApproval } = await import("@/lib/teach-hermes");
+    await markSkillDraftRejectedFromApproval(userId, payload.draftId, row.id);
+  }
   await writeAuditLog(userId, "rejected", "ApprovalAction", id, `${row.actionType}`);
   return toView(updated);
 }
@@ -175,6 +183,14 @@ async function executeIfPossible(row: {
   }
 
   let executionNote: string | null = null;
+
+  if (actionType === "teach_skill_promote") {
+    const payload = JSON.parse(row.payload) as { draftId?: string };
+    if (!payload.draftId) throw new Error("Teach Hermes approval is missing draftId.");
+    const { promoteApprovedSkillDraft } = await import("@/lib/teach-hermes");
+    const skill = await promoteApprovedSkillDraft(row.userId, payload.draftId, row.id);
+    executionNote = `Approved Teach Hermes draft promoted to ${skill.name}.`;
+  }
 
   // create_task / save_memory only ever touch our own DB — safe to execute
   // immediately once approved, since they hold no external write power.

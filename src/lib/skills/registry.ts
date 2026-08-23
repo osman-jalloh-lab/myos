@@ -97,7 +97,7 @@ export type PlannerSkillCatalogEntry = {
   triggers: string[];
 };
 
-let cache: { createdAt: number; entries: SkillRegistryEntry[] } | null = null;
+const cacheByUser = new Map<string, { createdAt: number; entries: SkillRegistryEntry[] }>();
 let skillStateTableEnsured = false;
 let skillStateTableEnsurePromise: Promise<void> | null = null;
 const CACHE_MS = 60_000;
@@ -591,14 +591,16 @@ async function stateBySkill(userId: string): Promise<Map<string, SkillStateRow>>
   return new Map(rows.map((row) => [row.skillId, row]));
 }
 
-export function clearSkillRegistryCache(): void {
-  cache = null;
+export function clearSkillRegistryCache(userId?: string): void {
+  if (userId) cacheByUser.delete(userId);
+  else cacheByUser.clear();
 }
 
 // Read-only consumers (such as plan previews) must not initialize telemetry or
 // mutate per-user skill state merely to inspect available metadata.
 export async function getRegisteredSkillsReadOnly(userId: string, refresh = false): Promise<SkillRegistryEntry[]> {
-  if (refresh) clearSkillRegistryCache();
+  if (refresh) clearSkillRegistryCache(userId);
+  let cache = cacheByUser.get(userId) ?? null;
   if (!cache || Date.now() - cache.createdAt > CACHE_MS) {
     const projectsRoot = resolveLocalProjectsRoot();
     const [repo, agent, local, user] = await Promise.all([
@@ -608,6 +610,7 @@ export async function getRegisteredSkillsReadOnly(userId: string, refresh = fals
     const byId = new Map<string, SkillRegistryEntry>();
     for (const skill of [...repo, ...agent, ...local, ...user]) if (!byId.has(skill.id)) byId.set(skill.id, skill);
     cache = { createdAt: Date.now(), entries: [...byId.values()].sort((a, b) => a.name.localeCompare(b.name)) };
+    cacheByUser.set(userId, cache);
   }
   return cache.entries;
 }

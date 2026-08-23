@@ -33,6 +33,8 @@ model User {
   engineeringTasks    EngineeringTask[]
   emailCorrespondents EmailCorrespondent[]
   userSkills          UserSkill[]
+  skillTeachingSessions SkillTeachingSession[]
+  skillDrafts         SkillDraft[]
   agentEnvelopes      AgentEnvelope[]
 }
 
@@ -401,6 +403,68 @@ model UserSkill {
   @@unique([userId, skillId])
   @@index([userId, enabled])
   @@index([userId, updatedAt])
+}
+
+// Teach Hermes records untrusted demonstrations separately from routable skills.
+// Only an approved promotion copies a validated definition into UserSkill.
+model SkillTeachingSession {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId String?
+  activeScopeKey String? @unique
+  goal      String
+  status    String   @default("recording")
+  startedAt DateTime @default(now())
+  expiresAt DateTime
+  stoppedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  events    SkillTeachingEvent[]
+  draft     SkillDraft?
+
+  @@index([userId, projectId, status, expiresAt])
+  @@index([userId, updatedAt])
+}
+
+model SkillTeachingEvent {
+  id           String               @id @default(cuid())
+  sessionId    String
+  session      SkillTeachingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sequence     Int
+  eventKey     String
+  kind         String
+  payload      String
+  evidenceHash String?
+  createdAt    DateTime             @default(now())
+
+  @@unique([sessionId, eventKey])
+  @@unique([sessionId, sequence])
+  @@index([sessionId, createdAt])
+}
+
+model SkillDraft {
+  id                    String               @id @default(cuid())
+  sessionId             String               @unique
+  session               SkillTeachingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId                String
+  user                  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectId             String?
+  name                  String
+  definition            String
+  observedCapabilities  String
+  effectiveCapabilities String
+  confidence            Float
+  provenance            String
+  status                String               @default("draft")
+  revision              Int                  @default(1)
+  approvalId             String?              @unique
+  promotedSkillId        String?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+
+  @@index([userId, status, updatedAt])
+  @@index([userId, projectId, status])
 }
 
 model ExecutionRun {
