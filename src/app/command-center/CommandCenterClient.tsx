@@ -752,6 +752,19 @@ function ProgressBar({ done, total }: { done: number; total: number }) {
   );
 }
 
+function WorkspaceHeading({ eyebrow, title, description, status, statusTone = "live" }: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  status?: string;
+  statusTone?: "live" | "warning";
+}) {
+  return <section className="os-workspace-heading" aria-labelledby={`workspace-${title.toLowerCase().replaceAll(" ", "-")}`}>
+    <div><span>{eyebrow}</span><h1 id={`workspace-${title.toLowerCase().replaceAll(" ", "-")}`}>{title}</h1><p>{description}</p></div>
+    {status && <div className={`os-workspace-state is-${statusTone}`}><span className={`os-status-dot is-${statusTone}`} aria-hidden="true" />{status}</div>}
+  </section>;
+}
+
 // ── Overview panel ────────────────────────────────────────────────────────────
 
 function OverviewPanel({
@@ -762,7 +775,6 @@ function OverviewPanel({
   runs,
   health,
   memoryDebug,
-  skills,
   chatMessages,
   onApprove,
   onReject,
@@ -776,20 +788,13 @@ function OverviewPanel({
   runs: AgentRun[];
   health: HealthCenterData | null;
   memoryDebug: MemoryContextDebugData | null;
-  skills: SkillView[];
   chatMessages: ChatMessage[];
   onApprove: (id: string) => Promise<void>;
   onReject: (id: string) => Promise<void>;
   onTabSwitch: (tab: Tab) => void;
   onOfficeSelect: (office: AgentOffice) => void;
 }) {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const todayRuns = runs.filter((r) => new Date(r.createdAt) >= todayStart);
   const pendingApprovals = approvals.filter((a) => a.status === "pending");
-  const jobRunsToday = todayRuns.filter((r) => /job|athena/i.test(`${r.agentName} ${r.inputSummary ?? ""}`));
-  const emailRunsToday = todayRuns.filter((r) => /email|iris|gmail|inbox/i.test(`${r.agentName} ${r.inputSummary ?? ""}`));
-  const skillRunsToday = todayRuns.filter((r) => /skill|sophos/i.test(`${r.agentName} ${r.inputSummary ?? ""}`));
   const projectCounts = projects.reduce((counts, project) => {
     counts[canonicalBuilderStageGroup(project.canonicalStage)]++;
     return counts;
@@ -805,12 +810,8 @@ function OverviewPanel({
 
   const metrics = [
     { label: "Active projects", value: projectCounts.active, tone: "#A78BFA", tab: "projects" as Tab },
-    { label: "Queued projects", value: projectCounts.queued, tone: "#60A5FA", tab: "projects" as Tab },
-    { label: "Failed projects", value: projectCounts.failed, tone: "#F87171", tab: "projects" as Tab },
-    { label: "Completed projects", value: projectCounts.completed, tone: "#34D399", tab: "projects" as Tab },
-    { label: "Jobs found today", value: jobRunsToday.length, tone: "#E879F9", tab: "logs" as Tab },
-    { label: "Important emails", value: emailRunsToday.length, tone: "#F472B6", tab: "logs" as Tab },
-    { label: "Skills scouted", value: skillRunsToday.length || skills.length, tone: "#38BDF8", tab: "skills" as Tab },
+    { label: "Needs attention", value: projectCounts.failed + schedulerIssues + accountIssues, tone: "#F87171", tab: "health" as Tab },
+    { label: "Pending approvals", value: pendingApprovals.length, tone: "#FBBF24", tab: "approvals" as Tab },
     { label: "Builds pass/fail", value: `${buildPassed}/${buildFailed}`, tone: buildFailed > 0 ? "#FBBF24" : "#34D399", tab: "projects" as Tab },
   ];
 
@@ -822,7 +823,7 @@ function OverviewPanel({
       </section>
 
       <section className="os-command-surface" aria-label="Ask Hermes">
-        <div className="os-section-heading"><div><span>Primary command</span><h2>Ask Hermes</h2></div><button onClick={() => onTabSwitch("chat")}>Open full conversation →</button></div>
+        <div className="os-section-heading"><div><span>Primary command</span><h2>Ask Hermes</h2></div><button onClick={() => onTabSwitch("chat")}><span className="os-command-link-long">Open full conversation →</span><span className="os-command-link-short">Full chat →</span></button></div>
         <CompactHermesConsole initialMessages={chatMessages} />
         <div className="os-quick-actions" aria-label="Quick actions">
           <button onClick={() => onTabSwitch("builder")}>Build something</button>
@@ -856,10 +857,6 @@ function OverviewPanel({
         ))}
       </div>
 
-      <MissionHealthBar health={health} queue={queue} memoryDebug={memoryDebug} />
-
-      {health ? <SystemHealthScorePanel health={systemHealth} /> : <div style={missionCardStyle}>System health details are unavailable until the live health service responds.</div>}
-
       <section className="os-metric-grid" aria-label="Operating metrics">
         {metrics.map((metric) => (
           <button key={metric.label} onClick={() => onTabSwitch(metric.tab)} style={{ ...missionCardStyle, textAlign: "left", cursor: "pointer", minHeight: 70, padding: "11px 12px" }}>
@@ -869,8 +866,6 @@ function OverviewPanel({
         ))}
       </section>
 
-      <AgentNetworkStrip onOpen={() => onTabSwitch("agents")} />
-
       <div className="os-overview-grid">
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <AgentCommandPanel runs={runs} health={health} projects={projects} memoryDebug={memoryDebug} onTabSwitch={onTabSwitch} onOfficeSelect={onOfficeSelect} />
@@ -878,7 +873,6 @@ function OverviewPanel({
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <LiveActivityFeed items={liveActivity} />
-          <ActivitySection runs={runs} builds={builds} projects={projects} skills={skills} />
           <LiveBuildConsole />
         </div>
       </div>
@@ -3100,7 +3094,15 @@ export default function CommandCenterClient() {
 
   return (
     <div className="os-shell">
-      <AppSidebar active={tab as CommandCenterDestination} pendingApprovals={pendingCount} open={navigationOpen} onClose={() => setNavigationOpen(false)} onNavigate={(destination) => setTab(destination)} />
+      <AppSidebar
+        active={tab as CommandCenterDestination}
+        pendingApprovals={pendingCount}
+        systemStatus={healthCenter && systemHealth.status === "healthy" ? "healthy" : "warning"}
+        systemLabel={healthCenter ? `${systemHealth.score}% system health` : "Checking system health"}
+        open={navigationOpen}
+        onClose={() => setNavigationOpen(false)}
+        onNavigate={(destination) => setTab(destination)}
+      />
       <div className="os-workspace">
       {/* Header */}
       <header className="os-topbar">
@@ -3116,7 +3118,7 @@ export default function CommandCenterClient() {
           {loading && <span>Syncing...</span>}
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(healthCenter?.overall.status ?? "healthy"), animation: "pulse 2s infinite" }} />
           <span>{healthCenter ? `Health: ${systemHealth.score}%` : "Live"}</span>
-          <button className="os-primary-button" onClick={() => setTaskComposerOpen(true)}>+ New Task</button>
+          <button className="os-primary-button" aria-label="Create a new task" onClick={() => setTaskComposerOpen(true)}><span className="os-primary-button-long">+ New Task</span><span className="os-primary-button-short" aria-hidden="true">+ Task</span></button>
         </div>
       </header>
 
@@ -3154,7 +3156,6 @@ export default function CommandCenterClient() {
                 runs={runs}
                 health={healthCenter}
                 memoryDebug={memoryContextDebug}
-                skills={skills}
                 chatMessages={chatMessages}
                 onApprove={handleApprove}
                 onReject={handleReject}
@@ -3163,21 +3164,33 @@ export default function CommandCenterClient() {
               />
             )}
             {tab === "health" && (
-              <HealthCenterPanel
+              <div className="os-view-stack">
+                <WorkspaceHeading eyebrow="System status" title="Health & Integrations" description="Inspect live service health, disconnected accounts, scheduled work, and executor availability without hiding degraded states." status={`${systemHealth.score}% health`} statusTone={systemHealth.status === "healthy" ? "live" : "warning"} />
+                <MissionHealthBar health={healthCenter} queue={executionQueue} memoryDebug={memoryContextDebug} />
+                <SystemHealthScorePanel health={systemHealth} />
+                <HealthCenterPanel
                 data={healthCenter}
                 busyAction={healthAction}
                 accountsHealth={accountsHealth}
                 accountHealthBusy={accountHealthAction}
                 onAction={runHealthAction}
                 onAccountHealthCheck={runAccountHealthCheck}
-              />
+                />
+              </div>
             )}
-            {tab === "approvals" && <MissionQueuePanel queue={executionQueue} approvals={approvals.filter((item) => item.status === "pending")} onApprove={handleApprove} onReject={handleReject} />}
+            {tab === "approvals" && <div className="os-view-stack">
+              <WorkspaceHeading eyebrow="Trust boundary" title="Approval Queue" description="Review the requested action and its context before allowing My OS to write, send, schedule, or change anything." status={`${pendingCount} pending`} statusTone="warning" />
+              <MissionQueuePanel queue={executionQueue} approvals={approvals.filter((item) => item.status === "pending")} onApprove={handleApprove} onReject={handleReject} />
+            </div>}
             {tab === "builder" && <BuilderOffice />}
             {tab === "live" && <LiveBuildConsole />}
-            {tab === "teach" && <TeachHermesReviewPanel onRegistryChanged={refreshSkills} />}
+            {tab === "teach" && <div className="os-view-stack">
+              <WorkspaceHeading eyebrow="Teach Hermes" title="Demonstration Review" description="Recorded evidence becomes an inactive draft first. Nothing is routable until you review and approve it through the normal policy path." status="Approval protected" />
+              <TeachHermesReviewPanel onRegistryChanged={refreshSkills} />
+            </div>}
             {tab === "agents" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <AgentNetworkStrip onOpen={() => setAgentsView("offices")} />
                 <div style={{ display: "flex", gap: 6 }}>
                   {(["talk", "offices"] as const).map((view) => (
                     <button
@@ -3234,7 +3247,10 @@ export default function CommandCenterClient() {
               />
               </div>
             )}
-            {tab === "projects" && <ProjectsPanel projects={projects} />}
+            {tab === "projects" && <div className="os-view-stack">
+              <WorkspaceHeading eyebrow="Persistent workspaces" title="Projects" description="Continue the same project, inspect its current task, and return to its preview or build evidence without starting over." status={`${projects.length} projects`} />
+              <ProjectsPanel projects={projects} />
+            </div>}
             {tab === "builds" && <BuildsPanel builds={builds} />}
             {tab === "runs" && (
               <RunInspectorPanel
@@ -3249,8 +3265,11 @@ export default function CommandCenterClient() {
               />
             )}
             {tab === "bus" && <AgentBusPanel data={agentBus} />}
-            {tab === "logs" && <LogsPanel runs={runs} audit={audit} />}
-            {tab === "chat" && <ChatPanel initialMessages={chatMessages} />}
+            {tab === "logs" && <div className="os-view-stack"><ActivitySection runs={runs} builds={builds} projects={projects} skills={skills} /><LogsPanel runs={runs} audit={audit} /></div>}
+            {tab === "chat" && <div className="os-view-stack">
+              <WorkspaceHeading eyebrow="Hermes command" title="Ask Hermes" description="Give Hermes a clear outcome. Normal skills, tools, policy checks, and approvals remain authoritative." status="Ready for work" />
+              <ChatPanel initialMessages={chatMessages} />
+            </div>}
           </>
         )}
       </main>

@@ -10,28 +10,31 @@ export const commandCenterNavigation: Array<{ label: string; items: NavItem[] }>
   { label: "Command", items: [
     { id: "overview", label: "Overview", icon: "⌂" },
     { id: "chat", label: "Ask Hermes", icon: "✦" },
-    { id: "agents", label: "Agent Network", icon: "◈" },
-    { id: "runs", label: "Tasks", icon: "✓" },
-    { id: "projects", label: "Projects", icon: "◇" },
     { id: "approvals", label: "Approvals", icon: "◎" },
   ] },
   { label: "Workspace", items: [
     { id: "builder", label: "Builder Office", icon: "⌁" },
-    { id: "projects", label: "Project Inspector", icon: "⌕" },
+    { id: "projects", label: "Projects", icon: "◇" },
     { id: "live", label: "Live Console", icon: ">_" },
+  ] },
+  { label: "System", items: [
     { id: "skills", label: "Skills", icon: "◆" },
     { id: "teach", label: "Teach Hermes", icon: "+" },
   ] },
-  { label: "System", items: [
+  { label: "Operations", items: [
+    { id: "agents", label: "Agent Network", icon: "◈" },
+    { id: "runs", label: "Tasks", icon: "✓" },
     { id: "health", label: "Health & Integrations", icon: "◉" },
     { id: "memory", label: "Memory", icon: "◌" },
     { id: "logs", label: "Audit & Activity", icon: "≡" },
   ] },
 ];
 
-export default function AppSidebar({ active, pendingApprovals, open, onClose, onNavigate }: {
+export default function AppSidebar({ active, pendingApprovals, systemStatus, systemLabel, open, onClose, onNavigate }: {
   active: CommandCenterDestination;
   pendingApprovals: number;
+  systemStatus: "healthy" | "warning";
+  systemLabel: string;
   open: boolean;
   onClose: () => void;
   onNavigate: (destination: CommandCenterDestination) => void;
@@ -57,7 +60,7 @@ export default function AppSidebar({ active, pendingApprovals, open, onClose, on
           })}
         </section>)}
       </nav>
-      <div className="os-sidebar-status"><span className="os-status-dot is-live" aria-hidden="true" /><span><strong>Capability stack ready</strong><small>Docker Builder · Teach Hermes</small></span></div>
+      <div className="os-sidebar-status"><span className={`os-status-dot ${systemStatus === "healthy" ? "is-live" : "is-warning"}`} aria-hidden="true" /><span><strong>{systemLabel}</strong><small>Docker Builder · Teach Hermes</small></span></div>
     </aside>
   </>;
 }
