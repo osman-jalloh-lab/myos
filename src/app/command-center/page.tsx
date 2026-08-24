@@ -9,5 +9,5 @@ export const metadata = {
 export default async function CommandCenterPage() {
   const session = await auth();
   if (!session?.user?.id) redirect("/auth/signin");
-  return <CommandCenterClient />;
+  return <CommandCenterClient userName={session.user.name ?? session.user.email ?? "Authenticated user"} />;
 }

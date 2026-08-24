@@ -1,13 +1,13 @@
 import "./globals.css";
-import { Fraunces, Hanken_Grotesk, JetBrains_Mono } from "next/font/google";
+import { Cinzel, Inter, JetBrains_Mono } from "next/font/google";
 
-const fraunces = Fraunces({
+const cinzel = Cinzel({
   subsets: ["latin"],
   weight: ["400", "500", "600"],
   variable: "--font-serif",
   display: "swap",
 });
-const hanken = Hanken_Grotesk({
+const inter = Inter({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
   variable: "--font-sans",
@@ -29,7 +29,7 @@ export const dynamic = "force-dynamic";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${fraunces.variable} ${hanken.variable} ${jetbrains.variable}`}>
+    <html lang="en" className={`${cinzel.variable} ${inter.variable} ${jetbrains.variable}`}>
       <body style={{ fontFamily: "var(--font-sans, system-ui, sans-serif)" }}>
         {children}
       </body>

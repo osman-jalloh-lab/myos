@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, type CSSProperties } from "react";
+import Image from "next/image";
 import BuilderOffice from "./BuilderOffice";
 import LiveBuildConsole from "./LiveBuildConsole";
 import TeachHermesReviewPanel from "./TeachHermesReviewPanel";
@@ -775,9 +776,6 @@ function OverviewPanel({
   runs,
   health,
   memoryDebug,
-  chatMessages,
-  onApprove,
-  onReject,
   onTabSwitch,
   onOfficeSelect,
 }: {
@@ -788,9 +786,6 @@ function OverviewPanel({
   runs: AgentRun[];
   health: HealthCenterData | null;
   memoryDebug: MemoryContextDebugData | null;
-  chatMessages: ChatMessage[];
-  onApprove: (id: string) => Promise<void>;
-  onReject: (id: string) => Promise<void>;
   onTabSwitch: (tab: Tab) => void;
   onOfficeSelect: (office: AgentOffice) => void;
 }) {
@@ -804,7 +799,6 @@ function OverviewPanel({
   const accountIssues = health?.accounts.filter((a) => !a.connected || a.reconnectRequired || a.lastError).length ?? 0;
   const schedulerIssues = health?.scheduledJobs.filter((j) => ["Delayed", "Failed", "Never Ran"].includes(j.status)).length ?? 0;
   const emailHealthy = health?.executors.find((e) => e.name === "Email Intelligence")?.status !== "Offline";
-  const memoryStatus = memoryDebug?.activeIntent ?? "ready";
   const systemHealth = calculateSystemHealthScore(health, queue);
   const liveActivity = buildLiveActivityFeed({ runs, builds, projects, approvals, memoryDebug, health });
 
@@ -815,67 +809,45 @@ function OverviewPanel({
     { label: "Builds pass/fail", value: `${buildPassed}/${buildFailed}`, tone: buildFailed > 0 ? "#FBBF24" : "#34D399", tab: "projects" as Tab },
   ];
 
+  const activeTasks = (queue?.tasks ?? []).filter((task) => !["completed", "cancelled"].includes(task.status)).slice(0, 5);
+  const recentProjects = [...projects].sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt)).slice(0, 5);
+  const agents = [
+    { name: "Hermes", role: "Executive orchestrator", image: "/agents/hermes.jpg", office: "hermes" as AgentOffice },
+    { name: "Argus", role: "Signals & risk", image: "/agents/argus.jpg", office: "hermes" as AgentOffice },
+    { name: "Iris", role: "Communications", image: "/agents/iris.jpg", office: "iris" as AgentOffice },
+    { name: "Kairos", role: "Planning & time", image: "/agents/kairos.jpg", office: "hermes" as AgentOffice },
+    { name: "Prometheus", role: "Builder agent", image: "/agents/prometheus.jpg", office: "builder" as AgentOffice },
+    { name: "Mnemosyne", role: "Memory & context", image: "/agents/mnemosyne.jpg", office: "hermes" as AgentOffice },
+    { name: "Themis", role: "Policy & approvals", image: "/agents/themis.jpg", office: "hermes" as AgentOffice },
+    { name: "Athena", role: "Career & strategy", image: "/agents/athena.jpg", office: "athena" as AgentOffice },
+    { name: "Plutus", role: "Financial insight", image: "/agents/plutus.jpg", office: "hermes" as AgentOffice },
+  ];
+
   return (
-    <div className="os-overview">
+    <div className="os-overview os-reference-overview">
       <section className="os-overview-hero" aria-labelledby="overview-heading">
-        <div className="os-hero-copy"><span>Hermes command</span><h1 id="overview-heading">Your operating system is ready.</h1><p>Give Hermes work, continue an active project, or review anything that needs your attention.</p></div>
+        <div className="os-hero-copy"><span>Hermes command</span><h1 id="overview-heading">Good morning. Your operating system is ready.</h1><p>Give Hermes work, continue an active project, or review anything that needs your attention.</p><button className="os-talk-hermes" onClick={() => onTabSwitch("chat")}>✦ Talk to Hermes</button></div>
+        <div className="os-hero-hermes" aria-label="Hermes executive orchestrator"><Image src="/agents/hermes.jpg" alt="Hermes" width={58} height={58} priority /><span><strong>Hermes</strong><small>Executive orchestrator · available</small></span></div>
         <div className="os-hero-health"><span className={`os-status-dot ${health && systemHealth.status === "healthy" ? "is-live" : "is-warning"}`} /><strong>{health ? `${systemHealth.score}% healthy` : "Status pending"}</strong><small>{health?.overall.message ?? "Waiting for a live health check"}</small></div>
       </section>
 
-      <section className="os-command-surface" aria-label="Ask Hermes">
-        <div className="os-section-heading"><div><span>Primary command</span><h2>Ask Hermes</h2></div><button onClick={() => onTabSwitch("chat")}><span className="os-command-link-long">Open full conversation →</span><span className="os-command-link-short">Full chat →</span></button></div>
-        <CompactHermesConsole initialMessages={chatMessages} />
-        <div className="os-quick-actions" aria-label="Quick actions">
-          <button onClick={() => onTabSwitch("builder")}>Build something</button>
-          <button onClick={() => onTabSwitch("projects")}>Continue a project</button>
-          <button onClick={() => onTabSwitch("teach")}>Teach Hermes</button>
-          <button onClick={() => onTabSwitch("approvals")}>Review approvals {pendingApprovals.length ? `(${pendingApprovals.length})` : ""}</button>
-        </div>
-      </section>
-
-      <div className="os-overview-statusbar">
-        <div style={{ minWidth: 0 }}>
-          <div style={{ color: "#F1F4FB", fontSize: 16, fontWeight: 850, fontFamily: "Fraunces, serif", lineHeight: 1 }}>Mission Control</div>
-          <div style={{ color: "#647089", fontSize: 10, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{health?.overall.message ?? "Live"} / {memoryStatus}</div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor(systemHealth.status), boxShadow: `0 0 14px ${statusColor(systemHealth.status)}66` }} />
-          <span style={{ color: "#94A3B8", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>System</span>
-          <strong style={{ color: "#F1F4FB", fontSize: 18, lineHeight: 1, fontFamily: "Fraunces, serif" }}>{health ? `${systemHealth.score}%` : "Unknown"}</strong>
-        </div>
-        {[
-          { label: "Accounts", value: accountIssues ? `${accountIssues} issue` : "healthy", color: accountIssues ? "#FBBF24" : "#34D399" },
-          { label: "Scheduler", value: schedulerIssues ? `${schedulerIssues} issue` : "healthy", color: schedulerIssues ? "#FBBF24" : "#34D399" },
-          { label: "Email", value: emailHealthy ? "ready" : "offline", color: emailHealthy ? "#34D399" : "#F87171" },
-          { label: "Build", value: `${buildPassed}/${buildFailed}`, color: buildFailed ? "#FBBF24" : "#34D399" },
-        ].map((item) => (
-          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 7, justifyContent: "flex-end" }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: item.color, boxShadow: `0 0 12px ${item.color}66` }} />
-            <span style={{ color: "#94A3B8", fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em" }}>{item.label}</span>
-            <strong style={{ color: "#F1F4FB", fontSize: 11 }}>{item.value}</strong>
-          </div>
-        ))}
-      </div>
-
       <section className="os-metric-grid" aria-label="Operating metrics">
         {metrics.map((metric) => (
-          <button key={metric.label} onClick={() => onTabSwitch(metric.tab)} style={{ ...missionCardStyle, textAlign: "left", cursor: "pointer", minHeight: 70, padding: "11px 12px" }}>
-            <div style={{ color: metric.tone, fontSize: 21, fontWeight: 850, fontFamily: "Fraunces, serif", lineHeight: 1 }}>{metric.value}</div>
-            <div style={{ color: "#94A3B8", fontSize: 10, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", marginTop: 8 }}>{metric.label}</div>
+          <button className="os-reference-metric" key={metric.label} onClick={() => onTabSwitch(metric.tab)}>
+            <span>{metric.label}</span><strong style={{ color: metric.tone }}>{metric.value}</strong><small>View live state →</small>
           </button>
         ))}
       </section>
 
-      <div className="os-overview-grid">
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <AgentCommandPanel runs={runs} health={health} projects={projects} memoryDebug={memoryDebug} onTabSwitch={onTabSwitch} onOfficeSelect={onOfficeSelect} />
-          <MissionQueuePanel queue={queue} approvals={pendingApprovals} onApprove={onApprove} onReject={onReject} />
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <LiveActivityFeed items={liveActivity} />
-          <LiveBuildConsole />
-        </div>
+      <div className="os-reference-grid">
+        <section className="os-reference-panel os-task-board"><header><div><span>Operations</span><h2>Task Board</h2></div><button onClick={() => onTabSwitch("runs")}>View all</button></header>{activeTasks.length ? activeTasks.map((task) => <button key={task.id} onClick={() => onTabSwitch("runs")} className="os-task-row"><span className={`os-task-priority is-${task.priority}`}/><span><strong>{task.title}</strong><small>{task.assignedExecutor} · {task.status.replaceAll("_", " ")}</small></span><time>{timeAgo(task.updatedAt)}</time></button>) : <div className="os-empty-state">No active tasks. Hermes is ready for a new brief.</div>}</section>
+        <section className="os-reference-panel os-project-summary"><header><div><span>Persistent workspaces</span><h2>Projects</h2></div><button onClick={() => onTabSwitch("projects")}>View all</button></header>{recentProjects.length ? recentProjects.map((project) => <button key={project.id} onClick={() => onTabSwitch("projects")} className="os-project-row"><span className="os-project-glyph">◇</span><span><strong>{project.projectName}</strong><small>{project.currentTask ?? project.latestInstruction ?? "Ready to continue"}</small><i><b style={{ width: `${Math.round((project.taskCounts.done / Math.max(project.taskCounts.total, 1)) * 100)}%` }}/></i></span><em>{project.previewStatus === "online" ? "Live" : canonicalBuilderStageGroup(project.canonicalStage)}</em></button>) : <div className="os-empty-state">No projects yet. Start in Builder Office.</div>}</section>
+        <div className="os-reference-stack"><section className="os-reference-panel"><header><div><span>Live evidence</span><h2>Recent Activity</h2></div><button onClick={() => onTabSwitch("logs")}>View all</button></header>{liveActivity.slice(0, 5).map((item) => <div className="os-activity-row" key={item.id}><span>✦</span><p><strong>{item.source}</strong><small>{item.message}</small></p><time>{relativeTime(item.timestamp)}</time></div>)}</section><section className="os-reference-panel"><header><div><span>Start here</span><h2>Quick Actions</h2></div></header><div className="os-reference-actions"><button onClick={() => onTabSwitch("chat")}>Ask Hermes</button><button onClick={() => onTabSwitch("builder")}>Build something</button><button onClick={() => onTabSwitch("projects")}>Continue project</button><button onClick={() => onTabSwitch("teach")}>Teach Hermes</button><button onClick={() => onTabSwitch("approvals")}>Review approvals</button><button onClick={() => onTabSwitch("health")}>System health</button></div></section></div>
       </div>
+
+      <section className="os-agent-network"><header><div><span>Operating collective</span><h2>Agent Network</h2></div><button onClick={() => onTabSwitch("agents")}>View all agents</button></header><div className="os-agent-portrait-grid">{agents.map((agent) => <button key={agent.name} onClick={() => { onOfficeSelect(agent.office); onTabSwitch("agents"); }}><span className="os-agent-portrait"><Image src={agent.image} alt="" width={62} height={62}/><i/></span><strong>{agent.name}</strong><small>{agent.role}</small><em><i/>Available</em></button>)}</div></section>
+
+      <div className="os-reference-lower"><section className="os-reference-panel"><header><div><span>Infrastructure</span><h2>System Health</h2></div></header><div className="os-health-summary"><strong>{health ? `${systemHealth.score}%` : "—"}</strong><span>{health?.overall.message ?? "Awaiting live health data"}</span></div><div className="os-health-list"><span>Accounts <b>{accountIssues ? `${accountIssues} issue` : "Healthy"}</b></span><span>Scheduler <b>{schedulerIssues ? `${schedulerIssues} issue` : "Healthy"}</b></span><span>Email <b>{emailHealthy ? "Ready" : "Offline"}</b></span></div></section><section className="os-reference-panel"><header><div><span>Hermes context</span><h2>Current Focus</h2></div></header><p className="os-context-copy">{memoryDebug?.activeTask ?? memoryDebug?.activeIntent ?? "No active intent. Hermes is waiting for your next command."}</p><button className="os-panel-action" onClick={() => onTabSwitch("memory")}>Open memory context</button></section><section className="os-reference-panel"><header><div><span>Build evidence</span><h2>Builder Status</h2></div></header><div className="os-health-summary"><strong>{buildPassed}</strong><span>successful builds</span></div><div className="os-health-list"><span>Failed <b>{buildFailed}</b></span><span>Active projects <b>{projectCounts.active}</b></span></div><button className="os-panel-action" onClick={() => onTabSwitch("builder")}>Open Builder Office</button></section></div>
     </div>
   );
 }
@@ -2845,7 +2817,7 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function CommandCenterClient() {
+export default function CommandCenterClient({ userName }: { userName: string }) {
   const [tab, setTab] = useState<Tab>("overview");
   const [selectedOffice, setSelectedOffice] = useState<AgentOffice>(() => normalizeAgentOfficeView(typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("office")));
   const [agentsView, setAgentsView] = useState<"talk" | "offices">("talk");
@@ -3099,6 +3071,7 @@ export default function CommandCenterClient() {
         pendingApprovals={pendingCount}
         systemStatus={healthCenter && systemHealth.status === "healthy" ? "healthy" : "warning"}
         systemLabel={healthCenter ? `${systemHealth.score}% system health` : "Checking system health"}
+        userName={userName}
         open={navigationOpen}
         onClose={() => setNavigationOpen(false)}
         onNavigate={(destination) => setTab(destination)}
@@ -3156,9 +3129,6 @@ export default function CommandCenterClient() {
                 runs={runs}
                 health={healthCenter}
                 memoryDebug={memoryContextDebug}
-                chatMessages={chatMessages}
-                onApprove={handleApprove}
-                onReject={handleReject}
                 onTabSwitch={setTab}
                 onOfficeSelect={(office) => { setSelectedOffice(office); setAgentsView("offices"); }}
               />
