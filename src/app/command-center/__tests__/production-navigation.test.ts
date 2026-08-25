@@ -8,13 +8,15 @@ describe("production command center navigation", () => {
     expect(labels).toContain("Builder Office");
     expect(labels).toContain("Live Console");
     expect(labels).toContain("Teach Hermes");
+    expect(labels).toContain("Knowledge Graph");
+    expect(labels).toContain("Problems & Solutions");
     expect(labels).not.toContain("Finance");
     expect(labels).not.toContain("Calendar");
     expect(labels).not.toContain("Inbox");
   });
 
   it("keeps every destination inside the implemented UI surface", () => {
-    const implemented = new Set(["overview", "chat", "agents", "runs", "projects", "approvals", "builder", "live", "skills", "teach", "health", "logs", "memory"]);
+    const implemented = new Set(["overview", "chat", "agents", "runs", "projects", "approvals", "builder", "live", "skills", "teach", "health", "logs", "memory", "knowledge", "troubleshooting"]);
     for (const item of commandCenterNavigation.flatMap((group) => group.items)) expect(implemented.has(item.id)).toBe(true);
   });
 });

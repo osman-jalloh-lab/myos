@@ -7,6 +7,8 @@ import LiveBuildConsole from "./LiveBuildConsole";
 import AgentOffice from "./AgentOffice";
 import TeachHermesReviewPanel from "./TeachHermesReviewPanel";
 import HermesVoiceMode from "./HermesVoiceMode";
+import KnowledgeGraphPanel from "./KnowledgeGraphPanel";
+import TroubleshootingPanel from "./TroubleshootingPanel";
 import AppSidebar, { type CommandCenterDestination } from "./AppSidebar";
 import AgentRoster from "@/components/AgentRoster";
 import CouncilChatPanel from "@/components/CouncilChatPanel";
@@ -2902,6 +2904,7 @@ export default function CommandCenterClient({ userName }: { userName: string }) 
   const [loading, setLoading] = useState(true);
   const [taskComposerOpen, setTaskComposerOpen] = useState(false);
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [troubleshootingPath, setTroubleshootingPath] = useState<string | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -3234,6 +3237,14 @@ export default function CommandCenterClient({ userName }: { userName: string }) 
               />
             )}
             {tab === "memory" && <MemoryOfficePanel data={memoryOffice} debug={memoryContextDebug} onCreateTestMemory={createTestMemory} onMemoryAction={memoryCenterAction} />}
+            {tab === "knowledge" && <div className="os-view-stack">
+              <WorkspaceHeading eyebrow="Obsidian memory map" title="Knowledge Graph" description="Explore real permitted notes and explicit relationships. Private vault material is excluded at the source boundary." status="Local · read only" />
+              <KnowledgeGraphPanel onOpenProblem={(relativePath) => { setTroubleshootingPath(relativePath); setTab("troubleshooting"); }} />
+            </div>}
+            {tab === "troubleshooting" && <div className="os-view-stack" id="troubleshooting">
+              <WorkspaceHeading eyebrow="Persistent solution memory" title="Problems & Solutions" description="Retrieve verified root causes, fixes, validation, and prevention steps when a safe problem recurs." status="Obsidian-backed" />
+              <TroubleshootingPanel initialPath={troubleshootingPath} />
+            </div>}
             {tab === "skills" && (
               <div style={{ display: "grid", gap: 16 }}>
               <TeachHermesReviewPanel onRegistryChanged={refreshSkills} />

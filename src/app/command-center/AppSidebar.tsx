@@ -2,7 +2,7 @@
 
 export type CommandCenterDestination =
   | "overview" | "chat" | "agents" | "runs" | "projects" | "approvals"
-  | "builder" | "live" | "skills" | "teach" | "health" | "logs" | "memory";
+  | "builder" | "live" | "skills" | "teach" | "health" | "logs" | "memory" | "knowledge" | "troubleshooting";
 
 type NavItem = { id: CommandCenterDestination; label: string; icon: string };
 
@@ -24,6 +24,8 @@ export const commandCenterNavigation: Array<{ label: string; items: NavItem[] }>
   { label: "System", items: [
     { id: "health", label: "Health & Integrations", icon: "◉" },
     { id: "memory", label: "Memory", icon: "◌" },
+    { id: "knowledge", label: "Knowledge Graph", icon: "⌘" },
+    { id: "troubleshooting", label: "Problems & Solutions", icon: "◇" },
     { id: "logs", label: "Audit & Activity", icon: "≡" },
   ] },
 ];
