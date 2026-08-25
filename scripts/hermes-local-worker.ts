@@ -66,7 +66,9 @@ let lastHermesAgentError: string | null = null;
 // once-daily email-watcher cron can't. The route does the actual triage and
 // already dedupes per email (4h window), so frequent calls are safe.
 const EMAIL_POLL_DEFAULT_MS = 3 * 60_000;
+const KNOWLEDGE_SYNC_MS = 5 * 60_000;
 let lastEmailPoll = 0;
+let lastKnowledgeSync = 0;
 let emailPollInFlight = false;
 
 class CancellationRequestedError extends Error {
@@ -1476,6 +1478,10 @@ async function runLoop(): Promise<void> {
     // Fire-and-forget — the interval/in-flight guards live inside, and a slow
     // or failing poll must never block task claiming.
     void maybePollEmailWatcher(apiBaseUrl);
+    if (now - lastKnowledgeSync >= KNOWLEDGE_SYNC_MS) {
+      lastKnowledgeSync = now;
+      void import("../src/lib/knowledge-snapshot").then(({ refreshKnowledgeSnapshotsForUsers }) => refreshKnowledgeSnapshotsForUsers(WORKER_ID)).catch((error) => { lastError = safeError(error); });
+    }
 
     const task = await claimTask(db).catch((error) => {
       lastError = safeError(error);
