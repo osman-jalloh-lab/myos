@@ -4,15 +4,16 @@ import { useState, useEffect, useRef, useCallback, type CSSProperties } from "re
 import Image from "next/image";
 import BuilderOffice from "./BuilderOffice";
 import LiveBuildConsole from "./LiveBuildConsole";
+import AgentOffice from "./AgentOffice";
 import TeachHermesReviewPanel from "./TeachHermesReviewPanel";
 import AppSidebar, { type CommandCenterDestination } from "./AppSidebar";
 import AgentRoster from "@/components/AgentRoster";
 import CouncilChatPanel from "@/components/CouncilChatPanel";
 import HermesNousChatPanel from "@/components/HermesNousChatPanel";
-import { agentColor, CHAT_ROSTER_AGENTS, COMMAND_CENTER_AGENTS, COUNCIL_REVIEWER_AGENTS } from "@/lib/agent-roster";
+import { agentColor, CHAT_ROSTER_AGENTS, COMMAND_CENTER_AGENTS, COUNCIL_REVIEWER_AGENTS, type CoreAgentKey } from "@/lib/agent-roster";
 import type { CanonicalBuilderStage } from "@/lib/builder-lifecycle";
 import { BUILDER_STAGE_FILTERS, canonicalBuilderStageColor, canonicalBuilderStageGroup, canonicalBuilderStageLabel, canonicalBuilderStageMatchesFilter, canonicalBuilderStageOrder, type BuilderStageFilter } from "@/lib/builder-stage-display";
-import { normalizeAgentOfficeView, normalizeExecutionTraceForDisplay, type ActiveAgentOffice } from "@/lib/execution-inspector-display";
+import { normalizeExecutionTraceForDisplay, type ActiveAgentOffice } from "@/lib/execution-inspector-display";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -787,7 +788,7 @@ function OverviewPanel({
   health: HealthCenterData | null;
   memoryDebug: MemoryContextDebugData | null;
   onTabSwitch: (tab: Tab) => void;
-  onOfficeSelect: (office: AgentOffice) => void;
+  onOfficeSelect: (office: CoreAgentKey) => void;
 }) {
   const pendingApprovals = approvals.filter((a) => a.status === "pending");
   const projectCounts = projects.reduce((counts, project) => {
@@ -812,15 +813,15 @@ function OverviewPanel({
   const activeTasks = (queue?.tasks ?? []).filter((task) => !["completed", "cancelled"].includes(task.status)).slice(0, 5);
   const recentProjects = [...projects].sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt)).slice(0, 5);
   const agents = [
-    { name: "Hermes", role: "Executive orchestrator", image: "/agents/hermes.jpg", office: "hermes" as AgentOffice },
-    { name: "Argus", role: "Signals & risk", image: "/agents/argus.jpg", office: "hermes" as AgentOffice },
-    { name: "Iris", role: "Communications", image: "/agents/iris.jpg", office: "iris" as AgentOffice },
-    { name: "Kairos", role: "Planning & time", image: "/agents/kairos.jpg", office: "hermes" as AgentOffice },
-    { name: "Prometheus", role: "Builder agent", image: "/agents/prometheus.jpg", office: "builder" as AgentOffice },
-    { name: "Mnemosyne", role: "Memory & context", image: "/agents/mnemosyne.jpg", office: "hermes" as AgentOffice },
-    { name: "Themis", role: "Policy & approvals", image: "/agents/themis.jpg", office: "hermes" as AgentOffice },
-    { name: "Athena", role: "Career & strategy", image: "/agents/athena.jpg", office: "athena" as AgentOffice },
-    { name: "Plutus", role: "Financial insight", image: "/agents/plutus.jpg", office: "hermes" as AgentOffice },
+    { name: "Hermes", role: "Executive orchestrator", image: "/agents/hermes.jpg", office: "hermes" as CoreAgentKey },
+    { name: "Argus", role: "Signals & risk", image: "/agents/argus.jpg", office: "argus" as CoreAgentKey },
+    { name: "Iris", role: "Communications", image: "/agents/iris.jpg", office: "iris" as CoreAgentKey },
+    { name: "Kairos", role: "Planning & time", image: "/agents/kairos.jpg", office: "kairos" as CoreAgentKey },
+    { name: "Prometheus", role: "Builder agent", image: "/agents/prometheus.jpg", office: "prometheus" as CoreAgentKey },
+    { name: "Mnemosyne", role: "Memory & context", image: "/agents/mnemosyne.jpg", office: "mnemosyne" as CoreAgentKey },
+    { name: "Themis", role: "Policy & approvals", image: "/agents/themis.jpg", office: "themis" as CoreAgentKey },
+    { name: "Athena", role: "Career & strategy", image: "/agents/athena.jpg", office: "athena" as CoreAgentKey },
+    { name: "Plutus", role: "Financial insight", image: "/agents/plutus.jpg", office: "plutus" as CoreAgentKey },
   ];
 
   return (
@@ -2819,8 +2820,11 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
 
 export default function CommandCenterClient({ userName }: { userName: string }) {
   const [tab, setTab] = useState<Tab>("overview");
-  const [selectedOffice, setSelectedOffice] = useState<AgentOffice>(() => normalizeAgentOfficeView(typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("office")));
-  const [agentsView, setAgentsView] = useState<"talk" | "offices">("talk");
+  const [selectedAgent, setSelectedAgent] = useState<CoreAgentKey>(() => {
+    if (typeof window === "undefined") return "hermes";
+    const requested = new URLSearchParams(window.location.search).get("agent");
+    return CHAT_ROSTER_AGENTS.some((agent) => agent.id === requested || (agent.id === "mnemo" && requested === "mnemosyne")) ? (requested === "mnemo" ? "mnemosyne" : requested as CoreAgentKey) : "hermes";
+  });
   const [projects, setProjects] = useState<Project[]>([]);
   const [builds, setBuilds] = useState<Build[]>([]);
   const [approvals, setApprovals] = useState<ApprovalAction[]>([]);
@@ -3130,7 +3134,7 @@ export default function CommandCenterClient({ userName }: { userName: string }) 
                 health={healthCenter}
                 memoryDebug={memoryContextDebug}
                 onTabSwitch={setTab}
-                onOfficeSelect={(office) => { setSelectedOffice(office); setAgentsView("offices"); }}
+                onOfficeSelect={(agent) => setSelectedAgent(agent)}
               />
             )}
             {tab === "health" && (
@@ -3159,44 +3163,21 @@ export default function CommandCenterClient({ userName }: { userName: string }) 
               <TeachHermesReviewPanel onRegistryChanged={refreshSkills} />
             </div>}
             {tab === "agents" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <AgentNetworkStrip onOpen={() => setAgentsView("offices")} />
-                <div style={{ display: "flex", gap: 6 }}>
-                  {(["talk", "offices"] as const).map((view) => (
-                    <button
-                      key={view}
-                      onClick={() => setAgentsView(view)}
-                      style={{
-                        padding: "6px 14px",
-                        borderRadius: 8,
-                        border: agentsView === view ? "1px solid rgba(167,139,250,0.5)" : "1px solid rgba(93,111,143,0.25)",
-                        background: agentsView === view ? "rgba(167,139,250,0.14)" : "rgba(8,13,24,0.38)",
-                        color: agentsView === view ? "#C4B5FD" : "#94A3B8",
-                        fontSize: 12,
-                        fontWeight: 800,
-                        cursor: "pointer",
-                      }}
-                    >
-                      {view === "talk" ? "Talk" : "Offices"}
-                    </button>
-                  ))}
-                </div>
-                {agentsView === "talk" ? (
-                  <AgentTalkPanel />
-                ) : (
-                  <AgentOfficesPanel
-                    selectedOffice={selectedOffice}
-                    onOfficeSelect={setSelectedOffice}
-                    projects={projects}
-                    builds={builds}
-                    approvals={approvals}
-                    queue={executionQueue}
-                    runs={runs}
-                    memoryOffice={memoryOffice}
-                    memoryDebug={memoryContextDebug}
-                  />
-                )}
-              </div>
+              <AgentOffice
+                agentId={selectedAgent}
+                onAgentChange={setSelectedAgent}
+                onBack={() => setTab("overview")}
+                onAssignTask={() => setTaskComposerOpen(true)}
+                onOpenBuilder={() => setTab("builder")}
+                onOpenConsole={() => setTab("live")}
+                projects={projects}
+                approvals={approvals}
+                queue={executionQueue}
+                runs={runs}
+                skills={skills}
+                memory={memoryOffice}
+                health={healthCenter}
+              />
             )}
             {tab === "memory" && <MemoryOfficePanel data={memoryOffice} debug={memoryContextDebug} onCreateTestMemory={createTestMemory} onMemoryAction={memoryCenterAction} />}
             {tab === "skills" && (

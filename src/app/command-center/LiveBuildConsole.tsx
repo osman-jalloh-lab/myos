@@ -1,134 +1,127 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { canonicalBuilderStageColor, canonicalBuilderStageLabel } from "@/lib/builder-stage-display";
-import { latestCanonicalBuilderStage, shouldPollLiveBuild } from "@/lib/live-build-console";
-import type { BuildStepStatus, LiveBuildConsoleData } from "@/lib/live-build-console";
+import type { CanonicalBuilderStage } from "@/lib/builder-lifecycle";
+import { canonicalBuilderStageLabel } from "@/lib/builder-stage-display";
+import { commandLogs, executionEngineLabel, testLogs, type ExecutionConsoleTab } from "@/lib/execution-console";
+import { latestCanonicalBuilderStage, shouldPollLiveBuild, type LiveBuildConsoleData, type LiveBuildLog } from "@/lib/live-build-console";
 
-const shell: React.CSSProperties = { background: "linear-gradient(180deg, rgba(19,28,44,.97), rgba(8,14,25,.95))", border: "1px solid rgba(96,165,250,.28)", borderRadius: 10, boxShadow: "0 16px 38px rgba(0,0,0,.24)", overflow: "hidden" };
-const mono: React.CSSProperties = { fontFamily: "JetBrains Mono, ui-monospace, monospace" };
+type ProjectChoice = { id: string; projectName: string; canonicalStage: CanonicalBuilderStage; currentTask: string | null; updatedAt: string };
+const tabs: Array<{ id: ExecutionConsoleTab; label: string }> = [
+  { id: "console", label: "Console" }, { id: "changes", label: "Code Changes" }, { id: "commands", label: "Commands" },
+  { id: "tests", label: "Tests" }, { id: "files", label: "Files" }, { id: "trace", label: "Trace" },
+];
 
-function tone(status: BuildStepStatus | string): string {
-  if (["complete", "online"].includes(status)) return "#34D399";
-  if (["failed", "offline", "error"].includes(status)) return "#F87171";
-  if (["running", "info"].includes(status)) return "#60A5FA";
-  if (["warning", "stale"].includes(status)) return "#FBBF24";
-  return "#647089";
+function tone(value: string): string {
+  if (/complete|success|passed|online/i.test(value)) return "success";
+  if (/fail|error|offline/i.test(value)) return "danger";
+  if (/blocked|warning|stale|waiting|pending/i.test(value)) return "warning";
+  return "info";
 }
-
-function elapsed(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const seconds = total % 60;
-  return hours ? `${hours}h ${minutes}m` : minutes ? `${minutes}m ${seconds}s` : `${seconds}s`;
-}
-
-function clock(value: string | null): string {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date(value));
-}
+function clock(value: string | null): string { return value ? new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" }).format(new Date(value)) : "—"; }
+function elapsed(ms: number): string { const seconds = Math.max(0, Math.floor(ms / 1_000)); const minutes = Math.floor(seconds / 60); return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`; }
 
 export default function LiveBuildConsole({ projectId, compact = false }: { projectId?: string | null; compact?: boolean }) {
   const [data, setData] = useState<LiveBuildConsoleData | null>(null);
+  const [projects, setProjects] = useState<ProjectChoice[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(projectId ?? (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("liveBuild") : null));
+  const [tab, setTab] = useState<ExecutionConsoleTab>("console");
+  const [query, setQuery] = useState("");
+  const [severity, setSeverity] = useState("all");
+  const [source, setSource] = useState("all");
+  const [runStatus, setRunStatus] = useState("all");
+  const [paused, setPaused] = useState(false);
   const [technical, setTechnical] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const selectedId = projectId ?? (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("liveBuild") : null);
 
   const refresh = useCallback(async () => {
-    const query = selectedId ? `?projectId=${encodeURIComponent(selectedId)}` : "";
-    const response = await fetch(`/api/command-center/live-build${query}`, { cache: "no-store" });
-    if (!response.ok) return;
-    const incoming = await response.json() as LiveBuildConsoleData;
+    if (paused) return;
+    const queryString = selectedId ? `?projectId=${encodeURIComponent(selectedId)}` : "";
+    const [liveResponse, projectResponse] = await Promise.all([
+      fetch(`/api/command-center/live-build${queryString}`, { cache: "no-store" }),
+      fetch("/api/command-center/projects", { cache: "no-store" }),
+    ]);
+    if (projectResponse.ok) {
+      const payload = await projectResponse.json() as { projects?: ProjectChoice[] };
+      const projectChoices = payload.projects ?? [];
+      setProjects(projectChoices);
+      if (!selectedId && projectChoices[0]) setSelectedId(projectChoices[0].id);
+    }
+    if (!liveResponse.ok) return;
+    const incoming = await liveResponse.json() as LiveBuildConsoleData;
     setData((current) => {
       if (!current?.project || !incoming.project) return incoming;
       const canonicalStage = latestCanonicalBuilderStage(current.project.canonicalStage, incoming.project.canonicalStage);
       return { ...incoming, active: shouldPollLiveBuild(canonicalStage), project: { ...incoming.project, canonicalStage } };
     });
-  }, [selectedId]);
+  }, [paused, selectedId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
-    const shouldPoll = !data?.project || shouldPollLiveBuild(data.project.canonicalStage);
-    if (!shouldPoll) return;
-    const interval = window.setInterval(() => { setNow(Date.now()); void refresh(); }, data?.project ? 4_000 : 15_000);
-    return () => window.clearInterval(interval);
-  }, [data?.project, refresh]);
+    if (paused || (data?.project && !shouldPollLiveBuild(data.project.canonicalStage))) return;
+    const timer = window.setInterval(() => { setNow(Date.now()); void refresh(); }, data?.project ? 4_000 : 15_000);
+    return () => window.clearInterval(timer);
+  }, [data?.project, paused, refresh]);
 
-  const visibleLogs = useMemo(() => (data?.logs ?? []).filter((log) => technical || !log.technical).slice(compact ? -6 : -80), [data?.logs, technical, compact]);
-  const copy = async (value: string, key: string) => { await navigator.clipboard.writeText(value); setCopied(key); window.setTimeout(() => setCopied(null), 1600); };
-  const openFolder = async () => {
-    if (!data?.project?.id || data.project.id === "intake") return;
-    await fetch("/api/command-center/local-builds", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "open", projectId: data.project.id }) });
-  };
+  const sources = useMemo(() => [...new Set((data?.logs ?? []).map((item) => item.source))], [data?.logs]);
+  const visibleLogs = useMemo(() => (data?.logs ?? []).filter((log) => {
+    if (!technical && log.technical) return false;
+    if (severity !== "all" && log.status !== severity) return false;
+    if (source !== "all" && log.source !== source) return false;
+    return !query || `${log.source} ${log.message}`.toLowerCase().includes(query.toLowerCase());
+  }).slice(compact ? -6 : -120), [data?.logs, technical, severity, source, query, compact]);
+  const commands = commandLogs(data?.logs ?? []);
+  const tests = testLogs(data?.logs ?? []);
+  const visibleProjects = useMemo(() => projects.filter((project) => {
+    if (runStatus === "all") return true;
+    if (runStatus === "active") return shouldPollLiveBuild(project.canonicalStage);
+    if (runStatus === "completed") return /complete|success|passed/i.test(project.canonicalStage);
+    return /fail|error|blocked/i.test(project.canonicalStage);
+  }), [projects, runStatus]);
+  const engine = data?.project ? executionEngineLabel(data.project.executor, data.logs) : "Not recorded";
 
-  return (
-    <section id="live-build-console" className="os-live-console" style={shell} aria-label="Live Build Console">
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, alignItems: "center", padding: compact ? "10px 12px" : "13px 15px", borderBottom: "1px solid rgba(93,111,143,.22)", background: "rgba(15,23,38,.8)" }}>
-        <div>
-          <div style={{ color: "#F1F4FB", fontSize: compact ? 14 : 17, fontWeight: 850, fontFamily: "Fraunces, serif" }}>Live Build Console</div>
-          <div style={{ color: "#647089", fontSize: 10, marginTop: 2, letterSpacing: ".08em", textTransform: "uppercase" }}>Builder · Worker · QA telemetry</div>
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ width: 8, height: 8, borderRadius: 99, background: tone(data?.worker.status ?? "offline"), boxShadow: `0 0 14px ${tone(data?.worker.status ?? "offline")}88` }} />
-          <span style={{ color: "#94A3B8", fontSize: 10 }}>Worker {data?.worker.status ?? "checking"}</span>
-          <button onClick={() => setTechnical((value) => !value)} style={{ border: "1px solid #28324A", background: technical ? "rgba(96,165,250,.16)" : "rgba(8,13,24,.5)", color: technical ? "#93C5FD" : "#94A3B8", borderRadius: 7, padding: "6px 8px", fontSize: 10, cursor: "pointer" }}>{technical ? "Hide technical logs" : "Show technical logs"}</button>
-        </div>
+  const copyVisible = async () => { await navigator.clipboard.writeText(visibleLogs.map((item) => `${item.timestamp ?? ""} ${item.source} ${item.message}`).join("\n")); setCopied(true); window.setTimeout(() => setCopied(false), 1_500); };
+  if (compact) return <CompactConsole data={data} engine={engine} />;
+
+  return <section className="execution-console" aria-labelledby="execution-console-title">
+    <header className="execution-console-header">
+      <div><span>Execution glass box</span><h1 id="execution-console-title">Live Console</h1><p>See what My OS actually did, who acted, which engine ran, and what evidence was recorded.</p></div>
+      <div className="execution-chain" aria-label="Execution identity chain"><b>Prometheus<small>Agent</small></b><i>→</i><b>{engine}<small>Execution engine</small></b><i>→</i><b>{data?.project ? canonicalBuilderStageLabel(data.project.canonicalStage) : "Idle"}<small>Result state</small></b></div>
+    </header>
+
+    {!data?.project ? <div className="execution-console-empty"><h2>No selected execution</h2><p>Select a persisted Builder project when one becomes available. No run data is fabricated.</p></div> : <>
+      <div className="execution-run-summary">
+        <div><span>Project</span><strong>{data.project.name}</strong><small>{data.project.appType}</small></div>
+        <div><span>Task</span><strong>{data.project.statusMeaning}</strong><small>{data.project.status}</small></div>
+        <div><span>Agent</span><strong>Prometheus</strong><small>Engineering</small></div>
+        <div><span>Engine</span><strong>{engine}</strong><small>{data.project.executor}</small></div>
+        <div><span>Status</span><strong className={`status ${tone(data.project.canonicalStage)}`}>{canonicalBuilderStageLabel(data.project.canonicalStage)}</strong><small>{data.project.stuck ? "May be stuck" : "Recorded state"}</small></div>
+        <div><span>Timing</span><strong>{elapsed(data.project.startedAt ? Math.max(0, now - new Date(data.project.startedAt).getTime()) : data.project.elapsedMs)}</strong><small>Started {clock(data.project.startedAt)}</small></div>
       </div>
 
-      {!data?.project ? (
-        <div style={{ padding: compact ? 18 : 30, textAlign: "center", color: "#94A3B8", fontSize: 12 }}>No active build. Start a project from Builder Office.</div>
-      ) : (
-        <div style={{ padding: compact ? 12 : 15, display: "flex", flexDirection: "column", gap: 12 }}>
-          <div style={{ display: "grid", gridTemplateColumns: compact ? "minmax(0,1fr) auto" : "minmax(220px,1.5fr) repeat(4,minmax(100px,auto))", gap: 10, alignItems: "center" }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ color: "#F1F4FB", fontSize: 15, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{data.project.name}</div>
-              <div style={{ color: canonicalBuilderStageColor(data.project.canonicalStage), fontSize: 10, marginTop: 3, textTransform: "uppercase", letterSpacing: ".06em" }}>{canonicalBuilderStageLabel(data.project.canonicalStage)}</div>
-            </div>
-            {!compact && <><Datum label="Category" value={data.project.appType} /><Datum label="Executor" value={data.project.executor} /><Datum label="Started" value={clock(data.project.startedAt)} /><Datum label="Elapsed" value={data.project.startedAt ? elapsed(Math.max(0, now - new Date(data.project.startedAt).getTime())) : "Waiting"} /></>}
-            {compact && <span style={{ color: canonicalBuilderStageColor(data.project.canonicalStage), fontSize: 10, ...mono }}>{canonicalBuilderStageLabel(data.project.canonicalStage)} · {elapsed(data.project.elapsedMs)}</span>}
-          </div>
+      <div className="execution-console-layout">
+        <aside className="execution-run-list" aria-label="Run and project list"><header><div><span>Sessions</span><h2>Builder runs</h2></div><select aria-label="Filter run status" value={runStatus} onChange={(event) => setRunStatus(event.target.value)}><option value="all">All statuses</option><option value="active">Active</option><option value="completed">Completed</option><option value="failed">Failed</option></select></header>{visibleProjects.map((project) => <button key={project.id} type="button" className={project.id === data.project?.id ? "active" : ""} onClick={() => setSelectedId(project.id)}><strong>{project.projectName}</strong><span className={`status ${tone(project.canonicalStage)}`}>{project.canonicalStage}</span><small>{project.currentTask ?? `Updated ${new Date(project.updatedAt).toLocaleDateString()}`}</small></button>)}{!visibleProjects.length && <p>{projects.length ? "No sessions match this filter." : "No persisted projects were returned."}</p>}</aside>
 
-          {data.project.folderPath && !compact && <div style={{ color: "#94A3B8", fontSize: 10, ...mono, overflowWrap: "anywhere" }}>Folder · {data.project.folderPath}</div>}
-          {data.project.stuck && <div style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(251,191,36,.3)", background: "rgba(251,191,36,.08)", color: "#FBBF24", fontSize: 11 }}>This build may be stuck. Last update was {data.project.minutesSinceUpdate} minutes ago.</div>}
-          {data.worker.status === "offline" && <div style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(248,113,113,.3)", background: "rgba(248,113,113,.07)", color: "#FCA5A5", fontSize: 11 }}>Local Worker is offline. Turn on your PC or start worker.</div>}
+        <main className="execution-stream">
+          <div className="execution-tabs" role="tablist" aria-label="Execution evidence sections">{tabs.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} onClick={() => setTab(item.id)}>{item.label}</button>)}</div>
+          {tab === "console" && <><div className="execution-log-controls"><label><span>Search logs</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search action or output" /></label><label><span>Severity</span><select value={severity} onChange={(event) => setSeverity(event.target.value)}><option value="all">All levels</option><option value="info">Info</option><option value="success">Success</option><option value="warning">Warning</option><option value="error">Error</option></select></label><label><span>Source</span><select value={source} onChange={(event) => setSource(event.target.value)}><option value="all">All sources</option>{sources.map((item) => <option key={item}>{item}</option>)}</select></label><button type="button" aria-pressed={technical} onClick={() => setTechnical((value) => !value)}>{technical ? "Hide technical" : "Show technical"}</button><button type="button" aria-pressed={paused} onClick={() => setPaused((value) => !value)}>{paused ? "Resume stream" : "Pause stream"}</button><button type="button" onClick={() => void copyVisible()}>{copied ? "Copied" : "Copy visible"}</button></div><LogStream logs={visibleLogs}/></>}
+          {tab === "changes" && <EvidenceView title="Code Changes" description="Files inferred from persisted Builder evidence. Diff content is shown only when it was recorded safely."><FileList files={data.files}/><EmptyEvidence when={!data.files.length}>No code-change metadata was recorded for this run.</EmptyEvidence></EvidenceView>}
+          {tab === "commands" && <EvidenceView title="Commands" description="Recorded command and package-tool output, grouped away from the main stream."><LogCards logs={commands}/><EmptyEvidence when={!commands.length}>No command evidence was recorded.</EmptyEvidence></EvidenceView>}
+          {tab === "tests" && <EvidenceView title="Tests & QA" description="Build, test, lint, typecheck, and browser-QA evidence from the persisted log."><LogCards logs={tests}/><EmptyEvidence when={!tests.length}>No test or QA evidence was recorded.</EmptyEvidence></EvidenceView>}
+          {tab === "files" && <EvidenceView title="Touched Files" description="Safe project-relative paths only. Environment and credential files are excluded upstream."><FileList files={data.files}/><EmptyEvidence when={!data.files.length}>No safe file paths were recorded.</EmptyEvidence></EvidenceView>}
+          {tab === "trace" && <EvidenceView title="Orchestration Trace" description="Only lifecycle steps that are present in the canonical Builder timeline."><ol className="execution-trace">{data.timeline.map((step) => <li key={step.key} className={tone(step.status)}><span/><div><strong>{step.label}</strong><small>{step.status} · {clock(step.timestamp)}</small></div></li>)}</ol></EvidenceView>}
+        </main>
 
-          <div style={{ display: "grid", gridTemplateColumns: compact ? "repeat(7,minmax(16px,1fr))" : "repeat(auto-fit,minmax(118px,1fr))", gap: 6 }}>
-            {data.timeline.map((item) => (
-              <div key={item.key} title={`${item.label}: ${item.status}${item.timestamp ? ` at ${clock(item.timestamp)}` : ""}`} style={{ minWidth: 0, padding: compact ? "6px 3px" : "8px 9px", borderRadius: 7, border: `1px solid ${tone(item.status)}33`, background: `${tone(item.status)}0C` }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 7, height: 7, borderRadius: 99, background: tone(item.status), flexShrink: 0 }} />{!compact && <span style={{ color: "#D8DEEB", fontSize: 10, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.label}</span>}</div>
-                {!compact && <div style={{ color: tone(item.status), fontSize: 9, marginTop: 5, textTransform: "uppercase" }}>{item.status} · {clock(item.timestamp)}</div>}
-              </div>
-            ))}
-          </div>
-
-          {!compact && (
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.6fr) minmax(220px,.7fr)", gap: 10 }}>
-              <div style={{ border: "1px solid rgba(93,111,143,.22)", borderRadius: 8, background: "rgba(5,10,19,.72)", overflow: "hidden" }}>
-                <div style={{ padding: "8px 10px", borderBottom: "1px solid rgba(93,111,143,.18)", color: "#94A3B8", fontSize: 10, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase" }}>Live Logs</div>
-                <div style={{ maxHeight: 290, overflow: "auto", padding: 8 }}>
-                  {visibleLogs.map((log, index) => <div key={`${log.timestamp}-${index}`} style={{ display: "grid", gridTemplateColumns: "70px 90px minmax(0,1fr)", gap: 8, padding: "5px 4px", borderBottom: "1px solid rgba(93,111,143,.1)", fontSize: 10 }}><span style={{ color: "#4B5563", ...mono }}>{clock(log.timestamp)}</span><span style={{ color: tone(log.status), fontWeight: 800 }}>{log.source}</span><span style={{ color: "#CBD5E1", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{log.message}</span></div>)}
-                  {!visibleLogs.length && <div style={{ color: "#647089", fontSize: 11, padding: 8 }}>No persisted build logs yet.</div>}
-                </div>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <ConsoleCard title="Files Changed">
-                  {data.files.length ? data.files.map((file) => <div key={file} style={{ color: "#CBD5E1", fontSize: 10, padding: "3px 0", ...mono, overflowWrap: "anywhere" }}>{file}</div>) : <Empty>No files recorded yet.</Empty>}
-                </ConsoleCard>
-                <ConsoleCard title="Preview">
-                  {data.preview ? <><div style={{ color: tone(data.preview.status), fontSize: 10, marginBottom: 8 }}>Preview {data.preview.status}</div><div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}><a href={data.preview.url} target="_blank" rel="noopener" style={action}>Open Preview</a><button onClick={() => void copy(data.preview!.url, "url")} style={action}>{copied === "url" ? "Copied" : "Copy URL"}</button><button onClick={() => void openFolder()} style={action}>Open Folder</button></div>{data.preview.manualCommand && <><pre style={{ margin: "9px 0 0", padding: 8, borderRadius: 6, background: "#050A13", color: "#94A3B8", fontSize: 9, whiteSpace: "pre-wrap", ...mono }}>{data.preview.manualCommand}</pre><button onClick={() => void copy(data.preview!.manualCommand ?? "", "command")} style={{ ...action, marginTop: 6 }}>{copied === "command" ? "Command copied" : "Copy manual command"}</button></>} </> : <Empty>Preview has not started.</Empty>}
-                </ConsoleCard>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
-  );
+        <aside className="execution-inspector" aria-label="Selected run inspector"><header><span>Run inspector</span><h2>Current evidence</h2></header><dl><div><dt>Current step</dt><dd>{data.inspector?.currentStep ?? "Unavailable"}</dd></div><div><dt>Agent</dt><dd>Prometheus</dd></div><div><dt>Engine</dt><dd>{engine}</dd></div><div><dt>Worker</dt><dd className={`status ${tone(data.worker.status)}`}>{data.worker.status}</dd></div><div><dt>Approval</dt><dd>{/approval/i.test(data.project.status) ? "Required" : "Not recorded"}</dd></div><div><dt>Last successful</dt><dd>{data.inspector?.lastSuccessfulStep ?? "Unavailable"}</dd></div><div><dt>Failure</dt><dd>{data.inspector?.exactError ?? "None recorded"}</dd></div></dl>{data.project.folderPath && <details><summary>Safe workspace path</summary><code>{data.project.folderPath}</code></details>}{data.preview && <div className="execution-artifact"><span>Result artifact</span><strong>Docker preview · {data.preview.status}</strong><a href={data.preview.url} target="_blank" rel="noreferrer">Open preview</a></div>}</aside>
+      </div>
+    </>}
+  </section>;
 }
 
-function Datum({ label, value }: { label: string; value: string }) { return <div><div style={{ color: "#4B5563", fontSize: 9, textTransform: "uppercase", letterSpacing: ".07em" }}>{label}</div><div style={{ color: "#CBD5E1", fontSize: 10, marginTop: 3, whiteSpace: "nowrap" }}>{value}</div></div>; }
-function ConsoleCard({ title, children }: { title: string; children: React.ReactNode }) { return <div style={{ border: "1px solid rgba(93,111,143,.22)", borderRadius: 8, background: "rgba(5,10,19,.58)", padding: 10 }}><div style={{ color: "#94A3B8", fontSize: 9, fontWeight: 800, letterSpacing: ".08em", textTransform: "uppercase", marginBottom: 7 }}>{title}</div>{children}</div>; }
-function Empty({ children }: { children: React.ReactNode }) { return <div style={{ color: "#647089", fontSize: 10 }}>{children}</div>; }
-const action: React.CSSProperties = { display: "inline-block", border: "1px solid rgba(96,165,250,.3)", background: "rgba(96,165,250,.1)", color: "#93C5FD", borderRadius: 6, padding: "6px 8px", fontSize: 9, fontWeight: 800, cursor: "pointer", textDecoration: "none" };
+function CompactConsole({ data, engine }: { data: LiveBuildConsoleData | null; engine: string }) { return <section className="execution-console compact" aria-label="Live Build Console"><strong>{data?.project?.name ?? "No active build"}</strong><span>{data?.project ? `${canonicalBuilderStageLabel(data.project.canonicalStage)} · ${engine}` : "Waiting for Builder telemetry"}</span></section>; }
+function LogStream({ logs }: { logs: LiveBuildLog[] }) { return <div className="execution-log-stream">{logs.map((log, index) => <article key={`${log.timestamp}-${index}`}><time>{clock(log.timestamp)}</time><div><header><strong>{log.source}</strong><span className={`status ${tone(log.status)}`}>{log.status}</span></header><pre>{log.message}</pre></div></article>)}{!logs.length && <p>No matching persisted logs.</p>}</div>; }
+function LogCards({ logs }: { logs: LiveBuildLog[] }) { return <div className="execution-evidence-list">{logs.map((log, index) => <details key={`${log.timestamp}-${index}`}><summary><span>{clock(log.timestamp)}</span><strong>{log.source}</strong><em className={`status ${tone(log.status)}`}>{log.status}</em></summary><pre>{log.message}</pre></details>)}</div>; }
+function FileList({ files }: { files: string[] }) { return <div className="execution-file-list">{files.map((file) => <div key={file}><span>MOD</span><code>{file}</code></div>)}</div>; }
+function EvidenceView({ title, description, children }: { title: string; description: string; children: React.ReactNode }) { return <section className="execution-evidence"><header><h2>{title}</h2><p>{description}</p></header>{children}</section>; }
+function EmptyEvidence({ when, children }: { when: boolean; children: React.ReactNode }) { return when ? <p className="execution-empty-copy">{children}</p> : null; }
