@@ -1,0 +1,3 @@
+import { auth } from "@/lib/auth";
+import { synthesizeHermesSpeech } from "@/lib/voice-service";
+export async function POST(req: Request) { const session = await auth(); if (!session?.user?.id) return Response.json({ error: "Unauthorized" }, { status: 401 }); const body = await req.json().catch(() => null) as { text?: string } | null; if (!body?.text?.trim()) return Response.json({ error: "text is required" }, { status: 400 }); try { return new Response(await synthesizeHermesSpeech(body.text), { headers: { "Content-Type": "audio/mpeg", "Cache-Control": "no-store" } }); } catch { return Response.json({ error: "Audio response unavailable" }, { status: 503 }); } }

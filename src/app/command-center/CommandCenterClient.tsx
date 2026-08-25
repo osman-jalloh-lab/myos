@@ -858,6 +858,8 @@ function OverviewPanel({
         <div className="os-hero-health"><span className={`os-status-dot ${health && systemHealth.status === "healthy" ? "is-live" : "is-warning"}`} /><strong>{health ? `${systemHealth.score}% healthy` : "Status pending"}</strong><small>{health?.overall.message ?? "Waiting for a live health check"}</small></div>
       </section>
 
+      <HermesVoiceMode compact onOpenHermes={() => onTabSwitch("chat")} onOpenMission={() => onTabSwitch("live")} />
+
       <section className="os-metric-grid" aria-label="Operating metrics">
         {metrics.map((metric) => (
           <button className="os-reference-metric" key={metric.label} onClick={() => onTabSwitch(metric.tab)}>

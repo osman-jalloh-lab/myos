@@ -1,100 +1,20 @@
 "use client";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { INITIAL_VOICE_MACHINE, reduceVoiceState, voiceFailure, VOICE_ERROR_COPY } from "@/lib/voice-realtime";
+type VoiceSession = { clientSecret: string; model: string; runId: string };
 
-import { useEffect, useRef, useState } from "react";
-import type { HermesVoiceState } from "@/lib/voice-mode";
-
-type RecognitionResultLike = { isFinal: boolean; 0?: { transcript?: string } };
-type RecognitionEventLike = { results: ArrayLike<RecognitionResultLike> };
-type RecognitionLike = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: ((event: RecognitionEventLike) => void) | null;
-  onend: (() => void) | null;
-  onerror: (() => void) | null;
-  start(): void;
-  stop(): void;
-  abort(): void;
-};
-
-function recognitionConstructor(): (new () => RecognitionLike) | null {
-  const scoped = window as unknown as { SpeechRecognition?: new () => RecognitionLike; webkitSpeechRecognition?: new () => RecognitionLike };
-  return scoped.SpeechRecognition ?? scoped.webkitSpeechRecognition ?? null;
-}
-
-export default function HermesVoiceMode({ onMessage, latestReply, busy }: { onMessage: (message: string) => Promise<void>; latestReply: string | null; busy: boolean }) {
-  const [state, setState] = useState<HermesVoiceState>("idle");
-  const [transcript, setTranscript] = useState("");
-  const [muted, setMuted] = useState(false);
-  const [supported, setSupported] = useState(true);
-  const recognitionRef = useRef<RecognitionLike | null>(null);
-  const activeRef = useRef(false);
-  const lastSpokenRef = useRef<string | null>(null);
-
-  useEffect(() => { setSupported(Boolean(recognitionConstructor() && window.speechSynthesis)); }, []);
-  useEffect(() => { if (busy && activeRef.current) setState("thinking"); }, [busy]);
-  useEffect(() => {
-    if (!latestReply || muted || !activeRef.current || latestReply === lastSpokenRef.current || !window.speechSynthesis) return;
-    lastSpokenRef.current = latestReply;
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(latestReply.replace(/[#*_`]/g, " ").slice(0, 1800));
-    utterance.onstart = () => setState("speaking");
-    utterance.onend = () => { if (activeRef.current) setState("listening"); };
-    utterance.onerror = () => setState("error");
-    window.speechSynthesis.speak(utterance);
-  }, [latestReply, muted]);
-
-  const stop = () => {
-    activeRef.current = false;
-    recognitionRef.current?.stop();
-    window.speechSynthesis?.cancel();
-    setState("idle");
-  };
-
-  const start = async () => {
-    const Recognition = recognitionConstructor();
-    if (!Recognition) { setSupported(false); setState("error"); return; }
-    // The browser permission prompt is triggered only by this explicit click.
-    activeRef.current = true;
-    const recognition = new Recognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = navigator.language || "en-US";
-    recognition.onresult = (event) => {
-      let live = "";
-      let final = "";
-      for (let index = 0; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        const value = result[0]?.transcript?.trim() ?? "";
-        if (result.isFinal) final += `${value} `; else live += `${value} `;
-      }
-      setTranscript((final || live).trim());
-      if (final.trim()) {
-        setState("thinking");
-        void onMessage(final.trim()).catch(() => setState("error"));
-      }
-    };
-    recognition.onerror = () => setState("error");
-    recognition.onend = () => {
-      if (!activeRef.current || muted) return;
-      try { recognition.start(); setState("listening"); } catch { setState("error"); }
-    };
-    recognitionRef.current = recognition;
-    try { recognition.start(); setState("listening"); } catch { setState("error"); }
-  };
-
-  const toggleMute = () => {
-    const next = !muted;
-    setMuted(next);
-    if (next) { recognitionRef.current?.stop(); window.speechSynthesis?.cancel(); setState("muted"); }
-    else if (activeRef.current) void start();
-  };
-
-  return <section className="hermes-voice" aria-label="Hermes continuous voice mode">
-    <div><span>Voice Mode</span><strong>{supported ? state : "unavailable"}</strong><small>{transcript || (supported ? "Voice and text use the same Hermes conversation." : "This browser has no compatible speech API. Text remains available.")}</small></div>
-    <div className="hermes-voice-actions">
-      {!activeRef.current ? <button type="button" onClick={() => void start()} disabled={!supported}>Start voice</button> : <button type="button" onClick={stop}>Stop</button>}
-      <button type="button" onClick={toggleMute} disabled={!activeRef.current} aria-pressed={muted}>{muted ? "Unmute" : "Mute"}</button>
-    </div>
-  </section>;
+export default function HermesVoiceMode({ onMessage, latestReply, busy, compact = false, onOpenHermes, onOpenMission }: { onMessage?: (message: string) => Promise<void>; latestReply?: string | null; busy?: boolean; compact?: boolean; onOpenHermes?: () => void; onOpenMission?: () => void }) {
+  const [machine, dispatch] = useReducer(reduceVoiceState, INITIAL_VOICE_MACHINE); const [transcript, setTranscript] = useState(""); const [activity, setActivity] = useState("Ready for your next command");
+  const peerRef = useRef<RTCPeerConnection | null>(null); const streamRef = useRef<MediaStream | null>(null); const channelRef = useRef<RTCDataChannel | null>(null); const audioRef = useRef<HTMLAudioElement | null>(null); const runIdRef = useRef<string | null>(null); const lastReplyRef = useRef<string | null>(null);
+  const trace = useCallback((event: string, details?: Record<string, unknown>) => { if (!runIdRef.current) return; void fetch("/api/voice/trace", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runId: runIdRef.current, event, details }) }); }, []);
+  const stop = useCallback(() => { channelRef.current?.close(); peerRef.current?.close(); streamRef.current?.getTracks().forEach((track) => track.stop()); audioRef.current?.pause(); channelRef.current = null; peerRef.current = null; streamRef.current = null; audioRef.current = null; trace("voice_session_ended"); runIdRef.current = null; dispatch({ type: "STOP" }); setActivity("Ready for your next command"); }, [trace]);
+  useEffect(() => () => stop(), [stop]);
+  useEffect(() => { if (busy && machine.active) { dispatch({ type: "TRANSCRIPT" }); setActivity("Hermes is reasoning through your request"); } }, [busy, machine.active]);
+  const speak = useCallback(async (reply: string) => { if (!machine.active || machine.muted || reply === lastReplyRef.current) return; lastReplyRef.current = reply; trace("response_ready"); const response = await fetch("/api/voice/speech", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: reply }) }); if (!response.ok) throw new Error("audio playback unavailable"); const audio = new Audio(URL.createObjectURL(await response.blob())); audioRef.current = audio; dispatch({ type: "SPEAK" }); setActivity("Speaking"); trace("audio_response_started"); audio.onended = () => { trace("audio_response_completed"); dispatch({ type: "READY" }); setActivity("Listening for your next command"); }; await audio.play(); }, [machine.active, machine.muted, trace]);
+  useEffect(() => { if (!latestReply) return; void speak(latestReply).catch((error) => { const category = voiceFailure(error); dispatch({ type: "FAIL", category }); trace("voice_error", { category }); }); }, [latestReply, speak, trace]);
+  const routeTranscript = useCallback(async (value: string) => { const clean = value.trim(); if (!clean) return; setTranscript(clean); dispatch({ type: "TRANSCRIPT" }); setActivity("Routing through Hermes"); trace("transcript_received"); if (onMessage) { await onMessage(clean); trace("hermes_message_created"); return; } const response = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: clean }) }); const payload = await response.json().catch(() => null) as { reply?: { content?: string }; error?: string } | null; if (!response.ok || !payload?.reply?.content) throw new Error(payload?.error ?? "Hermes chat unavailable"); trace("hermes_message_created"); await speak(payload.reply.content); }, [onMessage, speak, trace]);
+  const start = async () => { if (!navigator.mediaDevices?.getUserMedia || !window.RTCPeerConnection) { dispatch({ type: "FAIL", category: "unsupported_browser" }); return; } try { dispatch({ type: "CONNECT" }); setActivity("Establishing secure voice session"); const sessionResponse = await fetch("/api/voice/session", { method: "POST" }); const session = await sessionResponse.json() as VoiceSession & { error?: string }; if (!sessionResponse.ok || !session.clientSecret) throw new Error(session.error ?? "provider unavailable"); runIdRef.current = session.runId; const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false }); streamRef.current = stream; trace("microphone_ready"); const peer = new RTCPeerConnection(); peerRef.current = peer; stream.getAudioTracks().forEach((track) => peer.addTrack(track, stream)); const channel = peer.createDataChannel("oai-events"); channelRef.current = channel; channel.onopen = () => { dispatch({ type: "READY" }); setActivity("Listening"); }; channel.onmessage = (event) => { try { const data = JSON.parse(String(event.data)) as { type?: string; transcript?: string }; if (data.type === "conversation.item.input_audio_transcription.completed" && data.transcript) void routeTranscript(data.transcript).catch((error) => { const category = voiceFailure(error); dispatch({ type: "FAIL", category }); trace("voice_error", { category }); }); } catch { /* malformed provider event is ignored */ } }; const offer = await peer.createOffer(); await peer.setLocalDescription(offer); const form = new FormData(); form.set("sdp", offer.sdp ?? ""); const realtime = await fetch("https://api.openai.com/v1/realtime/calls", { method: "POST", headers: { Authorization: `Bearer ${session.clientSecret}` }, body: form }); if (!realtime.ok) throw new Error(realtime.status === 401 ? "session expired" : "realtime connection unavailable"); await peer.setRemoteDescription({ type: "answer", sdp: await realtime.text() }); } catch (error) { const category = voiceFailure(error); dispatch({ type: "FAIL", category }); setActivity(VOICE_ERROR_COPY[category]); trace("voice_error", { category }); streamRef.current?.getTracks().forEach((track) => track.stop()); peerRef.current?.close(); } };
+  const tapCore = () => { if (machine.state === "speaking") { audioRef.current?.pause(); channelRef.current?.send(JSON.stringify({ type: "response.cancel" })); dispatch({ type: "READY" }); setActivity("Listening"); return; } if (machine.active) stop(); else void start(); };
+  const toggleMute = () => { const next = !machine.muted; streamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !next; }); dispatch({ type: next ? "MUTE" : "UNMUTE" }); setActivity(next ? "Microphone muted" : "Listening"); };
+  return <section className={`hermes-hud is-${machine.state}${compact ? " is-compact" : ""}`} aria-label="Hermes realtime voice intelligence"><div className="hermes-hud-copy"><span>HERMES</span><strong>Orchestrator</strong><small>{activity}</small></div><button type="button" className="hermes-core" onClick={tapCore} aria-label={machine.active ? machine.state === "speaking" ? "Interrupt Hermes" : "Stop listening" : "Talk to Hermes"}><i className="hermes-core-ring ring-one"/><i className="hermes-core-ring ring-two"/><i className="hermes-core-ring ring-three"/><b>H</b><em>{machine.state}</em></button><div className="hermes-hud-status" aria-live="polite"><strong>{machine.state === "error" && machine.error ? VOICE_ERROR_COPY[machine.error] : machine.state}</strong><small>{transcript || "Tap the core to speak"}</small></div><div className="hermes-hud-actions"><button type="button" onClick={onOpenHermes}>Type</button><button type="button" onClick={toggleMute} disabled={!machine.active}>{machine.muted ? "Unmute" : "Mute"}</button>{machine.state === "error" ? <button type="button" onClick={() => void start()}>Retry</button> : null}<button type="button" onClick={onOpenHermes}>Open Hermes</button>{onOpenMission ? <button type="button" onClick={onOpenMission}>View Mission</button> : null}</div></section>;
 }

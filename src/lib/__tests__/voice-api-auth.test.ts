@@ -1,0 +1,5 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ auth: vi.fn(), create: vi.fn() }));
+vi.mock("@/lib/auth", () => ({ auth: mocks.auth })); vi.mock("@/lib/voice-service", () => ({ createVoiceSession: mocks.create }));
+import { POST } from "@/app/api/voice/session/route";
+describe("voice session authorization", () => { beforeEach(() => vi.clearAllMocks()); it("rejects unauthenticated session creation", async () => { mocks.auth.mockResolvedValue(null); expect((await POST()).status).toBe(401); expect(mocks.create).not.toHaveBeenCalled(); }); it("returns only temporary authorization metadata", async () => { mocks.auth.mockResolvedValue({ user: { id: "owner" } }); mocks.create.mockResolvedValue({ clientSecret: "temporary", expiresAt: 123, model: "gpt-realtime-mini", runId: "run" }); const payload = await (await POST()).json(); expect(payload).toEqual({ clientSecret: "temporary", expiresAt: 123, model: "gpt-realtime-mini", runId: "run" }); expect(JSON.stringify(payload)).not.toContain("OPENAI_API_KEY"); }); });
