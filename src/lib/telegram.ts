@@ -188,6 +188,14 @@ export async function ensureWebhookRegistered(expectedUrl: string): Promise<void
 
 // ── Inbound update shapes (only the fields we read) ──────────────────────────
 
+export interface TelegramVoiceFile {
+  file_id: string;
+  file_unique_id: string;
+  duration: number;
+  mime_type?: string;
+  file_size?: number;
+}
+
 export interface TelegramUpdate {
   update_id?: number;
   message?: {
@@ -196,6 +204,8 @@ export interface TelegramUpdate {
     text?: string;
     /** Populated when Osman taps "Reply" on a bot message — gives Hermes context. */
     reply_to_message?: { text?: string };
+    voice?: TelegramVoiceFile;
+    audio?: TelegramVoiceFile;
   };
   callback_query?: {
     id: string;
@@ -203,6 +213,76 @@ export interface TelegramUpdate {
     message?: { chat: { id: number }; message_id: number };
     data?: string;
   };
+}
+
+// ── Voice/audio file retrieval ────────────────────────────────────────────────
+// Telegram-hosted downloads only: getFile returns a file_path that lives on
+// Telegram's own CDN under this bot's token namespace. We never fetch an
+// arbitrary URL — only ${API_BASE}/file/... with a validated, relative path.
+
+const MAX_VOICE_BYTES = 20 * 1024 * 1024; // Telegram bot API's own getFile ceiling
+const ACCEPTED_VOICE_MIME = new Set(["audio/ogg", "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/wav", "audio/webm"]);
+const DOWNLOAD_TIMEOUT_MS = 20_000;
+
+function isValidTelegramFilePath(filePath: string): boolean {
+  // Telegram file_path values look like "voice/file_123.oga" — relative, no
+  // traversal, no scheme, no leading slash.
+  if (!filePath || filePath.length > 512) return false;
+  if (filePath.includes("..") || filePath.startsWith("/") || /^[a-z]+:\/\//i.test(filePath)) return false;
+  return /^[\w./-]+$/.test(filePath);
+}
+
+/** Resolves a Telegram file_id to a validated, Telegram-hosted file_path. Throws on any anomaly. */
+export async function getTelegramFilePath(fileId: string): Promise<{ filePath: string; fileSize?: number }> {
+  const base = requireApiBase();
+  const res = await fetch(`${base}/getFile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_id: fileId }),
+    signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+  });
+  if (!res.ok) throw new Error(`Telegram getFile failed: HTTP ${res.status}`);
+  const data = (await res.json()) as { ok: boolean; result?: { file_path?: string; file_size?: number } };
+  const filePath = data.result?.file_path;
+  if (!data.ok || !filePath || !isValidTelegramFilePath(filePath)) {
+    throw new Error("Telegram returned an invalid file path.");
+  }
+  return { filePath, fileSize: data.result?.file_size };
+}
+
+export interface DownloadedTelegramFile {
+  buffer: ArrayBuffer;
+  mimeType: string;
+}
+
+/**
+ * Bounded, validated download of a Telegram-hosted file. Rejects oversized
+ * files, unsupported MIME types, and enforces a hard timeout. No temp files
+ * are written — the buffer lives only in memory for the duration of the call.
+ */
+export async function downloadTelegramFile(filePath: string, declaredMime?: string, declaredSize?: number): Promise<DownloadedTelegramFile> {
+  if (!isValidTelegramFilePath(filePath)) throw new Error("Refusing to download: invalid Telegram file path.");
+  if (declaredSize !== undefined && declaredSize > MAX_VOICE_BYTES) throw new Error(`Voice file too large (${declaredSize} bytes, max ${MAX_VOICE_BYTES}).`);
+
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  if (!token) throw new Error("TELEGRAM_BOT_TOKEN is not set — Telegram bridge is disabled.");
+  const url = `https://api.telegram.org/file/bot${token}/${filePath}`;
+
+  const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`Telegram file download failed: HTTP ${res.status}`);
+
+  const contentType = (res.headers.get("content-type") ?? declaredMime ?? "").split(";")[0].trim().toLowerCase();
+  if (contentType && !ACCEPTED_VOICE_MIME.has(contentType)) {
+    throw new Error(`Unsupported voice/audio MIME type: ${contentType}`);
+  }
+
+  const contentLength = Number(res.headers.get("content-length") ?? "0");
+  if (contentLength > MAX_VOICE_BYTES) throw new Error(`Voice file too large (${contentLength} bytes, max ${MAX_VOICE_BYTES}).`);
+
+  const buffer = await res.arrayBuffer();
+  if (buffer.byteLength > MAX_VOICE_BYTES) throw new Error(`Voice file too large (${buffer.byteLength} bytes, max ${MAX_VOICE_BYTES}).`);
+
+  return { buffer, mimeType: contentType || declaredMime || "audio/ogg" };
 }
 
 export function isFromOwner(update: TelegramUpdate, ownerChatId: string): boolean {
