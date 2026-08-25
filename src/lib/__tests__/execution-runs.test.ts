@@ -19,6 +19,10 @@ describe("execution run trace redaction", () => {
     expect(redacted).not.toContain(".env.local");
   });
 
+  it("redacts human-readable API key labels from historical execution output", () => {
+    expect(redactExecutionText("Using API key: credential-shaped-value")).toBe("Using API key=[redacted]");
+  });
+
   it("truncates large trace payloads", () => {
     expect(redactExecutionText("x".repeat(500), 100)).toHaveLength(100);
   });

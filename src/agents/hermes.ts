@@ -345,7 +345,7 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
     // Covers: "brief me", "morning brief", "what's my day looking like",
     // "what should I focus on", "top priority", "what matters most",
     // plus original brief/today/what's up/overview/summary.
-    match: /brief|today|what'?s up|whats up|overview|summary|brief me|morning brief|what'?s my day looking|what should i focus|top priority|what matters most/,
+    match: /\bbrief\b|what'?s up|whats up|overview|summary|brief me|morning brief|what'?s my day looking|what should i focus|top priority|what matters most|^(?:what'?s happening )?today[?.!]*$/,
     taskType: "chat-brief",
     load: async (userId) => {
       // Always regenerate on interactive chat queries — the cron brief is cached for
@@ -410,6 +410,24 @@ const CONTEXT_MATCHERS: ContextMatcher[] = [
 
 function buildContext(q: string): ContextMatcher | null {
   return CONTEXT_MATCHERS.find((m) => m.match.test(q)) ?? null;
+}
+
+export function chatContextTaskType(query: string): string | null {
+  return buildContext(query.trim().toLowerCase())?.taskType ?? null;
+}
+
+export function splitRoutedHermesMessage(text: string): { userMessage: string; routingContext: string | null } {
+  const marker = "\n\nUSER MESSAGE\n";
+  const markerIndex = text.lastIndexOf(marker);
+  if (markerIndex < 0) return { userMessage: text.trim(), routingContext: null };
+  return {
+    userMessage: text.slice(markerIndex + marker.length).trim(),
+    routingContext: text.slice(0, markerIndex).trim() || null,
+  };
+}
+
+export function isHermesCapabilityQuestion(text: string): boolean {
+  return /\b(what can you (?:help(?: me)? with|do)|how can you help(?: me)?|tell me what you can help(?: me)? with)\b/i.test(text);
 }
 
 // ── multi-agent parallel orchestration ───────────────────────────────────────
@@ -1273,7 +1291,8 @@ export async function routeToAgent(
 export async function routeMessage(userId: string, text: string, channel?: string, chatContext?: string): Promise<RouteResult> {
   const isTelegram = channel === "telegram";
   const activeSystemPrompt = isTelegram ? HERMES_TELEGRAM_SYSTEM_PROMPT : HERMES_CHAT_SYSTEM_PROMPT;
-  const { cleaned: trimmed, providerOverride } = detectModelOverride(text.trim());
+  const routedMessage = splitRoutedHermesMessage(text);
+  const { cleaned: trimmed, providerOverride } = detectModelOverride(routedMessage.userMessage);
 
   // ── helpers (inline) ─────────────────────────────────────────────────────────
   const buildProjectPlan = (name: string, route: string): Array<{ title: string; assignedAgent: string }> => [
@@ -1297,6 +1316,15 @@ export async function routeMessage(userId: string, text: string, channel?: strin
 
   if (intent.shouldAsk && intent.clarificationQuestion) {
     return { reply: formatReply(intent.clarificationQuestion, channel) };
+  }
+
+  if (isHermesCapabilityQuestion(trimmed)) {
+    return {
+      reply: formatReply(
+        "I can help you plan and coordinate work, build and continue software projects, review approvals, inspect system activity, work with your skills and memory, and route specialized tasks to the right My OS agent.",
+        channel
+      ),
+    };
   }
 
   // ── approve ───────────────────────────────────────────────────────────────
@@ -1773,6 +1801,7 @@ export async function routeMessage(userId: string, text: string, channel?: strin
 
   const structuredUserPrompt = [
     chatContext ? `ACTIVE CONTEXT (projects, session, recent chat):\n${chatContext}` : "",
+    routedMessage.routingContext ? `ROUTING GUIDANCE (memory and approved skill instructions; use only when relevant):\n${routedMessage.routingContext}` : "",
     context ? `AGENT CONTEXT (${matched?.taskType ?? "general"}):\n${context}` : baseSnapshot ? `SNAPSHOT:\n${baseSnapshot}` : "",
     `RELEVANT MEMORY:\n${memorySummary}`,
     `PROJECT STATUS (AgentTask registry):\n${projectStatus}`,
@@ -1785,7 +1814,7 @@ export async function routeMessage(userId: string, text: string, channel?: strin
     dataClass: "PERSONAL",
     systemPrompt: activeSystemPrompt,
     providerOverride,
-    userPrompt: `${structuredUserPrompt}\n\nReply in ${sentenceCount} sentences, grounded only in the sections above. If a section is empty, do not fabricate data for it.`,
+    userPrompt: `${structuredUserPrompt}\n\nReply in ${sentenceCount} sentences and answer the CURRENT USER MESSAGE directly. Use other sections only when they are relevant to that message. Do not mention unrelated projects, approvals, calendar items, or memory. If a relevant section is empty, do not fabricate data for it.`,
   });
 
   await logHandoff({

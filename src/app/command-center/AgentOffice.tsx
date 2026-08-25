@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import CouncilChatPanel from "@/components/CouncilChatPanel";
 import { agentOfficeIdentity, agentTextMatches } from "@/lib/agent-office";
 import { CHAT_ROSTER_AGENTS, normalizeAgentKey, type CoreAgentKey } from "@/lib/agent-roster";
+import { redactExecutionText } from "@/lib/execution-runs";
 
 type AgentRun = { id: string; agentName: string; inputSummary: string | null; outputSummary: string | null; modelProvider: string | null; status: string; createdAt: string };
 type Project = { id: string; projectName: string; status: string; canonicalStage: string; currentTask: string | null; latestInstruction: string | null; assignedAgent: string | null; updatedAt: string };
@@ -137,5 +138,5 @@ export default function AgentOffice(props: AgentOfficeProps) {
 }
 
 function OfficeList({ title, empty, items }: { title: string; empty: string; items: Array<{ id: string; title: string; body?: string | null; meta?: string }> }) {
-  return <section className="agent-office-list"><header><span>Recorded data</span><h2>{title}</h2></header>{items.map((item) => <article key={item.id}><strong>{item.title}</strong>{item.body && <p>{item.body}</p>}{item.meta && <small>{item.meta}</small>}</article>)}{!items.length && <p className="agent-office-empty">{empty}</p>}</section>;
+  return <section className="agent-office-list"><header><span>Recorded data</span><h2>{title}</h2></header>{items.map((item) => <article key={item.id}><strong>{redactExecutionText(item.title, 500)}</strong>{item.body && <p>{redactExecutionText(item.body, 2000)}</p>}{item.meta && <small>{redactExecutionText(item.meta, 300)}</small>}</article>)}{!items.length && <p className="agent-office-empty">{empty}</p>}</section>;
 }

@@ -56,6 +56,7 @@ export type ExecutionRunView = {
 const SECRET_PATTERNS: RegExp[] = [
   /Bearer\s+[A-Za-z0-9._~+/-]+=*/gi,
   /([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|COOKIE|CREDENTIAL|AUTH)[A-Z0-9_]*)\s*[:=]\s*["']?[^"'\s,;]+/gi,
+  /((?:api|access|refresh|auth)?[ _-]*(?:key|token|secret|password|credential))\s*[:=]\s*["']?[^"'\s,;]+/gi,
   /(?:^|\s)(?:sk|pk|ghp|gho|ghu|ghs|xoxb)-[A-Za-z0-9_-]{12,}/gi,
 ];
 
