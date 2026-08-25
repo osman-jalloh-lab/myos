@@ -254,3 +254,71 @@ own tools — no overlap. This single master spec replaces the old multi-folder 
 Why: earlier all-at-once + scattered-files approach caused loops and fragmentation.
 Owner: Osman Jalloh.
 ```
+
+```markdown
+## 2026-08-25 — Telegram remote command hardening (interaction channels)
+Decision: Desktop/laptop uses the My OS Jarvis HUD/voice intercom (OpenAI Realtime WebRTC).
+Phone/remote uses Telegram (text + voice) into the same Hermes. Both are interfaces into
+ONE Hermes — no second assistant, no second approval authority, no second Council. Physical
+iPhone My OS voice and Tailscale are deferred; not a release blocker.
+Why: a single-user system only needs one remote command surface; duplicating orchestration
+per-channel multiplies bugs (see the Telegram normal-response regression below).
+Owner: Osman Jalloh.
+```
+
+---
+
+## 14. Telegram remote command (phone/remote interaction channel)
+
+Canonical webhook: `POST /api/telegram/webhook` (`src/app/api/telegram/webhook/route.ts`).
+Auth: `x-telegram-bot-api-secret-token` header + `TELEGRAM_OWNER_CHAT_ID` allowlist — every
+non-owner update is dropped before any DB or Hermes call.
+
+**Shared response contract.** Telegram uses the exact same `sendMessage()` path
+(`src/lib/chat.ts`) as dashboard chat. Skill-routing/confidence diagnostics are written only
+to an `ExecutionTraceEvent` (Live Console → Trace), never appended to `route.reply` — so
+Telegram, like the dashboard, never surfaces "Skills used: ... confidence ..." chatter for
+ordinary conversation. Explicit questions ("what approvals are waiting", "what model
+handled this") still get real answers, because that's the router intentionally answering
+the question — not the webhook adding diagnostics.
+
+**Durable update_id idempotency** (`src/lib/telegram-idempotency.ts`). Every inbound
+`update_id` — text, voice, audio, callback query — is claimed in the `TelegramUpdate` table
+(`received → processing → completed|failed`) *before* Hermes routing, approval creation, or
+execution starts. A Telegram or Vercel retry of the same `update_id` is answered (callbacks
+still get `answerCallbackQuery`) without re-running anything. A `processing` claim older
+than 5 minutes, or one marked `failed`, is eligible for retry — a crash mid-flight does not
+lose the update forever. Schema change: see §"Database migration status" below.
+
+**Voice input.** `message.voice` / `message.audio` → `getTelegramFilePath()` (validates the
+Telegram-returned `file_path` — no arbitrary URL fetching) → `downloadTelegramFile()`
+(bounded to 20MB, MIME-allowlisted, 20s timeout, no temp files) → `transcribeAudioBuffer()`
+(`src/lib/voice-service.ts`, OpenAI file transcription — a separate path from the Realtime
+WebRTC session the desktop HUD uses, since a Telegram voice note is a static file, not a
+live stream) → the transcript is routed through the identical `sendMessage()` path as a
+typed message. Voice input → text response only; no Telegram TTS in this milestone.
+
+**Plan / approval workflow.** `/plan <request>` or clear natural-language plan-only intent
+(e.g. "Plan X. Do not build it yet.") produces a read-only preview
+(`src/lib/orchestration/telegram-planner.ts`) and, when accepted, queues one
+`ApprovalAction` (`actionType: "engineering_plan"`, `route: "self_improvement"`,
+`excludedActions: ["merge","deploy","push"]`) with four buttons:
+- **Approve Plan** → `callback_data: "approve <id>"`, reuses the existing generic
+  approve-verb path in `src/agents/hermes.ts` — delegates implementation/tests/QA to the
+  Codex CLI execution queue. Never authorizes merge, push, or deploy.
+- **Reject** → `callback_data: "reject <id>"`, same existing generic path.
+- **Ask Council** → `callback_data: "plan_council <id>"`, runs the existing Dynamic Council
+  (`src/lib/model-council-chat.ts`) on the plan's objective and returns a concise
+  positions/disagreement/recommendation summary — full deliberation stays in My OS Trace.
+- **Revise** → `callback_data: "plan_revise <id>"`, asks what to change and leaves the
+  approval pending; the user re-runs `/plan` with the updated request.
+
+**Single worker boundary.** Telegram webhook handling runs inside the Vercel function, not
+the local worker — the one authoritative Hermes local worker (Windows Scheduled Task,
+`scripts/hermes-local-worker.ts`) is unaffected by this milestone.
+
+**Database migration status.** The `TelegramUpdate` table is defined in
+`prisma/schema.prisma` and has a hand-written migration at
+`prisma/migrations/20260825000000_add_telegram_update_idempotency/migration.sql`, but has
+**not** been applied to the remote/network-backed database — that requires a separate,
+explicit Osman-approved migration step.
