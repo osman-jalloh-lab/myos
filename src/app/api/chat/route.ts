@@ -8,6 +8,7 @@ import { runHermesExecution, runHermesExecutionPlan } from "@/lib/hermes-executi
 import { rateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { normalizeAgentKey } from "@/lib/agent-roster";
 import { recordSkillUsageTelemetry, resolveRelevantSkills } from "@/lib/skills/routing";
+import { formatImprovementPlan, isSelfImprovementIntent, prepareSelfImprovement } from "@/lib/autonomous-improvement";
 
 /**
  * GET  /api/chat?agent=<name>  — recent chat history for a thread
@@ -63,6 +64,30 @@ export async function POST(req: Request) {
   const trimmed = body.message.trim();
   const contextChatId = `dashboard:shared:${session.user.id}`;
   const targetAgent = body.agentName?.trim() ? normalizeAgentKey(body.agentName) : null;
+  if (!targetAgent && isSelfImprovementIntent(trimmed)) {
+    try {
+      const prepared = await prepareSelfImprovement(session.user.id, trimmed);
+      const answer = formatImprovementPlan(prepared.plan, prepared.council.selection, prepared.council.synthesis);
+      const result = await persistExecutedMessage(session.user.id, trimmed, answer, "dashboard");
+      return NextResponse.json({
+        userMessage: result.userMessage,
+        reply: {
+          ...result.reply,
+          content: answer,
+          executionStatus: "waiting_for_approval",
+          quickActions: [
+            { id: `approve-${prepared.approval.id}`, label: "Approve Plan", value: prepared.approval.id, kind: "approve_plan", description: "Authorizes implementation and validation only." },
+            { id: `revise-${prepared.runId}`, label: "Revise", value: `Revise this plan: ${trimmed}`, description: "Tell Hermes what should change." },
+            { id: `council-${prepared.runId}`, label: "Ask Council", value: `Council review: ${trimmed}`, description: "Request another bounded review." },
+            { id: `reject-${prepared.approval.id}`, label: "Reject", value: prepared.approval.id, kind: "reject_plan", description: "Rejects this plan without source writes." },
+          ],
+        },
+      });
+    } catch (error) {
+      console.error("[/api/chat] self-improvement planning failed", error);
+      return NextResponse.json({ error: "Hermes could not prepare the protected improvement plan." }, { status: 500 });
+    }
+  }
   const intake = !targetAgent
     ? await handleBuildIntake(contextChatId, session.user.id, trimmed).catch(() => ({ action: "none" as const }))
     : { action: "none" as const };

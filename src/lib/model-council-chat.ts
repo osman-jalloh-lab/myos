@@ -6,6 +6,8 @@ import type { ProviderFamily } from "@/lib/model-provider-registry";
 import type { ChatMessageView } from "@/lib/chat";
 import type { RouteResult } from "@/agents/hermes";
 import type { DataClass } from "@/lib/modelRouter";
+import { formatDynamicCouncil, selectDynamicCouncil, synthesizeCouncil } from "@/lib/dynamic-council";
+import type { CouncilSynthesis, DynamicCouncilSelection } from "@/lib/dynamic-council";
 
 export const COUNCIL_TARGET = "model_council";
 export const councilProviderTarget = (family: ProviderFamily) => `council_${family}`;
@@ -116,7 +118,7 @@ export async function queueCouncilMessage(params: {
     priority: "high",
     assignedExecutor: "council_chat",
     initialLog: params.mode === "council"
-      ? "Queued Council debate. Each configured Council provider must be called by the local worker."
+      ? "Queued dynamic Council review. The local worker will call only the task-relevant selected reviewers."
       : `Queued direct ${providerFamily} office chat through the local worker.`,
   });
 
@@ -128,7 +130,7 @@ export async function sendCouncilMessage(params: {
   message: string;
   mode: CouncilChatMode;
   providerFamily?: ProviderFamily;
-}): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView; route: RouteResult; target: string; providerResults: CouncilProviderResponse[] }> {
+}): Promise<{ userMessage: ChatMessageView; reply: ChatMessageView; route: RouteResult; target: string; providerResults: CouncilProviderResponse[]; councilResult: { selection: DynamicCouncilSelection; synthesis: CouncilSynthesis } | null }> {
   const trimmed = params.message.trim();
   if (!trimmed) throw new Error("message is required");
   assertCouncilPrivacy(trimmed, params.mode, params.providerFamily);
@@ -141,6 +143,9 @@ export async function sendCouncilMessage(params: {
     if (!entry) throw new Error("Council provider is not registered.");
     target = councilProviderTarget(params.providerFamily);
     entries = [entry];
+  } else {
+    const selection = selectDynamicCouncil(trimmed);
+    entries = entries.filter((entry) => selection.providerFamilies.includes(entry.family));
   }
 
   const userRow = await prisma.chatMessage.create({
@@ -148,7 +153,11 @@ export async function sendCouncilMessage(params: {
   });
 
   const responses = await Promise.all(entries.map((entry) => runCouncilProvider(entry, trimmed)));
-  const replyText = formatCouncilResponse(params.mode, responses);
+  const selection = params.mode === "council" ? selectDynamicCouncil(trimmed) : null;
+  const synthesis = selection ? synthesizeCouncil(responses) : null;
+  const replyText = selection && synthesis
+    ? formatDynamicCouncil(selection, synthesis, responses)
+    : formatCouncilResponse(params.mode, responses);
   const replyRow = await prisma.chatMessage.create({
     data: { userId: params.userId, role: "assistant", content: replyText, channel: "dashboard", targetAgent: target },
   });
@@ -158,7 +167,7 @@ export async function sendCouncilMessage(params: {
       agentName: params.mode === "council" ? "model_council" : target,
       inputSummary: trimmed.slice(0, 200),
       outputSummary: responses.map((response) => `${response.family}:${response.status}`).join(", ").slice(0, 500),
-      modelProvider: params.mode === "council" ? "council-all-configured" : params.providerFamily,
+      modelProvider: params.mode === "council" ? `council-dynamic:${entries.map((entry) => entry.family).join(",")}` : params.providerFamily,
       status: responses.some((response) => response.status === "answered") ? "completed" : "failed",
     },
   }).catch(() => undefined);
@@ -169,5 +178,6 @@ export async function sendCouncilMessage(params: {
     route: { reply: replyText },
     target,
     providerResults: responses,
+    councilResult: selection && synthesis ? { selection, synthesis } : null,
   };
 }

@@ -164,7 +164,7 @@ describe("model council chat queueing", () => {
     expect(runCouncilProviderMock).toHaveBeenCalledTimes(2);
   });
 
-  it("fans public messages out to every seated Council member", async () => {
+  it("selects only task-relevant public Council members", async () => {
     chatCreateMock
       .mockResolvedValueOnce({ id: "public-user", role: "user", content: "Compare two public architecture options.", channel: "dashboard", targetAgent: "model_council", createdAt: new Date("2026-07-12T21:05:00.000Z") })
       .mockResolvedValueOnce({ id: "public-reply", role: "assistant", content: "Council answers", channel: "dashboard", targetAgent: "model_council", createdAt: new Date("2026-07-12T21:05:01.000Z") });
@@ -172,7 +172,8 @@ describe("model council chat queueing", () => {
 
     const result = await sendCouncilMessage({ userId: "user-1", mode: "council", message: "Compare two public architecture options." });
 
-    expect(result.providerResults.map((item) => item.family)).toEqual(["openai", "anthropic", "deepseek", "ollama"]);
-    expect(runCouncilProviderMock).toHaveBeenCalledTimes(4);
+    expect(result.providerResults.map((item) => item.family)).toEqual(["openai", "anthropic", "deepseek"]);
+    expect(result.councilResult?.selection.domain).toBe("software");
+    expect(runCouncilProviderMock).toHaveBeenCalledTimes(3);
   });
 });

@@ -8,11 +8,18 @@ type CouncilMessage = {
   content: string;
   createdAt: string;
 };
+type CouncilResult = {
+  selection: { domain: string; specialists: string[]; reason: string };
+  synthesis: { positions: Array<{ participant: string; position: string; status: string }>; disagreement: string; confidence: string; risks: string[]; recommendation: string; needsUserDecision: boolean };
+  providerResults: Array<{ provider: string; roleLabel: string; status: string; text: string; safeError: string | null }>;
+};
 
 export default function CouncilChatPanel() {
   const [messages, setMessages] = useState<CouncilMessage[]>([]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<CouncilResult | null>(null);
+  const [showFull, setShowFull] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const loadMessages = useCallback(async () => {
@@ -42,10 +49,11 @@ export default function CouncilChatPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: "council", message: text }),
       });
-      const data = await res.json().catch(() => null) as { userMessage?: CouncilMessage; reply?: CouncilMessage; error?: string } | null;
+      const data = await res.json().catch(() => null) as { userMessage?: CouncilMessage; reply?: CouncilMessage; error?: string; councilResult?: { selection: CouncilResult["selection"]; synthesis: CouncilResult["synthesis"] }; providerResults?: CouncilResult["providerResults"] } | null;
       if (!res.ok || data?.error) throw new Error(data?.error ?? `Council request failed with ${res.status}`);
       if (data?.userMessage && data.reply) {
         setMessages((prev) => [...prev.filter((message) => !message.id.startsWith("pending-")), data.userMessage!, data.reply!]);
+        if (data.councilResult) setResult({ ...data.councilResult, providerResults: data.providerResults ?? [] });
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : "Council request could not be queued.";
@@ -60,16 +68,24 @@ export default function CouncilChatPanel() {
       <div style={header}>
         <div>
           <div style={eyebrow}>Council of Agents</div>
-          <h3 style={title}>Whole-Council Debate</h3>
+          <h3 style={title}>Dynamic Council</h3>
         </div>
-          <div style={statusPill}>{sending ? "asking" : "all configured providers"}</div>
+          <div style={statusPill}>{sending ? "selecting reviewers" : result?.selection.domain ?? "Hermes chaired"}</div>
       </div>
 
       <div style={rail}>
         <div style={ruleBox}>
-          Council mode calls every configured Council provider. Ollama cannot decide alone, and cost-conscious routing is not used here.
+          Hermes selects only the specialists relevant to the brief. Material disagreement or low confidence returns to you for a decision.
         </div>
       </div>
+
+      {result && <section className="council-result">
+        <header><span>Objective review</span><strong>{result.selection.specialists.join(" · ")}</strong><small>{result.selection.reason}</small></header>
+        <div className="council-positions">{result.synthesis.positions.map((position) => <article key={position.participant}><span>{position.participant}</span><p>{position.position}</p><small>{position.status}</small></article>)}</div>
+        <div className="council-synthesis"><span>Hermes synthesis</span><p>{result.synthesis.recommendation}</p><small>Confidence {result.synthesis.confidence} · disagreement {result.synthesis.disagreement}{result.synthesis.needsUserDecision ? " · your decision required" : ""}</small></div>
+        <button type="button" className="council-full-toggle" onClick={() => setShowFull((value) => !value)}>{showFull ? "Hide full deliberation" : "View full deliberation"}</button>
+        {showFull && <div className="council-full">{result.providerResults.map((provider) => <details key={provider.provider}><summary>{provider.roleLabel} · {provider.status}</summary><p>{provider.status === "answered" ? provider.text : provider.safeError}</p></details>)}</div>}
+      </section>}
 
       <div ref={scrollRef} style={scroll}>
         {messages.length === 0 ? (

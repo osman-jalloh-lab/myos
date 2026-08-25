@@ -256,8 +256,10 @@ export async function sendMessage(
       : await routeMessage(userId, routedWithSkills, channel, resolvedContext || undefined);
   }
 
+  // Routing diagnostics are operational evidence, not conversation content.
+  // Keep them in Trace so a no-match or low-confidence route never pollutes
+  // Hermes' user-facing answer.
   const skillsUsedLine = formatSkillsUsed(skillResolution);
-  route.reply = `${route.reply}\n\n${skillsUsedLine}`;
   runAfterResponse(async () => {
     await recordSkillUsageTelemetry({ userId, resolution: skillResolution, modelCallAvoided: false }).catch(() => {});
     if (!run) return;

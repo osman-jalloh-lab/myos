@@ -287,7 +287,36 @@ async function executeIfPossible(row: {
       route?: string;
       steps?: string[];
       repositorySlug?: string;
+      objective?: string;
+      executionRunId?: string;
+      plan?: unknown;
+      excludedActions?: string[];
     };
+
+    if (payload.route === "self_improvement") {
+      const { createExecutionQueueTask } = await import("@/lib/execution-queue");
+      const task = await createExecutionQueueTask({
+        userId: row.userId,
+        title: `Approved My OS plan: ${String(payload.objective ?? payload.projectName).slice(0, 120)}`,
+        description: JSON.stringify({
+          type: "approved_self_improvement",
+          objective: payload.objective,
+          plan: payload.plan,
+          protectedWorkspace: "my-os",
+          approvalId: row.id,
+          executionRunId: payload.executionRunId,
+          excludedActions: payload.excludedActions ?? ["merge", "deploy", "push"],
+        }),
+        priority: "high",
+        assignedExecutor: "codex_cli",
+        initialLog: "Approve Plan received. Implementation and validation delegated to Codex CLI; merge, deploy, and push remain unauthorized.",
+      });
+      if (payload.executionRunId) {
+        const { appendExecutionEvent } = await import("@/lib/execution-runs");
+        await appendExecutionEvent(payload.executionRunId, { phase: "claimed", source: "web", status: "running", message: `Plan approved and delegated to Codex CLI task ${task.id.slice(0, 8)}.`, safeDetails: { taskId: task.id, approvalId: row.id, excludedActions: payload.excludedActions }, meaningful: true }).catch(() => null);
+      }
+      executionNote = `Plan approved. Implementation and validation were delegated to Codex CLI task ${task.id.slice(0, 8)}. Merge, deploy, and push remain unauthorized.`;
+    } else {
 
     // Phase 1: queue the repo inspection task
     const { createEngineeringTask } = await import("@/lib/engineeringTasks");
@@ -316,6 +345,7 @@ async function executeIfPossible(row: {
       // Approval = active. "building" is for mid-execution — "active" means
       // the plan is approved and work is underway (or queued to start).
       await updateProjectStatus(payload.projectId, "active").catch(() => {});
+    }
     }
   }
 

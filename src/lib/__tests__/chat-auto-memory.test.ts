@@ -173,6 +173,8 @@ describe("chat auto-memory scheduling", () => {
 
     const result = await pending;
     expect(result.reply.content).not.toContain("Remembered:");
+    expect(result.reply.content).toBe("assistant reply");
+    expect(result.reply.content).not.toContain("Skills used:");
     expect(mocks.after).toHaveBeenCalledTimes(3);
     expect(mocks.recordSkillUsageTelemetry).not.toHaveBeenCalled();
     expect(mocks.updateSessionAfterResponse).not.toHaveBeenCalled();
