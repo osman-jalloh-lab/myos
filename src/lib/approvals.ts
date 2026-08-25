@@ -427,6 +427,11 @@ export async function createApproval(
   return toView(row);
 }
 
+export async function getApproval(userId: string, id: string): Promise<ApprovalActionView | null> {
+  const row = await prisma.approvalAction.findFirst({ where: { id, userId } });
+  return row ? toView(row) : null;
+}
+
 export async function getLatestPendingApproval(userId: string): Promise<ApprovalActionView | null> {
   const row = await prisma.approvalAction.findFirst({
     where: { userId, status: "pending" },
