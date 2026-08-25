@@ -1,6 +1,7 @@
 import type { LiveBuildLog } from "@/lib/live-build-console";
 
 export type ExecutionConsoleTab = "console" | "changes" | "commands" | "tests" | "files" | "trace";
+export const EXECUTION_CONSOLE_VIEWS = ["mission", "code", "trace"] as const;
 
 export function executionEngineLabel(executor: string, logs: LiveBuildLog[]): string {
   if (/local[_ -]?worker/i.test(executor)) return "Local worker";

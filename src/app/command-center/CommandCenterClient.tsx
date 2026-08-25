@@ -6,6 +6,7 @@ import BuilderOffice from "./BuilderOffice";
 import LiveBuildConsole from "./LiveBuildConsole";
 import AgentOffice from "./AgentOffice";
 import TeachHermesReviewPanel from "./TeachHermesReviewPanel";
+import HermesVoiceMode from "./HermesVoiceMode";
 import AppSidebar, { type CommandCenterDestination } from "./AppSidebar";
 import AgentRoster from "@/components/AgentRoster";
 import CouncilChatPanel from "@/components/CouncilChatPanel";
@@ -195,6 +196,20 @@ interface ChatQuickAction {
   label: string;
   value: string;
   description?: string;
+  kind?: "approve_plan" | "reject_plan";
+}
+
+async function resolveChatQuickAction(action: ChatQuickAction): Promise<string | null> {
+  if (action.kind !== "approve_plan" && action.kind !== "reject_plan") return null;
+  const decision = action.kind === "approve_plan" ? "approve" : "reject";
+  const response = await fetch(`/api/approvals/${encodeURIComponent(action.value)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision }),
+  });
+  const payload = await response.json().catch(() => null) as { action?: { executionNote?: string }; error?: string } | null;
+  if (!response.ok) throw new Error(payload?.error ?? `Plan ${decision} failed.`);
+  return payload?.action?.executionNote ?? (decision === "approve" ? "Plan approved. Implementation and validation were delegated through the existing execution queue." : "Plan rejected. No source changes were authorized.");
 }
 
 interface MemoryOfficeData {
@@ -344,6 +359,15 @@ interface SkillScoutCandidate {
   scores: { benefit: number; risk: number; effort: number; priority: "high" | "medium" | "low" };
   expectedFilesChanged: string[];
   rollbackPlan: string;
+  license: string | null;
+  version: string;
+  maintainer: string;
+  dependencies: string[];
+  permissionsRequired: string[];
+  securityConsiderations: string[];
+  maintenanceMaturity: string;
+  integrationRecommendation: "USE" | "ADAPT" | "REFERENCE ONLY" | "REJECT";
+  confidence: "low" | "medium" | "high";
 }
 
 interface SkillScoutResult {
@@ -1260,7 +1284,7 @@ function CompactHermesConsole({ initialMessages }: { initialMessages: ChatMessag
             {message.role === "assistant" && message.quickActions?.length ? (
               <div style={{ display: "grid", gap: 5, marginTop: 6 }}>
                 {message.quickActions.map((action) => (
-                  <button key={action.id} type="button" disabled={sending} onClick={() => void send(action.value)} title={action.description} style={{ textAlign: "left", borderRadius: 8, border: "1px solid rgba(52,211,153,0.36)", background: "rgba(52,211,153,0.12)", color: "#34D399", padding: "6px 8px", fontSize: 11, fontWeight: 800, cursor: sending ? "not-allowed" : "pointer" }}>
+                  <button key={action.id} type="button" disabled={sending} onClick={() => void (async () => { const result = await resolveChatQuickAction(action); if (result) setMessages((prev) => [...prev, { id: `action-${Date.now()}`, role: "assistant", content: result, channel: "dashboard", createdAt: new Date().toISOString() }]); else await send(action.value); })()} title={action.description} style={{ textAlign: "left", borderRadius: 8, border: "1px solid rgba(52,211,153,0.36)", background: "rgba(52,211,153,0.12)", color: "#34D399", padding: "6px 8px", fontSize: 11, fontWeight: 800, cursor: sending ? "not-allowed" : "pointer" }}>
                     {action.label}
                   </button>
                 ))}
@@ -1832,6 +1856,7 @@ function SkillsPanel({
   const [matchText, setMatchText] = useState("score this SOC analyst role against my Security+ and CySA+ background");
   const [matchResult, setMatchResult] = useState<Record<string, SkillTestResult>>({});
   const [duplicateMessage, setDuplicateMessage] = useState<string | null>(null);
+  const [candidateState, setCandidateState] = useState<Record<string, "saved" | "dismissed" | "council">>({});
   const scout = async () => {
     if (!repoUrl.trim()) return;
     setBusy(true);
@@ -1851,6 +1876,24 @@ function SkillsPanel({
     } finally {
       setRefreshing(false);
     }
+  };
+  const reviewCandidateWithCouncil = async (candidate: SkillScoutCandidate) => {
+    const key = `${candidate.sourceRepo}:${candidate.sourcePath}`;
+    setCandidateState((current) => ({ ...current, [key]: "council" }));
+    const response = await fetch("/api/council/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "council",
+        message: `Review this read-only Scout candidate for My OS. Do not install or execute it. Candidate: ${candidate.name}. Source: ${candidate.sourceUrl}. License: ${candidate.license ?? "unknown"}. Purpose: ${candidate.summary}. Existing overlap: ${candidate.overlapWithExistingSystem}. Risk: ${candidate.riskLevel}. Recommend USE, ADAPT, REFERENCE ONLY, or REJECT and explain the bounded integration path.`,
+      }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      setCandidateState((current) => { const next = { ...current }; delete next[key]; return next; });
+      throw new Error(payload?.error ?? "Council review failed.");
+    }
+    setDuplicateMessage(`${candidate.name} was sent to the dynamic Council. No package was installed and no source was executed.`);
   };
 
   const installed = skills.filter((skill) => skill.source === "installed" || skill.source === "built_in");
@@ -1967,7 +2010,7 @@ function SkillsPanel({
           </div>
 
           <div style={{ display: "grid", gap: 12 }}>
-            {scoutResult.candidates.map((candidate) => (
+            {scoutResult.candidates.filter((candidate) => candidateState[`${candidate.sourceRepo}:${candidate.sourcePath}`] !== "dismissed").map((candidate) => (
               <div key={`${candidate.sourceRepo}-${candidate.sourcePath}`} style={{ padding: 14, borderRadius: 8, border: "1px solid rgba(40,50,74,0.85)", background: "rgba(15,22,38,0.42)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
                   <div style={{ minWidth: 0 }}>
@@ -1990,10 +2033,19 @@ function SkillsPanel({
                 </div>
                 <div style={{ display: "grid", gap: 6, marginTop: 10, color: "#94A3B8", fontSize: 12 }}>
                   <span>Action: <strong style={{ color: "#38BDF8" }}>{candidate.recommendedAction}</strong></span>
+                  <span>Recommendation: <strong style={{ color: "#38BDF8" }}>{candidate.integrationRecommendation}</strong> · confidence {candidate.confidence}</span>
                   <span>Source: <a href={candidate.sourceUrl} target="_blank" rel="noopener noreferrer" style={{ color: "#38BDF8" }}>{candidate.sourcePath}</a></span>
+                  <span>License: {candidate.license ?? "Unknown — verify before adaptation"} · Version: {candidate.version} · Maintainer: {candidate.maintainer}</span>
                   <span>Overlap: {candidate.overlapWithExistingSystem}</span>
+                  <span>Permissions: {candidate.permissionsRequired.join(", ")}</span>
+                  <span>Security: {candidate.securityConsiderations.join(" ")}</span>
                   <span>Expected files: {candidate.expectedFilesChanged.join(", ")}</span>
                   <span>Rollback: {candidate.rollbackPlan}</span>
+                </div>
+                <div className="scout-candidate-actions">
+                  <button type="button" onClick={() => void reviewCandidateWithCouncil(candidate).catch((cause) => setError(cause instanceof Error ? cause.message : "Council review failed."))}>{candidateState[`${candidate.sourceRepo}:${candidate.sourcePath}`] === "council" ? "Sent to Council" : "Review with Council"}</button>
+                  <button type="button" onClick={() => setCandidateState((current) => ({ ...current, [`${candidate.sourceRepo}:${candidate.sourcePath}`]: "saved" }))}>{candidateState[`${candidate.sourceRepo}:${candidate.sourcePath}`] === "saved" ? "Saved" : "Save for Later"}</button>
+                  <button type="button" onClick={() => setCandidateState((current) => ({ ...current, [`${candidate.sourceRepo}:${candidate.sourcePath}`]: "dismissed" }))}>Dismiss</button>
                 </div>
               </div>
             ))}
@@ -2693,6 +2745,7 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const latestReply = [...messages].reverse().find((message) => message.role === "assistant")?.content ?? null;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -2726,6 +2779,7 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
       <div style={{ fontSize: 13, fontWeight: 600, color: "#94A3B8", marginBottom: 16, letterSpacing: "0.08em", textTransform: "uppercase" }}>
         Unified Chat
       </div>
+      <HermesVoiceMode onMessage={async (message) => { await send(message); }} latestReply={latestReply} busy={sending} />
 
       <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 12, paddingRight: 4 }}>
         {messages.length === 0 && (
@@ -2765,7 +2819,7 @@ function ChatPanel({ initialMessages }: { initialMessages: ChatMessage[] }) {
                         key={action.id}
                         type="button"
                         disabled={sending}
-                        onClick={() => void send(action.value)}
+                        onClick={() => void (async () => { const result = await resolveChatQuickAction(action); if (result) setMessages((prev) => [...prev, { id: `action-${Date.now()}`, role: "assistant", content: result, channel: "dashboard", createdAt: new Date().toISOString() }]); else await send(action.value); })()}
                         title={action.description}
                         style={{ textAlign: "left", borderRadius: 8, border: "1px solid rgba(52,211,153,0.36)", background: "rgba(52,211,153,0.12)", color: "#34D399", padding: "8px 10px", cursor: sending ? "not-allowed" : "pointer", opacity: sending ? 0.65 : 1 }}
                       >

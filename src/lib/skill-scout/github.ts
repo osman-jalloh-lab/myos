@@ -33,6 +33,15 @@ export type SkillScoutCandidate = {
   };
   expectedFilesChanged: string[];
   rollbackPlan: string;
+  license: string | null;
+  version: string;
+  maintainer: string;
+  dependencies: string[];
+  permissionsRequired: string[];
+  securityConsiderations: string[];
+  maintenanceMaturity: string;
+  integrationRecommendation: "USE" | "ADAPT" | "REFERENCE ONLY" | "REJECT";
+  confidence: "low" | "medium" | "high";
 };
 
 export type SkillScoutResult = {
@@ -76,6 +85,9 @@ type GitHubRepoResponse = {
   language: string | null;
   topics?: string[];
   html_url: string;
+  pushed_at?: string;
+  owner?: { login?: string };
+  license?: { spdx_id?: string | null } | null;
 };
 
 const GITHUB_PREFIX = "https://github.com/";
@@ -297,7 +309,7 @@ function priority(benefit: number, risk: number, effort: number): SkillScoutPrio
   return "low";
 }
 
-function buildCandidates(repoFullName: string, repoUrl: string, tree: GitHubTreeItem[]): SkillScoutCandidate[] {
+function buildCandidates(repoFullName: string, repoUrl: string, tree: GitHubTreeItem[], metadata: { license: string | null; version: string; maintainer: string; stars: number }): SkillScoutCandidate[] {
   const byName = new Map<string, SkillScoutCandidate>();
   const safeBlobs = tree
     .filter((item) => item.type === "blob")
@@ -331,6 +343,15 @@ function buildCandidates(repoFullName: string, repoUrl: string, tree: GitHubTree
       },
       expectedFilesChanged: rule.target,
       rollbackPlan: "Revert the approved catalog/agent/src changes from the importing commit; no external repo files are executed during scouting.",
+      license: metadata.license,
+      version: metadata.version,
+      maintainer: metadata.maintainer,
+      dependencies: [],
+      permissionsRequired: rule.action === "add_tool_registry_entry" ? ["Explicit tool-registry and policy review"] : ["Read-only source review"],
+      securityConsiderations: ["Third-party code was not executed.", riskLabel(risk) === "high" ? "Manual security review required before any adaptation." : "Adapt disabled first and validate before enabling."],
+      maintenanceMaturity: metadata.stars >= 1_000 ? "established" : metadata.stars >= 100 ? "active" : "unproven",
+      integrationRecommendation: rule.action === "ignore" ? "REJECT" : rule.action === "later" ? "REFERENCE ONLY" : rule.action === "add_tool_registry_entry" ? "USE" : "ADAPT",
+      confidence: metadata.license ? "high" : "medium",
     };
 
     const key = `${candidate.category}:${candidate.name}`.toLowerCase();
@@ -410,7 +431,12 @@ export async function runSkillScout(userId: string, inputUrl: string): Promise<S
     `${repoApi}/git/trees/${encodeURIComponent(repo.default_branch)}?recursive=1`
   );
   const treeItems = (tree.tree ?? []).slice(0, MAX_TREE_ITEMS);
-  const candidates = buildCandidates(repo.full_name, parsed.repoUrl, treeItems);
+  const candidates = buildCandidates(repo.full_name, parsed.repoUrl, treeItems, {
+    license: repo.license?.spdx_id && repo.license.spdx_id !== "NOASSERTION" ? repo.license.spdx_id : null,
+    version: repo.default_branch,
+    maintainer: repo.owner?.login ?? repo.full_name.split("/")[0],
+    stars: repo.stargazers_count,
+  });
   // High and medium priority both queue approvals (still capped at MAX_APPROVALS
   // by buildCandidates) — a scan whose top candidates all score medium should
   // still surface them for review instead of reporting "nothing to add".
