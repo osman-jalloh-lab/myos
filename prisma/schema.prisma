@@ -118,6 +118,22 @@ model Task {
   createdAt     DateTime  @default(now())
 }
 
+// Durable idempotency ledger for inbound Telegram updates (messages, voice,
+// callback queries). Telegram and Vercel both retry deliveries, so update_id
+// must be claimed here BEFORE any Hermes routing, approval, or execution work
+// starts — an in-memory Set does not survive a serverless function restart.
+model TelegramUpdate {
+  id         String    @id @default(cuid())
+  updateId   Int       @unique
+  updateType String // "message" | "voice" | "audio" | "callback_query"
+  status     String    @default("received") // received|processing|completed|failed
+  resultNote String? // short non-secret note (e.g. "duplicate", "voice too large")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([status, createdAt])
+}
+
 model ApprovalAction {
   id         String    @id @default(cuid())
   userId     String
