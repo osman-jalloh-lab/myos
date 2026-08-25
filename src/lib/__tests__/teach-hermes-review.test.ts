@@ -120,11 +120,17 @@ describe.sequential("Teach Hermes Phase 4", () => {
     await prisma.skillDraft.update({ where: { id: malformed.id }, data: { definition: "{not-json" } });
     await expect(approveAction("owner", malformedApproval.approval!.id)).rejects.toThrow();
     expect(await prisma.userSkill.count({ where: { userId: "owner", skillId: "malformed-lead" } })).toBe(0);
+    const availability = await reviewApi.listTeachingDraftReviewAvailability("owner");
+    expect(availability.unavailableCount).toBeGreaterThanOrEqual(1);
+    expect(availability.reviews.every((review) => review.id !== malformed.id)).toBe(true);
   });
 
   it("keeps the component functional, explicit about trust, and free of raw secret surfaces", async () => {
     const source = await readFile(path.join(process.cwd(), "src/app/command-center/TeachHermesReviewPanel.tsx"), "utf8");
     for (const text of ["review.trustLabel", "Hermes cannot use it yet", "Approve Skill", "Reject Draft", "Source demonstration", "Failure handling"]) expect(source).toContain(text);
     expect(source).not.toMatch(/cookies|browserStorage|rawHtml|authorizationHeader|secret-original-token/i);
+    const routeSource = await readFile(path.join(process.cwd(), "src/app/api/command-center/teach/route.ts"), "utf8");
+    expect(routeSource).toContain("Teach Hermes storage is not initialized in this local environment");
+    expect(routeSource).toContain("status: 503");
   });
 });

@@ -16,7 +16,7 @@ import {
 } from "@/lib/teach-hermes";
 import { appendRecordedBrowserEvent, startTeachingRecording, stopTeachingRecording, type RecordedBrowserEvent } from "@/lib/teach-hermes-recording";
 import { generateTeachingSkillDraft } from "@/lib/teach-hermes-generation";
-import { getTeachingDraftReview, listTeachingDraftReviews, updateTeachingDraftReview, type TeachingDraftReviewEdit } from "@/lib/teach-hermes-review";
+import { getTeachingDraftReview, listTeachingDraftReviewAvailability, updateTeachingDraftReview, type TeachingDraftReviewEdit } from "@/lib/teach-hermes-review";
 
 export async function GET(req: Request) {
   const session = await auth();
@@ -24,11 +24,18 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const draftId = url.searchParams.get("draftId");
   try {
-    if (url.searchParams.get("review") === "1") return NextResponse.json({ reviews: draftId ? [await getTeachingDraftReview(session.user.id, draftId)] : await listTeachingDraftReviews(session.user.id) });
+    if (url.searchParams.get("review") === "1") {
+      if (draftId) return NextResponse.json({ reviews: [await getTeachingDraftReview(session.user.id, draftId)], unavailableCount: 0 });
+      return NextResponse.json(await listTeachingDraftReviewAvailability(session.user.id));
+    }
     if (draftId) return NextResponse.json({ draft: await getSkillDraft(session.user.id, draftId) });
     return NextResponse.json({ session: await getCurrentTeachingSession(session.user.id, url.searchParams.get("projectId")) });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Teach Hermes request failed." }, { status: 404 });
+    const message = error instanceof Error ? error.message : "Teach Hermes request failed.";
+    if (/no such table|database is unavailable|SQLITE_/i.test(message)) {
+      return NextResponse.json({ error: "Teach Hermes storage is not initialized in this local environment. No draft was activated." }, { status: 503 });
+    }
+    return NextResponse.json({ error: message }, { status: 404 });
   }
 }
 

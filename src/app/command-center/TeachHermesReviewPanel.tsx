@@ -29,12 +29,14 @@ export default function TeachHermesReviewPanel({ onRegistryChanged }: { onRegist
   const [edit, setEdit] = useState<ReviewEdit | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [unavailableCount, setUnavailableCount] = useState(0);
 
   const load = useCallback(async () => {
     const response = await fetch("/api/command-center/teach?review=1");
-    const data = await response.json() as { reviews?: Review[]; error?: string };
+    const data = await response.json() as { reviews?: Review[]; unavailableCount?: number; error?: string };
     if (!response.ok) throw new Error(data.error ?? "Could not load Teach Hermes drafts.");
     setReviews(data.reviews ?? []);
+    setUnavailableCount(data.unavailableCount ?? 0);
     setSelectedId((current) => current && data.reviews?.some((review) => review.id === current) ? current : data.reviews?.[0]?.id ?? null);
   }, []);
 
@@ -91,7 +93,7 @@ export default function TeachHermesReviewPanel({ onRegistryChanged }: { onRegist
     finally { setBusy(null); }
   };
 
-  if (!reviews.length) return <section style={panel}><div style={label}>Teach Hermes</div><div style={{ color: "#CBD5E1", fontSize: 13 }}>No generated teaching drafts are waiting for review.</div></section>;
+  if (!reviews.length) return <section style={panel}><div style={label}>Teach Hermes</div><div style={{ color: message ? "#FCA5A5" : "#CBD5E1", fontSize: 13 }}>{message ?? (unavailableCount ? `${unavailableCount} saved teaching draft${unavailableCount === 1 ? " is" : "s are"} unavailable because its recorded evidence or definition is incomplete. No draft was activated.` : "No generated teaching drafts are waiting for review.")}</div></section>;
   if (!review || !edit) return null;
   const editable = review.status === "draft";
   const failureLines = edit.instructions.split(/(?<=[.!?])\s+/).filter((line) => /if|fail|unable|error|missing/i.test(line));

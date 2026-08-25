@@ -99,10 +99,18 @@ export async function getTeachingDraftReview(userId: string, draftId: string): P
 }
 
 export async function listTeachingDraftReviews(userId: string): Promise<TeachingDraftReview[]> {
+  return (await listTeachingDraftReviewAvailability(userId)).reviews;
+}
+
+export async function listTeachingDraftReviewAvailability(userId: string): Promise<{ reviews: TeachingDraftReview[]; unavailableCount: number }> {
   const rows = await prisma.skillDraft.findMany({ where: { userId }, select: { id: true }, orderBy: { updatedAt: "desc" }, take: 20 });
   const reviews: TeachingDraftReview[] = [];
-  for (const row of rows) reviews.push(await getTeachingDraftReview(userId, row.id));
-  return reviews;
+  let unavailableCount = 0;
+  for (const row of rows) {
+    try { reviews.push(await getTeachingDraftReview(userId, row.id)); }
+    catch { unavailableCount += 1; }
+  }
+  return { reviews, unavailableCount };
 }
 
 export async function updateTeachingDraftReview(userId: string, draftId: string, expectedRevision: number, edit: TeachingDraftReviewEdit) {
