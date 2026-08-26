@@ -42,7 +42,12 @@ vi.mock("@/lib/orchestration/telegram-planner", () => ({
   telegramPlanButtonsForApproval: vi.fn().mockReturnValue([[{ text: "✅ Approve Plan", callback_data: "approve appr_1" }]]),
 }));
 
-vi.mock("@/lib/approvals", () => ({ getApproval: vi.fn() }));
+vi.mock("@/lib/approvals", () => ({
+  getApproval: vi.fn(),
+  markApprovalAwaitingRevision: vi.fn().mockResolvedValue(undefined),
+  findApprovalAwaitingRevision: vi.fn().mockResolvedValue(null),
+  supersedeApproval: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/model-council-chat", () => ({ sendCouncilMessage: vi.fn() }));
 
 vi.mock("@/lib/telegram-idempotency", () => ({
@@ -56,7 +61,7 @@ import { sendMessage } from "@/lib/chat";
 import { sendTelegramMessage, answerCallbackQuery, getTelegramFilePath, downloadTelegramFile } from "@/lib/telegram";
 import { transcribeAudioBuffer } from "@/lib/voice-service";
 import { createTelegramPlanPreview } from "@/lib/orchestration/telegram-planner";
-import { getApproval } from "@/lib/approvals";
+import { getApproval, markApprovalAwaitingRevision, findApprovalAwaitingRevision, supersedeApproval } from "@/lib/approvals";
 import { sendCouncilMessage } from "@/lib/model-council-chat";
 import { claimTelegramUpdate } from "@/lib/telegram-idempotency";
 import { POST } from "../route";
@@ -79,8 +84,9 @@ beforeEach(() => {
   process.env.TELEGRAM_OWNER_CHAT_ID = OWNER_CHAT_ID;
   vi.mocked(prisma.user.findFirst).mockResolvedValue(MOCK_USER as never);
   // clearAllMocks() clears call history but not a prior test's mockResolvedValue
-  // override — restore the "fresh update" default so idempotency tests don't leak.
+  // override — restore defaults so earlier tests' overrides don't leak forward.
   vi.mocked(claimTelegramUpdate).mockResolvedValue({ outcome: "claimed" });
+  vi.mocked(findApprovalAwaitingRevision).mockResolvedValue(null);
 });
 
 describe("auth", () => {
@@ -208,6 +214,26 @@ describe("plan-only intent", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  it("'Build me a one-page website' is NOT treated as pre-approved execution — it goes through the normal controlled chat/approval path, not a silent build", async () => {
+    vi.mocked(sendMessage).mockResolvedValue({
+      userMessage: {} as never,
+      reply: { content: "I'll need to plan this first — want me to sketch an approach?" } as never,
+      route: { reply: "I'll need to plan this first — want me to sketch an approach?" },
+    });
+
+    await POST(req({
+      update_id: 403,
+      message: { chat: { id: Number(OWNER_CHAT_ID) }, from: { id: Number(OWNER_CHAT_ID) }, text: "Build me a one-page website." },
+    }));
+
+    // Not the read-only plan-preview branch (no "do not build it yet" signal)...
+    expect(createTelegramPlanPreview).not.toHaveBeenCalled();
+    // ...but also not silently executed by the webhook — it's handed to the
+    // same controlled chat router as everything else, which owns the
+    // approval-required decision for build work.
+    expect(sendMessage).toHaveBeenCalledWith(MOCK_USER.id, "Build me a one-page website.", "telegram", null, undefined);
+  });
+
   it("does not treat an ordinary 'plan my day' message as plan-only intent", async () => {
     vi.mocked(sendMessage).mockResolvedValue({
       userMessage: {} as never,
@@ -256,7 +282,7 @@ describe("plan approval callbacks", () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
-  it("Revise asks what to change and leaves the plan pending — no execution", async () => {
+  it("Revise flags the plan awaiting revision and asks what to change — no execution, original stays pending (not yet superseded)", async () => {
     vi.mocked(getApproval).mockResolvedValue({
       id: "appr_1",
       actionType: "engineering_plan",
@@ -271,9 +297,61 @@ describe("plan approval callbacks", () => {
       callback_query: { id: "cbq_3", from: { id: Number(OWNER_CHAT_ID) }, message: { chat: { id: Number(OWNER_CHAT_ID) }, message_id: 3 }, data: "plan_revise appr_1" },
     }));
 
+    expect(markApprovalAwaitingRevision).toHaveBeenCalledWith(MOCK_USER.id, "appr_1");
+    expect(supersedeApproval).not.toHaveBeenCalled(); // not yet — only once the revision text actually arrives
     expect(sendMessage).not.toHaveBeenCalled();
     const sentMessages = vi.mocked(sendTelegramMessage).mock.calls.map((call) => call[1]);
     expect(sentMessages.some((text) => text.includes("What would you like to change"))).toBe(true);
+  });
+
+  it("the user's next free-text message after Revise supersedes the original plan and creates an updated proposal (not routed through normal chat)", async () => {
+    vi.mocked(findApprovalAwaitingRevision).mockResolvedValue({
+      id: "appr_1",
+      actionType: "engineering_plan",
+      payload: { objective: "build a landing page" },
+      status: "pending",
+      createdAt: "",
+      resolvedAt: null,
+    } as never);
+    vi.mocked(createTelegramPlanPreview).mockResolvedValue({ accepted: true, approvalId: "appr_5" } as never);
+
+    await POST(req({
+      update_id: 503,
+      message: { chat: { id: Number(OWNER_CHAT_ID) }, from: { id: Number(OWNER_CHAT_ID) }, text: "make it two pages instead of one" },
+    }));
+
+    expect(supersedeApproval).toHaveBeenCalledWith(MOCK_USER.id, "appr_1");
+    expect(createTelegramPlanPreview).toHaveBeenCalledWith(
+      MOCK_USER.id,
+      String(Number(OWNER_CHAT_ID)),
+      expect.stringContaining("make it two pages instead of one"),
+      503
+    );
+    expect(sendMessage).not.toHaveBeenCalled(); // not treated as an ordinary chat message
+  });
+
+  it("a slash command while awaiting a revision is NOT hijacked as the revision reply", async () => {
+    vi.mocked(findApprovalAwaitingRevision).mockResolvedValue({
+      id: "appr_1",
+      actionType: "engineering_plan",
+      payload: { objective: "build a landing page" },
+      status: "pending",
+      createdAt: "",
+      resolvedAt: null,
+    } as never);
+    vi.mocked(sendMessage).mockResolvedValue({
+      userMessage: {} as never,
+      reply: { content: "Here's your day..." } as never,
+      route: { reply: "Here's your day..." },
+    });
+
+    await POST(req({
+      update_id: 504,
+      message: { chat: { id: Number(OWNER_CHAT_ID) }, from: { id: Number(OWNER_CHAT_ID) }, text: "/brief" },
+    }));
+
+    expect(supersedeApproval).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalled();
   });
 
   it("Approve Plan falls through to the existing generic approve/reject verb path", async () => {

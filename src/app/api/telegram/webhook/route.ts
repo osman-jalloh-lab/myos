@@ -15,7 +15,7 @@ import { transcribeAudioBuffer } from "@/lib/voice-service";
 import type { RouteResult } from "@/agents/hermes";
 import { COMMAND_AGENT_PREFIXES } from "@/lib/agent-roster";
 import { createTelegramPlanPreview, formatTelegramPlanPreview, telegramPlanButtons, telegramPlanButtonsForApproval } from "@/lib/orchestration/telegram-planner";
-import { getApproval } from "@/lib/approvals";
+import { getApproval, markApprovalAwaitingRevision, findApprovalAwaitingRevision, supersedeApproval } from "@/lib/approvals";
 import { sendCouncilMessage } from "@/lib/model-council-chat";
 import { claimTelegramUpdate, completeTelegramUpdate, failTelegramUpdate, type TelegramUpdateType } from "@/lib/telegram-idempotency";
 
@@ -112,13 +112,34 @@ async function runPlanCouncil(userId: string, chatId: number, approvalId: string
   await sendTelegramMessage(chatId, lines.join("\n"), telegramPlanButtonsForApproval(approvalId));
 }
 
+/**
+ * Flags the pending plan as awaiting a revision reply. The original stays
+ * "pending" (buttons still work) until the user's next text message arrives —
+ * at that point runPlanRevisionReply() supersedes it atomically with creating
+ * the updated proposal, so it's never briefly both stale and approvable.
+ */
 async function runPlanRevise(userId: string, chatId: number, approvalId: string): Promise<void> {
   const approval = await getApproval(userId, approvalId);
   if (!approval || approval.status !== "pending") {
     await sendTelegramMessage(chatId, "That plan is no longer pending.");
     return;
   }
-  await sendTelegramMessage(chatId, "What would you like to change about this plan? Send /plan again with the updated request — execution has not started.");
+  await markApprovalAwaitingRevision(userId, approvalId);
+  await sendTelegramMessage(chatId, "What would you like to change about this plan? Reply with the change and I'll send an updated proposal.");
+}
+
+/**
+ * The user's reply to "what would you like to change" — combines the original
+ * objective with the requested change, supersedes the old approval (so it can
+ * never be Approved after a revision starts), and creates a fresh preview with
+ * its own Approve/Revise/Ask Council/Reject buttons.
+ */
+async function runPlanRevisionReply(userId: string, chatId: number, pending: { id: string; payload: unknown }, revisionText: string, updateId?: number): Promise<void> {
+  const payload = pending.payload as { objective?: string };
+  const previousObjective = payload.objective ?? "";
+  await supersedeApproval(userId, pending.id);
+  const combinedObjective = `${previousObjective}\n\nRevision requested: ${revisionText}`;
+  await runPlanPreview(userId, chatId, combinedObjective, updateId);
 }
 
 async function handleVoiceOrAudio(
@@ -224,8 +245,8 @@ async function processUpdate(update: TelegramUpdate, user: { id: string }): Prom
       return "callback: no chat/data";
     }
 
-    const planCouncilMatch = raw.match(/^plan_council\s+([a-zA-Z0-9-]+)/);
-    const planReviseMatch = raw.match(/^plan_revise\s+([a-zA-Z0-9-]+)/);
+    const planCouncilMatch = raw.match(/^plan_council\s+([a-zA-Z0-9_-]+)/);
+    const planReviseMatch = raw.match(/^plan_revise\s+([a-zA-Z0-9_-]+)/);
     if (planCouncilMatch) {
       await answerCallbackQuery(cq.id, "Asking Council…");
       await runPlanCouncil(user.id, chatId, planCouncilMatch[1]);
@@ -277,6 +298,17 @@ async function processUpdate(update: TelegramUpdate, user: { id: string }): Prom
   const contextPrefix = replyToText
     ? `[Context — replying to: "${replyToText.slice(0, 300)}"]\n`
     : "";
+
+  // A pending "Revise" request takes priority over everything else except an
+  // explicit slash command — the user's very next free-text message is the
+  // revision, not a new unrelated instruction.
+  if (!rawText.startsWith("/")) {
+    const awaitingRevision = await findApprovalAwaitingRevision(user.id).catch(() => null);
+    if (awaitingRevision) {
+      await runPlanRevisionReply(user.id, chatId, awaitingRevision, rawText, update.update_id);
+      return "plan revised";
+    }
+  }
 
   const { text: resolvedText, targetAgent } = resolveCommandText(rawText);
   const fullText = contextPrefix + resolvedText;
