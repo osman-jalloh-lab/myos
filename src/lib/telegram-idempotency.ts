@@ -38,13 +38,46 @@ export async function claimTelegramUpdate(updateId: number, updateType: Telegram
     return claimTelegramUpdate(updateId, updateType);
   }
 
-  const isStaleProcessing = existing.status === "processing" && Date.now() - existing.updatedAt.getTime() > STALE_PROCESSING_MS;
-  if (existing.status === "failed" || isStaleProcessing) {
+  if (existing.status === "failed") {
+    // status genuinely transitions failed -> processing, so a plain
+    // conditional UPDATE ... WHERE status='failed' is already a safe
+    // single-winner CAS: SQLite/libSQL executes each UPDATE as one atomic
+    // statement, so once the winner flips the row's status, a racer's WHERE
+    // stops matching it — no value-equality comparison needed.
     const reclaimed = await prisma.telegramUpdate.updateMany({
-      where: { updateId, status: existing.status },
+      where: { updateId, status: "failed" },
       data: { status: "processing", resultNote: null },
     });
     if (reclaimed.count > 0) return { outcome: "claimed" };
+    // Lost the race (someone else reclaimed it first) — re-read fresh state.
+    return claimTelegramUpdate(updateId, updateType);
+  }
+
+  if (existing.status === "processing" && Date.now() - existing.updatedAt.getTime() > STALE_PROCESSING_MS) {
+    // Stale-processing reclaim: old and new status are BOTH "processing", so a
+    // status-only WHERE can't tell winner from loser. Comparing the WHERE
+    // clause against the exact updatedAt Date object just read (an earlier
+    // version of this function did that) is NOT reliable here — empirically
+    // verified against the real libsql/sqlite adapter that a Date value bound
+    // as a query parameter does not round-trip to match the stored ISO8601
+    // string byte-for-byte, so that "CAS" silently matched zero rows every
+    // time, including non-concurrent calls. Recomputing the staleness cutoff
+    // directly in SQL avoids the round-trip entirely: only a row still older
+    // than "now - STALE_PROCESSING_MS" AT THE MOMENT THIS STATEMENT RUNS
+    // matches. The winner's write sets updatedAt to "now", so a concurrent
+    // racer's identical statement — applied after the winner's commits —
+    // no longer sees a stale row and updates zero rows.
+    const staleSecondsAgo = `-${Math.ceil(STALE_PROCESSING_MS / 1000)} seconds`;
+    const reclaimed = await prisma.$executeRawUnsafe(
+      `UPDATE "TelegramUpdate"
+       SET status = 'processing', resultNote = NULL, updatedAt = strftime('%Y-%m-%dT%H:%M:%f', 'now') || 'Z'
+       WHERE updateId = ? AND status = 'processing'
+         AND updatedAt <= (strftime('%Y-%m-%dT%H:%M:%f', 'now', ?) || 'Z')`,
+      updateId,
+      staleSecondsAgo
+    );
+    if (Number(reclaimed) > 0) return { outcome: "claimed" };
+    return claimTelegramUpdate(updateId, updateType);
   }
 
   return { outcome: "duplicate", status: existing.status, resultNote: existing.resultNote };
