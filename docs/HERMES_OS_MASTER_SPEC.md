@@ -288,7 +288,17 @@ the question — not the webhook adding diagnostics.
 execution starts. A Telegram or Vercel retry of the same `update_id` is answered (callbacks
 still get `answerCallbackQuery`) without re-running anything. A `processing` claim older
 than 5 minutes, or one marked `failed`, is eligible for retry — a crash mid-flight does not
-lose the update forever. Schema change: see §"Database migration status" below.
+lose the update forever. The initial `create()` is a real compare-and-swap via the table's
+unique index on `updateId` (only one concurrent INSERT can win). The `failed → processing`
+retry is a plain status-transition `UPDATE ... WHERE status = 'failed'` (also race-safe,
+since the value genuinely changes). The stale-`processing` reclaim is **not** a value-equality
+CAS — a pre-migration safety review found that comparing against the exact `updatedAt` Date
+object just read does not reliably round-trip through the libsql/sqlite adapter (confirmed
+against a real disposable SQLite file: even a solo, non-concurrent reclaim silently matched
+zero rows). It instead recomputes a freshness cutoff directly in raw SQL at execution time,
+so only a row still stale *at the moment the statement runs* matches — the winner's write
+resets `updatedAt`, which is what makes a concurrent loser's identical statement match zero
+rows. Schema change: see §"Database migration status" below.
 
 **Voice input.** `message.voice` / `message.audio` → `getTelegramFilePath()` (validates the
 Telegram-returned `file_path` — no arbitrary URL fetching) → `downloadTelegramFile()`
@@ -310,8 +320,13 @@ typed message. Voice input → text response only; no Telegram TTS in this miles
 - **Ask Council** → `callback_data: "plan_council <id>"`, runs the existing Dynamic Council
   (`src/lib/model-council-chat.ts`) on the plan's objective and returns a concise
   positions/disagreement/recommendation summary — full deliberation stays in My OS Trace.
-- **Revise** → `callback_data: "plan_revise <id>"`, asks what to change and leaves the
-  approval pending; the user re-runs `/plan` with the updated request.
+- **Revise** → `callback_data: "plan_revise <id>"`, flags the pending `ApprovalAction`'s own
+  payload (`awaitingRevision: true` — no new table) and asks what to change. The user's next
+  free-text message (any slash command bypasses this so it can't hijack `/brief` etc.) is
+  treated as the revision: the original approval is superseded (`supersedeApproval()` →
+  `rejected`, so it can never be Approved after a revision starts) and a fresh preview is
+  created combining the original objective with the requested change, with its own
+  Approve/Revise/Ask Council/Reject buttons.
 
 **Single worker boundary.** Telegram webhook handling runs inside the Vercel function, not
 the local worker — the one authoritative Hermes local worker (Windows Scheduled Task,
@@ -322,3 +337,25 @@ the local worker — the one authoritative Hermes local worker (Windows Schedule
 `prisma/migrations/20260825000000_add_telegram_update_idempotency/migration.sql`, but has
 **not** been applied to the remote/network-backed database — that requires a separate,
 explicit Osman-approved migration step.
+
+Pre-flight facts (verified without touching the remote database):
+- **Provider/mechanism:** Turso (libSQL, HTTP), via `TURSO_DATABASE_URL` +
+  `TURSO_AUTH_TOKEN` in `src/lib/db.ts`. Migrations are Prisma migration files applied with
+  `prisma migrate deploy` — this is a **manual, separate step**, not part of the Vercel
+  build (`package.json`'s `build` script only runs `prisma generate && next build`).
+- **Strictly additive:** one new standalone table (`CREATE TABLE`, one unique index, one
+  plain index), no `ALTER`/`DROP` on any existing table, no FK to any existing table, no
+  data rewrite. Applied cleanly against a full from-scratch replay of all 17 migrations on
+  a disposable local SQLite file; existing-table reads/writes were unaffected in the same
+  test.
+- **Compatibility with deployed old main (`b16a8dd7...`):** safe. Old main's Prisma schema
+  has no knowledge of `TelegramUpdate` and never queries it — adding an unrelated table is a
+  complete no-op for currently-running production code.
+- **Atomicity/locking:** each DDL statement is a single, fast SQLite/libSQL operation
+  against a brand-new, currently-unreferenced table; no concurrent reader/writer exists for
+  it until this branch is deployed. Expected downtime: effectively none.
+- **Backup/snapshot:** not verifiable from this workspace — confirm Turso's point-in-time
+  recovery/branching is available on the current plan via the Turso dashboard before
+  applying, as a standard precaution rather than because this specific migration is risky.
+- **Rollback:** trivial — `DROP TABLE "TelegramUpdate";` cleanly reverses it, since nothing
+  else references the table (not even old main).
