@@ -23,7 +23,7 @@ vi.mock("@/lib/db", () => ({
 }));
 
 import { prisma } from "@/lib/db";
-import { approveAction, rejectAction, createApproval } from "@/lib/approvals";
+import { approveAction, rejectAction, createApproval, markApprovalAwaitingRevision, findApprovalAwaitingRevision, supersedeApproval } from "@/lib/approvals";
 
 const MOCK_PENDING_ROW = {
   id: "act_1",
@@ -137,5 +137,83 @@ describe("createApproval", () => {
 
     expect(prisma.approvalAction.create).toHaveBeenCalledOnce();
     expect(result.id).toBe("act_new");
+  });
+});
+
+// ── Minimal plan-revision state (Telegram "Revise") ─────────────────────────
+const MOCK_PLAN_ROW = {
+  id: "plan_1",
+  userId: "user_1",
+  actionType: "engineering_plan",
+  payload: JSON.stringify({ objective: "build a landing page" }),
+  status: "pending",
+  createdAt: new Date("2026-08-25T00:00:00Z"),
+  resolvedAt: null,
+};
+
+describe("markApprovalAwaitingRevision", () => {
+  it("flags the payload without changing status", async () => {
+    vi.mocked(prisma.approvalAction.findFirstOrThrow).mockResolvedValue(MOCK_PLAN_ROW);
+    vi.mocked(prisma.approvalAction.update).mockResolvedValue(MOCK_PLAN_ROW);
+
+    await markApprovalAwaitingRevision("user_1", "plan_1");
+
+    expect(prisma.approvalAction.update).toHaveBeenCalledWith({
+      where: { id: "plan_1" },
+      data: { payload: JSON.stringify({ objective: "build a landing page", awaitingRevision: true }) },
+    });
+  });
+
+  it("throws if the plan is no longer pending — can't revise an already-resolved plan", async () => {
+    vi.mocked(prisma.approvalAction.findFirstOrThrow).mockResolvedValue({ ...MOCK_PLAN_ROW, status: "approved" });
+
+    await expect(markApprovalAwaitingRevision("user_1", "plan_1")).rejects.toThrow("already approved");
+  });
+});
+
+describe("findApprovalAwaitingRevision", () => {
+  it("finds the pending engineering_plan row flagged awaitingRevision", async () => {
+    vi.mocked(prisma.approvalAction.findMany).mockResolvedValue([
+      { ...MOCK_PLAN_ROW, id: "plan_old", payload: JSON.stringify({ objective: "old" }) },
+      { ...MOCK_PLAN_ROW, id: "plan_flagged", payload: JSON.stringify({ objective: "build a landing page", awaitingRevision: true }) },
+    ]);
+
+    const result = await findApprovalAwaitingRevision("user_1");
+
+    expect(result?.id).toBe("plan_flagged");
+  });
+
+  it("returns null when nothing is awaiting revision", async () => {
+    vi.mocked(prisma.approvalAction.findMany).mockResolvedValue([MOCK_PLAN_ROW]);
+
+    const result = await findApprovalAwaitingRevision("user_1");
+
+    expect(result).toBeNull();
+  });
+});
+
+describe("supersedeApproval", () => {
+  it("rejects the pending row so the original plan can never be approved again", async () => {
+    vi.mocked(prisma.approvalAction.findFirst).mockResolvedValue(MOCK_PLAN_ROW);
+    vi.mocked(prisma.approvalAction.update).mockResolvedValue({ ...MOCK_PLAN_ROW, status: "rejected" });
+    vi.mocked(prisma.auditLog.create).mockResolvedValue(undefined as never);
+
+    await supersedeApproval("user_1", "plan_1");
+
+    expect(prisma.approvalAction.update).toHaveBeenCalledWith({
+      where: { id: "plan_1" },
+      data: { status: "rejected", resolvedAt: expect.any(Date) },
+    });
+    expect(prisma.auditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ action: "superseded_by_revision" }) })
+    );
+  });
+
+  it("is a no-op if the plan is already resolved — never overwrites a real approve/reject", async () => {
+    vi.mocked(prisma.approvalAction.findFirst).mockResolvedValue(null); // findFirst filters status: "pending"
+
+    await supersedeApproval("user_1", "plan_1");
+
+    expect(prisma.approvalAction.update).not.toHaveBeenCalled();
   });
 });

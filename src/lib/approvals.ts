@@ -432,6 +432,40 @@ export async function getApproval(userId: string, id: string): Promise<ApprovalA
   return row ? toView(row) : null;
 }
 
+// ── Minimal plan-revision state ─────────────────────────────────────────────
+// Reuses the existing pending ApprovalAction row instead of a new table/engine:
+// a "Revise" tap flags the row's own payload so the next inbound message can be
+// recognized as the revision, then the row is superseded (not deleted) so the
+// stale original plan can never be Approved after a revision starts.
+
+export async function markApprovalAwaitingRevision(userId: string, id: string): Promise<void> {
+  const row = await prisma.approvalAction.findFirstOrThrow({ where: { id, userId } });
+  if (row.status !== "pending") throw new Error(`Action is already ${row.status}`);
+  const payload = JSON.parse(row.payload) as Record<string, unknown>;
+  payload.awaitingRevision = true;
+  await prisma.approvalAction.update({ where: { id }, data: { payload: JSON.stringify(payload) } });
+}
+
+/** The pending engineering_plan approval (if any) currently waiting on a revision reply. */
+export async function findApprovalAwaitingRevision(userId: string): Promise<ApprovalActionView | null> {
+  const rows = await prisma.approvalAction.findMany({
+    where: { userId, actionType: "engineering_plan", status: "pending" },
+    orderBy: { createdAt: "desc" },
+  });
+  const match = rows.find((row) => {
+    try { return (JSON.parse(row.payload) as Record<string, unknown>).awaitingRevision === true; } catch { return false; }
+  });
+  return match ? toView(match) : null;
+}
+
+/** Marks a pending approval rejected because a revised proposal replaces it — the original can never be approved after this. */
+export async function supersedeApproval(userId: string, id: string): Promise<void> {
+  const row = await prisma.approvalAction.findFirst({ where: { id, userId, status: "pending" } });
+  if (!row) return;
+  await prisma.approvalAction.update({ where: { id }, data: { status: "rejected", resolvedAt: new Date() } });
+  await writeAuditLog(userId, "superseded_by_revision", "ApprovalAction", id, `${row.actionType} — superseded by a revised plan`);
+}
+
 export async function getLatestPendingApproval(userId: string): Promise<ApprovalActionView | null> {
   const row = await prisma.approvalAction.findFirst({
     where: { userId, status: "pending" },
