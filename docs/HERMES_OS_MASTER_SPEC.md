@@ -359,3 +359,77 @@ Pre-flight facts (verified without touching the remote database):
   applying, as a standard precaution rather than because this specific migration is risky.
 - **Rollback:** trivial — `DROP TABLE "TelegramUpdate";` cleanly reverses it, since nothing
   else references the table (not even old main).
+
+---
+
+## 15. Final integration branch (2026-08-25)
+
+**Branch:** `integration/hermes-os-final`, worktree `C:\Users\osman\AppData\Local\hermes\hermes-os-final`.
+**Base:** `feature/hermes-telegram-remote-command` @ `2e08ea8` — chosen over
+`consolidation/source-of-truth` on Git evidence, not by name. `merge-base --is-ancestor`
+checks confirmed `consolidation/source-of-truth` (`6790120`) and every one of the following
+branches are strict ancestors of `2e08ea8`, so the Telegram branch is already a full
+superset with zero merge commits required:
+
+`feature/hermes-jarvis-voice-ios`, `feature/hermes-knowledge-troubleshooting`,
+`design/myos-agent-offices-console`, `design/myos-html-fidelity`,
+`integration/myos-capabilities-complete` (identical commit to `feature/teach-hermes-execution`),
+`feat/builder-completion`, `integration/builder-sandbox-conformance`,
+`feature/teach-hermes`, `feature/teach-hermes-draft-generation`,
+`feature/teach-hermes-recording`, `feature/teach-hermes-review`,
+`design/myos-production-ui`, `integration/myos-ui-complete`,
+`agent/deepseek-council`, `codex/agent-envelope-migration` (the exact commit,
+`b16a8dd7...`, that production currently runs).
+
+**Intentionally excluded** (evidence-based, not blind omission):
+- `design/os-overview-redesign` — an earlier 3-column Overview attempt, superseded by the
+  accepted `design/myos-html-fidelity` direction already included above.
+- `codex/fugu-design-gate` — Fugu/Sakana review is being retired (see the migration drift
+  ledger); this branch tunes a gate that no longer applies.
+- `design/finance-gateway`, `integration/rakazo-high-value`, `design/secure-vault-reader` —
+  out of Hermes OS scope for this consolidation (Finance / a different product line / an
+  unmerged architecture sketch).
+- `codex/deepseek-direct-tool` (adds one small research-tool commit on top of the already-
+  included `agent/deepseek-council`) and `integration/knowledge-gateway` /
+  `integration/hermes-context-assembly` (a fully divergent alternate Knowledge line, same
+  commit, never merged) and `codex/skill-upgrade-pack` — none are required by the capability
+  list above (DeepSeek's provider/challenger role and Knowledge/Obsidian are already
+  satisfied via included branches); left out to avoid scope creep, not because they're
+  known-bad. Revisit individually if a specific gap surfaces.
+
+**No cherry-picks or conflict resolution were needed** — the integration branch is a pure
+branch-point off `2e08ea8` with an identical tree.
+
+**Regression (run fresh in the new worktree):** `tsc --noEmit` clean, lint 0 errors (28
+pre-existing warnings), **425/425 tests pass**, production build succeeds, `git diff --check`
+clean. Spot-checked that the required capability areas have real test coverage in that
+425 (Council/DeepSeek: `dynamic-council`, `model-council-chat`, `model-provider-registry`,
+`model-routing-policy`; Scout: `skill-scout-*`; Voice: 4 voice test files; Knowledge:
+`obsidian-knowledge`; Troubleshooting: `troubleshooting-memory`; Agent Offices:
+`agent-office`; Builder: 6 builder test files) rather than assuming. Also read
+`src/app/api/command-center/teach/route.ts` directly and confirmed it pattern-matches
+`no such table|database is unavailable|SQLITE_` errors and reports storage unavailability
+truthfully — verified live against remote Turso, where the Teach Hermes tables are still
+genuinely absent (see the migration drift ledger).
+
+**Visual QA: NOT performed this pass.** No browser session was launched against this
+worktree's dev server. This is an honest gap, not a claimed pass — do not treat the
+regression suite above as a substitute for looking at the actual UI before deployment.
+
+**Database drift ledger (unchanged, carried forward — not fixed in this pass):**
+`TelegramUpdate` now exists on remote (`my-pa`, scoped manual DDL, verified). Several other
+migrations are history-only gaps against an already-matching live schema
+(`email_correspondents`, `execution_runs` mostly, `agent_envelope`); `perf_indexes` and
+`agent_task` have real drift (a duplicate-table conflict and a snake_case/camelCase column
+mismatch, respectively) unrelated to Telegram or Fugu; `remove_fugu_schema` remains
+**destructive and unapplied** with 18 live `Project` rows carrying real fugu/local-review
+data. **`prisma migrate deploy` remains prohibited** until this is reconciled as its own
+separate, explicit task.
+
+**Worker:** unchanged — one authoritative Hermes local worker (Windows Scheduled Task),
+not touched by this integration. Not independently re-verified as still running this pass.
+
+**Production:** still old `main` @ `b16a8dd7...` at `https://www.parawi.com` — that exact
+commit is confirmed reachable from this integration branch's history (see
+`codex/agent-envelope-migration` above), so old production is a strict subset, not a
+diverged line.
